@@ -27,7 +27,7 @@ static void analyze_cycle(int opcode, int op1, int op2, int read_accumulator, in
    static int pc = -1;
    
    int offset;
-   unsigned char target[16];
+   char target[16];
 
    // lookup the entry for the instruction
    InstrType *instr = &instr_table[opcode];   
@@ -57,7 +57,7 @@ static void analyze_cycle(int opcode, int op1, int op2, int read_accumulator, in
       printf(" %04X: ", pc);
    }
    
-   int numchars;
+   int numchars = 0;
    if (write_count == 3 && opcode != 0) {
       // Annotate an interrupt
       numchars = printf("INTERRUPT !!");
@@ -76,7 +76,7 @@ static void analyze_cycle(int opcode, int op1, int op2, int read_accumulator, in
       case BRA:
       case ZPR:
          // Calculate branch target using op1 for normal branches and op2 for BBR/BBS
-         offset = (char) ((opcode & 0x0f == 0x0f)  ? op2 : op1);
+         offset = (char) (((opcode & 0x0f) == 0x0f)  ? op2 : op1);
          if (pc < 0) {
             if (offset < 0) {
                sprintf(target, "pc-%d", -offset);
@@ -196,11 +196,11 @@ void decode(FILE *stream) {
    int idx_phi2  = 11;
    
    // Pin values
-   int bus_data;
-   int pin_rnw;
-   int pin_sync;
-   int pin_rdy;
-   int pin_phi2;
+   int bus_data  =  0;
+   int pin_rnw   =  0;
+   int pin_sync  =  0;
+   int pin_rdy   =  0;
+   int pin_phi2  =  0;
    
    // To look for transitions in Phi2
    int last_phi2 = -1;

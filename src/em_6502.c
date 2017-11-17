@@ -35,7 +35,7 @@ const char default_state[] = "A=?? X=?? Y=?? SP=?? N=? V=? D=? I=? Z=? C=?";
 #define OFFSET_C  43
 #define OFFSET_FF 44
 
-static unsigned char buffer[80];
+static char buffer[80];
 
 // 6502 registers: -1 means unknown
 static int A = -1;
@@ -131,13 +131,13 @@ void em_interrupt(int operand) {
    I = 1;
    D = 0; // TODO: 65C02 only
 }
-static char *write_hex1(char *buffer, int value) {
+static void write_hex1(char *buffer, int value) {
    *buffer = value + (value < 10 ? '0' : 'A' - 10);
 }
 
-static char *write_hex2(char *buffer, int value) {
-   *write_hex1(buffer++, (value >> 4) & 15);
-   *write_hex1(buffer++, (value >> 0) & 15);
+static void write_hex2(char *buffer, int value) {
+   write_hex1(buffer++, (value >> 4) & 15);
+   write_hex1(buffer++, (value >> 0) & 15);
 }
 
 char *em_get_state() {
