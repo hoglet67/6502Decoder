@@ -363,6 +363,10 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
    cyclenum ++;
 }
 
+#ifdef DEBUG
+int sample_count = 0;
+#endif
+
 void lookahead_decode_cycle_without_sync(int bus_data, int pin_rnw) {
    static int bus_data_q[DEPTH];
    static int pin_rnw_q[DEPTH];
@@ -374,6 +378,9 @@ void lookahead_decode_cycle_without_sync(int bus_data, int pin_rnw) {
       fill++;
    } else {
       decode_cycle_without_sync(bus_data_q, pin_rnw_q);
+#ifdef DEBUG
+      printf("%d %02x %d\n", sample_count, *bus_data_q, *pin_rnw_q);
+#endif
       for (int i = 0; i < DEPTH - 1; i++) {
          bus_data_q[i] = bus_data_q[i + 1];
          pin_rnw_q[i] = pin_rnw_q[i + 1];
@@ -480,6 +487,7 @@ void decode(FILE *stream) {
 
    // The previous sample of phi2 (async sampling only)
    int last_phi2 = -1;
+   int last2_phi2 = -1;
 
    while ((num = fread(buffer, sizeof(uint16_t), BUFSIZE, stream)) > 0) {
 
@@ -489,6 +497,10 @@ void decode(FILE *stream) {
 
          // The current 16-bit capture sample
          uint16_t sample = *sampleptr++;
+#ifdef DEBUG
+         printf("%02x %x %x %x %x\n", sample&255, (sample >> 8)&1,  (sample >> 9)&1,  (sample >> 10)&1,  (sample >> 11)&1  );
+         sample_count++;
+#endif
 
          // Phi2 is optional
          // - if asynchronous capture is used, it must be connected
@@ -509,14 +521,16 @@ void decode(FILE *stream) {
 
             // If Phi2 is present, look for the falling edge, and proceed with the previous sample
             pin_phi2 = (sample >> idx_phi2) & 1;
-            if (pin_phi2 == 1 || last_phi2 != 1) {
+            if (pin_phi2 == 1 || last_phi2 != 1 || last2_phi2 != 1) {
+               last2_phi2 = last_phi2;
                last_phi2 = pin_phi2;
                last_sample = sample;
                continue;
             }
 
-            // At this point, last_phi2 = 1 and phi2 = 0 (i.e. falling edge)
+            // At this point, last2_phi2, last_phi2 = 1 and phi2 = 0 (i.e. falling edge)
             last_phi2 = 0;
+            last2_phi2 = 0;
 
             // Sample the control signals before the clock edge
             pin_rnw = (last_sample >> idx_rnw ) & 1;
