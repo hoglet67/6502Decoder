@@ -5,6 +5,22 @@ void em_init();
 
 void em_interrupt(int operand);
 
+int em_get_N();
+
+int em_get_V();
+
+int em_get_Z();
+
+int em_get_C();
+
+int em_get_A();
+
+int em_get_X();
+
+int em_get_Y();
+
+int em_get_S();
+
 char *em_get_state();
 
 typedef enum {
@@ -40,6 +56,7 @@ typedef struct {
 typedef struct {
    const char *mnemonic;
    AddrMode mode;
+   int cycles;
    OpType optype;
    void (*emulate)(int);
    int len;

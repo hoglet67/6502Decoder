@@ -11,6 +11,10 @@ enum Cycle {
    Cycle_MEMWR
 };
 
+// Sync-loess decoder queue depth (samples)
+// (min of 3 needed to reliably detect interrupts)
+#define DEPTH 3
+
 #define BUFSIZE 8192
 
 uint16_t buffer[BUFSIZE];
@@ -21,10 +25,10 @@ const int do_emulate = 1;
 
 // TODO: all the pc prediction stuff could be pushed down into the emulation
 
-static void analyze_cycle(int opcode, int op1, int op2, int read_accumulator, int write_accumulator, int write_count, int operand, int num_cycles) {
+// Predicted PC value
+int pc = -1;
 
-   // Predicted PC value
-   static int pc = -1;
+static void analyze_cycle(int opcode, int op1, int op2, int read_accumulator, int write_accumulator, int write_count, int operand, int num_cycles) {
 
    int offset;
    char target[16];
@@ -76,7 +80,7 @@ static void analyze_cycle(int opcode, int op1, int op2, int read_accumulator, in
       case BRA:
       case ZPR:
          // Calculate branch target using op1 for normal branches and op2 for BBR/BBS
-         offset = (char) (((opcode & 0x0f) == 0x0f)  ? op2 : op1);
+         offset = (int8_t) (((opcode & 0x0f) == 0x0f)  ? op2 : op1);
          if (pc < 0) {
             if (offset < 0) {
                sprintf(target, "pc-%d", -offset);
@@ -154,43 +158,311 @@ static void analyze_cycle(int opcode, int op1, int op2, int read_accumulator, in
       pc = -1;
    } else if (opcode == 0x80) {
       // BRA
-      pc += ((char)(op1)) + 2;
+      pc += ((int8_t)(op1)) + 2;
    } else if ((opcode & 0x0f) == 0x0f && num_cycles != 2) {
       // BBR/BBS
-      pc += ((char)(op2)) + 2;
+      pc += ((int8_t)(op2)) + 2;
    } else if ((opcode & 0x1f) == 0x10 && num_cycles != 2) {
       // BXX: op1 if taken
-      pc += ((char)(op1)) + 2;
+      pc += ((int8_t)(op1)) + 2;
    } else {
       // Otherwise, increment pc by length of instuction
       pc += instr->len;
    }
 }
 
-void decode(FILE *stream) {
+
+void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
 
    // Count of the 6502 bus cycles
-   int cyclenum             = 0;
+   static int cyclenum             = 0;
 
    // Cycle count of the last sync, so we know the instruction cycle count
-   int last_sync_cyclenum   = 0;
+   static int last_cyclenum        = 0;
 
    // State to decode the 6502 bus activity
-   int cycle                = Cycle_MEMRD;
-   int opcode               = -1;
-   int opcount              = 0;
-   int op1                  = 0;
-   int op2                  = 0;
-   int operand              = 0;
-   int write_count          = 0;
-   int read_accumulator     = 0;
-   int write_accumulator    = 0;
+   static int opcode               = -1;
+   static int op1                  = 0;
+   static int op2                  = 0;
+   static int read_accumulator     = 0;
+   static int write_accumulator    = 0;
+   static int write_count          = 0;
+   static int operand              = 0;
+   static int bus_cycle            = 0;
+   static int cycle_count          = 0;
+   static int opcount              = 0;
+
+   int bus_data = *bus_data_q;
+   int pin_rnw = *pin_rnw_q;
+
+   // TODO: Find a more correct way of starting up!
+   InstrType *instr = &instr_table[opcode >= 0 ? opcode : 0xEA];
+
+   if (bus_cycle > cycle_count) {
+      printf("cycle count error, %d %d\n", bus_cycle, cycle_count);
+   }
+
+   if (bus_cycle == 1 && opcount >= 1) {
+      op1 = bus_data;
+   }
+
+   if (bus_cycle == 2 && opcount >= 2) {
+      op2 = bus_data;
+   }
+
+   // Account for extra cycle in a page crossing in (indirect), Y
+   if (bus_cycle == 4) {
+      // Applies to ABSX and ABSY, but need to exclude stores
+      if ((instr->mode == INDY) && (instr->optype == READOP)) {
+         int index = em_get_Y();
+         if (index >= 0) {
+            int base = (read_accumulator >> 8) & 0xffff;
+            if ((base & 0xff00) != ((base + index) & 0xff00)) {
+               cycle_count ++;
+            }
+         }
+      }
+   }
+
+   // Account for extra cycle in a page crossing in absolute indexed
+   if (bus_cycle == 2) {
+      // Applies to ABSX and ABSY, but need to exclude stores
+      if (((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype == READOP)) {
+         // Also need to exclude DEC and INC, which are 7 cycles regardless
+         if ((opcode != 0xDE) && (opcode != 0xFE)) {
+            int index = (instr->mode == ABSX) ? em_get_X() : em_get_Y();
+            if (index >= 0) {
+               int base = op1 + (op2 << 8);
+               if ((base & 0xff00) != ((base + index) & 0xff00)) {
+                  cycle_count ++;
+               }
+            }
+         }
+      }
+   }
+
+   // Account for extra cycles in a branch
+   if (bus_cycle == 1) {
+      if (((opcode & 0x1f) == 0x10) || (opcode == 0x80))
+      {
+         // Default to backards branches taken, forward not taken
+         int taken = ((int8_t)op1) < 0;
+         switch (opcode) {
+         case 0x10: // BPL
+            if (em_get_N() >= 0) {
+               taken = !em_get_N();
+            }
+            break;
+         case 0x30: // BMI
+            if (em_get_N() >= 0) {
+               taken = em_get_N();
+            }
+            break;
+         case 0x50: // BVC
+            if (em_get_V() >= 0) {
+               taken = !em_get_V();
+            }
+            break;
+         case 0x70: // BVS
+            if (em_get_V() >= 0) {
+               taken = em_get_V();
+            }
+            break;
+         case 0x80: // BRA
+            taken = 1;
+            break;
+         case 0x90: // BCC
+            if (em_get_C() >= 0) {
+               taken = !em_get_C();
+            }
+            break;
+         case 0xB0: // BCS
+            if (em_get_C() >= 0) {
+               taken = em_get_C();
+            }
+            break;
+         case 0xD0: // BNE
+            if (em_get_Z() >= 0) {
+               taken = !em_get_Z();
+            }
+            break;
+         case 0xF0: // BEQ
+            if (em_get_Z() >= 0) {
+               taken = em_get_Z();
+            }
+            break;
+         }
+         if (taken) {
+            // A taken branch is 3 cycles, not 2
+            cycle_count = 3;
+            // A taken branch that crosses a page boundary is 4 cycle
+            if (pc >= 0) {
+               int target =  (pc + 2) + ((int8_t)(op1));
+               if ((target & 0xFF00) != ((pc + 2) & 0xff00)) {
+                  cycle_count = 4;
+               }
+            }
+         }
+      }
+   }
+
+   // An interrupt sequence looks like:
+   // 0 <opcode>            Rd
+   // 1 <opcode>            Rd // address not incremented
+   // 2 <return address hi> Wr
+   // 3 <return address lo> Wr
+   // 4 <flags>             Wr
+   // 5 <vector lo>         Rd
+   // 6 <vector hu>         Rd
+   // 7 <opcode>            Rd
+
+   // Detect interrupts as early as possible...
+   if ((pin_rnw == 0) && (*(pin_rnw_q + 1) == 0) && (*(pin_rnw_q + 2) == 0)) {
+         cycle_count = 7;
+   }
+
+   if (bus_cycle == cycle_count) {
+
+      // Analyze the  previous instrucution
+      if (opcode >= 0) {
+         analyze_cycle(opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand, cyclenum - last_cyclenum);
+      }
+      last_cyclenum  = cyclenum;
+
+      // Re-initialize the state for the new instruction
+      opcode            = bus_data;
+      op1               = 0;
+      op2               = 0;
+      read_accumulator  = 0;
+      write_accumulator = 0;
+      write_count       = 0;
+      operand           = 0;
+      bus_cycle         = 0;
+      cycle_count       = instr_table[opcode].cycles ;
+      opcount           = instr_table[opcode].len - 1;
+
+   } else {
+
+      if (pin_rnw == 0) {
+         write_count ++;
+         write_accumulator = (write_accumulator << 8) | bus_data;
+      } else {
+         operand = bus_data;
+         read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
+      }
+   }
+
+   // JSR is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
+   if (opcode == 0x20) {
+      op2 = bus_data;
+   }
+
+   bus_cycle++;
+
+   // Increment the cycle number (used only to detect taken branches)
+   cyclenum ++;
+}
+
+void lookahead_decode_cycle_without_sync(int bus_data, int pin_rnw) {
+   static int bus_data_q[DEPTH];
+   static int pin_rnw_q[DEPTH];
+   static int fill = 0;
+
+   bus_data_q[fill] = bus_data;
+   pin_rnw_q[fill] = pin_rnw;
+   if (fill < DEPTH - 1) {
+      fill++;
+   } else {
+      decode_cycle_without_sync(bus_data_q, pin_rnw_q);
+      for (int i = 0; i < DEPTH - 1; i++) {
+         bus_data_q[i] = bus_data_q[i + 1];
+         pin_rnw_q[i] = pin_rnw_q[i + 1];
+      }
+   }
+}
+
+void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync) {
+
+   // Count of the 6502 bus cycles
+   static int cyclenum             = 0;
+
+   // Cycle count of the last sync, so we know the instruction cycle count
+   static int last_cyclenum        = 0;
+
+   // State to decode the 6502 bus activity
+   static int cycle                = Cycle_MEMRD;
+   static int opcode               = -1;
+   static int opcount              = 0;
+   static int op1                  = 0;
+   static int op2                  = 0;
+   static int operand              = 0;
+   static int write_count          = 0;
+   static int read_accumulator     = 0;
+   static int write_accumulator    = 0;
+
+   if (pin_sync == 1) {
+
+      // Sync indicates the start of a new instruction, the following variables pertain to the previous instruction
+      // opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand
+
+      // Analyze the  previous instrucution
+      if (opcode >= 0) {
+         analyze_cycle(opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand, cyclenum - last_cyclenum);
+      }
+      last_cyclenum  = cyclenum;
+
+      // Re-initialize the state for the new instruction
+      cycle             = Cycle_FETCH;
+      opcode            = bus_data;
+      opcount           = instr_table[opcode].len - 1;
+      write_count       = 0;
+      operand           = -1;
+      read_accumulator  = 0;
+      write_accumulator = 0;
+
+   } else if (pin_rnw == 0) {
+      cycle = Cycle_MEMWR;
+      write_count ++;
+      write_accumulator = (write_accumulator << 8) | bus_data;
+
+   } else if (cycle == Cycle_FETCH && opcount > 0) {
+      cycle = Cycle_OP1;
+      opcount -= 1;
+      op1 = bus_data;
+      operand = bus_data;
+
+   } else if (cycle == Cycle_OP1 && opcount > 0) {
+      if (opcode == 0x20) { // JSR is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
+         cycle = Cycle_MEMRD;
+      } else {
+         cycle = Cycle_OP2;
+         opcount -= 1;
+         op2 = bus_data;
+      }
+
+   } else {
+      if (opcode == 0x20) { // JSR, see above
+         cycle = Cycle_OP2;
+         opcount -= 1;
+         op2 = bus_data;
+      } else {
+         cycle = Cycle_MEMRD;
+         operand = bus_data;
+         read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
+      }
+   }
+
+   // Increment the cycle number (used only to detect taken branches)
+   cyclenum ++;
+}
+
+void decode(FILE *stream) {
 
    // Pin mappings into the 16 bit words
    // TODO: make these configurable
    int idx_data  =  0;
    int idx_rnw   =  8;
-   int idx_sync  =  9;
+   int idx_sync  = -1;
    int idx_rdy   = 10;
    int idx_phi2  = 11;
 
@@ -198,7 +470,7 @@ void decode(FILE *stream) {
    int bus_data  =  0;
    int pin_rnw   =  0;
    int pin_sync  =  0;
-   int pin_rdy   =  0;
+   int pin_rdy   =  1;
    int pin_phi2  =  0;
 
    int num;
@@ -224,10 +496,14 @@ void decode(FILE *stream) {
          if (idx_phi2 < 0) {
 
             // If Phi2 is not present, use the pins directly
-            bus_data  = (sample >> idx_data) & 255;
-            pin_rnw   = (sample >> idx_rnw ) & 1;
-            pin_sync  = (sample >> idx_sync) & 1;
-            pin_rdy   = (sample >> idx_rdy ) & 1;
+            bus_data = (sample >> idx_data) & 255;
+            pin_rnw = (sample >> idx_rnw ) & 1;
+            if (idx_sync >= 0) {
+               pin_sync = (sample >> idx_sync) & 1;
+            }
+            if (idx_rdy >= 0) {
+               pin_rdy = (sample >> idx_rdy ) & 1;
+            }
 
          } else {
 
@@ -243,9 +519,13 @@ void decode(FILE *stream) {
             last_phi2 = 0;
 
             // Sample the control signals before the clock edge
-            pin_rnw   = (last_sample >> idx_rnw ) & 1;
-            pin_sync  = (last_sample >> idx_sync) & 1;
-            pin_rdy   = (last_sample >> idx_rdy ) & 1;
+            pin_rnw = (last_sample >> idx_rnw ) & 1;
+            if (idx_sync >= 0) {
+               pin_sync = (last_sample >> idx_sync) & 1;
+            }
+            if (idx_rdy >= 0) {
+               pin_rdy = (last_sample >> idx_rdy ) & 1;
+            }
             // Sample write data before the clock edge, and read data after the clock edge
             bus_data  = ((pin_rnw ? sample : last_sample) >> idx_data ) & 255;
          }
@@ -254,60 +534,11 @@ void decode(FILE *stream) {
          if (pin_rdy == 0)
             continue;
 
-         if (pin_sync == 1) {
-
-            // Sync indicates the start of a new instruction, the following variables pertain to the previous instruction
-            // opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand
-
-            // Analyze the  previous instrucution
-            if (opcode >= 0) {
-               analyze_cycle(opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand, cyclenum - last_sync_cyclenum);
-            }
-            last_sync_cyclenum  = cyclenum;
-            
-            // Re-initialize the state for the new instruction
-            cycle             = Cycle_FETCH;
-            opcode            = bus_data;
-            opcount           = instr_table[opcode].len - 1;
-            write_count       = 0;
-            operand           = -1;
-            read_accumulator  = 0;
-            write_accumulator = 0;
-
-         } else if (pin_rnw == 0) {
-            cycle = Cycle_MEMWR;
-            write_count += 1;
-            write_accumulator = (write_accumulator << 8) | bus_data;
-
-         } else if (cycle == Cycle_FETCH && opcount > 0) {
-            cycle = Cycle_OP1;
-            opcount -= 1;
-            op1 = bus_data;
-            operand = bus_data;
-
-         } else if (cycle == Cycle_OP1 && opcount > 0) {
-            if (opcode == 0x20) { // JSR is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
-               cycle = Cycle_MEMRD;
-            } else {
-               cycle = Cycle_OP2;
-               opcount -= 1;
-               op2 = bus_data;
-            }
-
+         if (idx_sync < 0) {
+            lookahead_decode_cycle_without_sync(bus_data, pin_rnw);
          } else {
-            if (opcode == 0x20) { // JSR, see above
-               cycle = Cycle_OP2;
-               opcount -= 1;
-               op2 = bus_data;
-            } else {
-               cycle = Cycle_MEMRD;
-               operand = bus_data;
-               read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
-            }
+            decode_cycle_with_sync(bus_data, pin_rnw, pin_sync);
          }
-
-         // Increment the cycle number (used only to detect taken branches)
-         cyclenum += 1;
       }
    }
 }
