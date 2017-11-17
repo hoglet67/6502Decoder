@@ -254,17 +254,18 @@ void decode(FILE *stream) {
          if (pin_rdy == 0)
             continue;
 
-         // Sync indicates the start of a new instruction, the following variables pertain to the previous instruction
-         // opcode, op1, op2, read_accumulator, write_accumulator, write_count
-
          if (pin_sync == 1) {
 
+            // Sync indicates the start of a new instruction, the following variables pertain to the previous instruction
+            // opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand
+
+            // Analyze the  previous instrucution
             if (opcode >= 0) {
                analyze_cycle(opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand, cyclenum - last_sync_cyclenum);
             }
             last_sync_cyclenum  = cyclenum;
-
-            // Start decoding a new instruction
+            
+            // Re-initialize the state for the new instruction
             cycle             = Cycle_FETCH;
             opcode            = bus_data;
             opcount           = instr_table[opcode].len - 1;
@@ -294,7 +295,7 @@ void decode(FILE *stream) {
             }
 
          } else {
-            if (opcode == 0x20){ // JSR, see above
+            if (opcode == 0x20) { // JSR, see above
                cycle = Cycle_OP2;
                opcount -= 1;
                op2 = bus_data;
