@@ -1,6 +1,8 @@
 #ifndef _INCLUDE_EM_6502_H
 #define _INCLUDE_EM_6502_H
 
+void em_init();
+
 void em_interrupt(int operand);
 
 char *em_get_state();
@@ -31,16 +33,19 @@ typedef enum {
 } OpType;
 
 typedef struct {
+   int len;
+   const char *fmt;
+} AddrModeType;
+
+typedef struct {
    const char *mnemonic;
    AddrMode mode;
    OpType optype;
    void (*emulate)(int);
+   int len;
+   const char *fmt;
 } InstrType;
 
 extern InstrType instr_table[];
-
-extern int addr_mode_len_map[];
-
-extern char *addr_mode_format_map[];
 
 #endif

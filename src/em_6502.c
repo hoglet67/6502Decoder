@@ -2,6 +2,25 @@
 #include <string.h>
 #include "em_6502.h"
 
+AddrModeType addr_mode_table[] = {
+   {1,    "%1$s"},                  // IMP
+   {1,    "%1$s A"},                // IMPA
+   {2,    "%1$s %2$s"},             // BRA
+   {2,    "%1$s #%2$02X"},          // IMM
+   {2,    "%1$s %2$02X"},           // ZP
+   {2,    "%1$s %2$02X,X"},         // ZPX
+   {2,    "%1$s %2$02X,Y"},         // ZPY
+   {2,    "%1$s (%2$02X,X)"},       // INDX
+   {2,    "%1$s (%2$02X),Y"},       // INDY
+   {2,    "%1$s (%2$02X)"},         // IND
+   {3,    "%1$s %3$02X%2$02X"},     // ABS
+   {3,    "%1$s %3$02X%2$02X,X"},   // ABSX
+   {3,    "%1$s %3$02X%2$02X,Y"},   // ABSY
+   {3,    "%1$s (%3$02X%2$02X)"},   // IND1
+   {3,    "%1$s (%3$02X%2$02X,X)"}, // IND1X
+   {3,    "%1$s %2$02X,%3$s"}       //
+};
+
 const char default_state[] = "A=?? X=?? Y=?? SP=?? N=? V=? D=? I=? Z=? C=?";
 
 #define OFFSET_A   2
@@ -33,43 +52,6 @@ static int C = -1;
 // indicate state prediction failed
 static int failflag = 0;
 
-int addr_mode_len_map[] = {
-    1, // IMP
-    1, // IMPA
-    2, // BRA
-    2, // IMM
-    2, // ZP
-    2, // ZPX
-    2, // ZPY
-    2, // INDX
-    2, // INDY
-    2, // IND
-    3, // ABS
-    3, // ABSX
-    3, // ABSY
-    3, // IND16
-    3, // IND1X
-    3  // ZPR
-};
-
-char *addr_mode_format_map[] = {
-   "%1$s",                  // IMP
-   "%1$s A",                // IMPA
-   "%1$s %2$s",             // BRA
-   "%1$s #%2$02X",          // IMM
-   "%1$s %2$02X",           // ZP
-   "%1$s %2$02X,X",         // ZPX
-   "%1$s %2$02X,Y",         // ZPY
-   "%1$s (%2$02X,X)",       // INDX
-   "%1$s (%2$02X),Y",       // INDY
-   "%1$s (%2$02X)",         // IND
-   "%1$s %3$02X%2$02X",     // ABS
-   "%1$s %3$02X%2$02X,X",   // ABSX
-   "%1$s %3$02X%2$02X,Y",   // ABSY
-   "%1$s (%3$02X%2$02X)",   // IND16
-   "%1$s (%3$02X%2$02X,X)", // IND1X
-   "%1$s %2$02X,%3$s",      // ZPR
-};
 
 static void op_STA(int operand);
 static void op_STX(int operand);
@@ -727,6 +709,17 @@ static void op_TYA(int operand) {
       set_NZ_unknown();
    }
 }
+
+void em_init() {
+   int i;
+   InstrType *instr = instr_table;
+   for (i = 0; i < 256; i++) {
+      instr->len = addr_mode_table[instr->mode].len;
+      instr->fmt = addr_mode_table[instr->mode].fmt;
+      instr++;
+   }
+}
+
 
 InstrType instr_table[] = {
    { "BRK",  IMM   , WRITEOP,  op_BRK},

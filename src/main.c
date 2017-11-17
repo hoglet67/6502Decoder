@@ -26,7 +26,7 @@ uint16_t buffer[BUFSIZE];
 
 void decode(FILE *stream) {
 
-   InstrType *instr;
+   InstrType *instr         = NULL;
 
    int cyclenum             = 0;
    int last_sync_cyclenum   = 0;
@@ -41,15 +41,9 @@ void decode(FILE *stream) {
    int read_accumulator     = 0;
    int write_accumulator    = 0;
    int do_emulate           = 1;
-   int len = 0;
 
-   const char *mnemonic       = NULL;
-   void (*emulate)(int)       = NULL;
-   AddrMode mode              = -1;
-   OpType optype              = 0;
 
    unsigned char target[16];
-   unsigned char *fmt         = NULL;
 
    int newpc = 0;
    int num                  = 0;
@@ -117,55 +111,63 @@ void decode(FILE *stream) {
          if (pin_rdy == 0)
             continue;
 
-         // Sync indicates the start of a new instruction
+         // Sync indicates the start of a new instruction, the following variables pertain to the previous instruction
+         // opcode, op1, op2, read_accumulator, write_accumulator, write_count
+
          if (pin_sync == 1) {
             int numchars;
 
-            // For instructions that push the current address to the stack we
-            // can use the stacked address to determine the current PC
-            newpc = -1;
-            if (write_count == 3) {
-               // IRQ/NMI/RST
-               newpc = (write_accumulator >> 8) & 0xffff;
-            } else if (opcode == 0x20) {
-               // JSR
-               newpc = (write_accumulator - 2) & 0xffff;
-            }
+            if (opcode >= 0) {
+               instr    = &instr_table[opcode];
 
-            // Sanity check the current pc prediction has not gone awry
-            if (newpc >= 0) {
-               if (pc >= 0 && pc != newpc) {
-                  printf("pc: prediction failed at %04X old pc was %04X\n", newpc, pc);
-                  pc = newpc;
-               }
-            }
 
-            if (pc < 0) {
-               printf(" ????: ");
-            } else {
-               printf(" %04X: ", pc);
-            }
-            if (write_count == 3 && opcode != 0) {
-               // Annotate an interrupt
-               numchars = printf("INTERRUPT !!");
-               if (do_emulate) {
-                  em_interrupt(write_accumulator & 0xff);
+               // For instructions that push the current address to the stack we
+               // can use the stacked address to determine the current PC
+               newpc = -1;
+               if (write_count == 3) {
+                  // IRQ/NMI/RST
+                  newpc = (write_accumulator >> 8) & 0xffff;
+               } else if (opcode == 0x20) {
+                  // JSR
+                  newpc = (write_accumulator - 2) & 0xffff;
                }
-            } else {
-               // Calculate branch target using op1 for normal branches and op2 for BBR/BBS
-               int offset = (char) ((opcode & 0x0f == 0x0f)  ? op2 : op1);
+
+               // Sanity check the current pc prediction has not gone awry
+               if (newpc >= 0) {
+                  if (pc >= 0 && pc != newpc) {
+                     printf("pc: prediction failed at %04X old pc was %04X\n", newpc, pc);
+                     pc = newpc;
+                  }
+               }
+
                if (pc < 0) {
-                  if (offset < 0) {
-                     sprintf(target, "pc-%d", -offset);
-                  } else {
-                     sprintf(target,"pc-%d", offset);
+                  printf(" ????: ");
+               } else {
+                  printf(" %04X: ", pc);
+               }
+               if (write_count == 3 && opcode != 0) {
+                  // Annotate an interrupt
+                  numchars = printf("INTERRUPT !!");
+                  if (do_emulate) {
+                     em_interrupt(write_accumulator & 0xff);
                   }
                } else {
-                  sprintf(target, "%04X", pc + 2 + offset);
-               }
+                  // Calculate branch target using op1 for normal branches and op2 for BBR/BBS
+                  int offset = (char) ((opcode & 0x0f == 0x0f)  ? op2 : op1);
+                  if (pc < 0) {
+                     if (offset < 0) {
+                        sprintf(target, "pc-%d", -offset);
+                     } else {
+                        sprintf(target,"pc-%d", offset);
+                     }
+                  } else {
+                     sprintf(target, "%04X", pc + 2 + offset);
+                  }
 
-               // Annotate a normal instruction
-               if (fmt) {
+                  // Annotate a normal instruction
+                  int mode = instr->mode;
+                  const char *mnemonic = instr->mnemonic;
+                  const char *fmt = instr->fmt;
                   if (mode <= IMPA) {
                      numchars = printf(fmt, mnemonic);
                   } else if (mode == BRA) {
@@ -177,80 +179,73 @@ void decode(FILE *stream) {
                   } else {
                      numchars = printf(fmt, mnemonic, op1, target);
                   }
-               }
 
-               // Emulate the instruction
-               if (do_emulate) {
-                  if (emulate) {
-                     // special case RTI, operand (flags) is the first read cycle of three
-                     if (opcode == 0x40) {
-                        operand = read_accumulator & 0xff;
+                  // Emulate the instruction
+                  if (do_emulate) {
+                     if (instr->emulate) {
+                        if (opcode == 0x40) {
+                           // special case RTI, operand (flags) is the first read cycle of three
+                           operand = read_accumulator & 0xff;
+                        }
+                        if (instr->optype == WRITEOP) {
+                           // special case instructions where the operand is being written (STA/STX/STY/PHP/PHA/PHX/PHY/BRK)
+                           operand = write_accumulator & 0xff;
+                        } else if (instr->optype == BRANCHOP) {
+                           // special case branch instructions, operand is true if branch taken
+                           operand = (cyclenum - last_sync_cyclenum != 2);
+                        }
+                        instr->emulate(operand);
                      }
-                     // special case instructions where the operand is being written (STA/STX/STY/PHP/PHA/PHX/PHY/BRK)
-                     if (optype == 1) {
-                        operand = write_accumulator & 0xff;
-                     }
-                     // special case branch instructions, operand is true if branch taken
-                     if (optype == 2) {
-                        operand = (cyclenum - last_sync_cyclenum != 2);
-                     }
-                     emulate(operand);
                   }
                }
-            }
 
-            if (do_emulate) {
-               // Pad opcode to 20 characters
-               while (numchars++ < 14) {
-                  printf(" ");
+               if (do_emulate) {
+                  // Pad opcode to 20 characters
+                  while (numchars++ < 14) {
+                     printf(" ");
+                  }
+                  printf("%s\n", em_get_state());
+               } else {
+                  printf("\n");
                }
-               printf("%s\n", em_get_state());
-            } else {
-               printf("\n");
-            }
 
-            // Look for control flow changes and update the PC
-            if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c || write_count == 3) {
-               // RTI, BRK, INTR, JMP (ind), JMP (ind, X), IRQ/NMI/RST
-               pc = (read_accumulator >> 8) & 0xffff;
-            } else if (opcode == 0x20 || opcode == 0x4c) {
-               // JSR abs, JMP abs
-               pc = op2 << 8 | op1;
-            } else if (opcode == 0x60) {
-               // RTS
-               pc = (read_accumulator + 1) & 0xffff;
-            } else if (pc < 0) {
-               // PC value is not known yet, everything below this point is relative
-               pc = -1;
-            } else if (opcode == 0x80) {
-               // BRA
-               pc += ((char)(op1)) + 2;
-            } else if ((opcode & 0x0f) == 0x0f && cyclenum - last_sync_cyclenum != 2) {
-               // BBR/BBS
-               pc += ((char)(op2)) + 2;
-            } else if ((opcode & 0x1f) == 0x10 && cyclenum - last_sync_cyclenum != 2) {
-               // BXX: op1 if taken
-               pc += ((char)(op1)) + 2;
-            } else {
-               // Otherwise, increment pc by length of instuction
-               pc += len;
+               // Look for control flow changes and update the PC
+               if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c || write_count == 3) {
+                  // RTI, BRK, INTR, JMP (ind), JMP (ind, X), IRQ/NMI/RST
+                  pc = (read_accumulator >> 8) & 0xffff;
+               } else if (opcode == 0x20 || opcode == 0x4c) {
+                  // JSR abs, JMP abs
+                  pc = op2 << 8 | op1;
+               } else if (opcode == 0x60) {
+                  // RTS
+                  pc = (read_accumulator + 1) & 0xffff;
+               } else if (pc < 0) {
+                  // PC value is not known yet, everything below this point is relative
+                  pc = -1;
+               } else if (opcode == 0x80) {
+                  // BRA
+                  pc += ((char)(op1)) + 2;
+               } else if ((opcode & 0x0f) == 0x0f && cyclenum - last_sync_cyclenum != 2) {
+                  // BBR/BBS
+                  pc += ((char)(op2)) + 2;
+               } else if ((opcode & 0x1f) == 0x10 && cyclenum - last_sync_cyclenum != 2) {
+                  // BXX: op1 if taken
+                  pc += ((char)(op1)) + 2;
+               } else {
+                  // Otherwise, increment pc by length of instuction
+                  pc += instr->len;
+               }
             }
 
             last_sync_cyclenum  = cyclenum;
 
-            cycle    = Cycle_FETCH;
-            opcode   = bus_data;
-            instr    = &instr_table[opcode];
-            mnemonic = instr->mnemonic;
-            mode     = instr->mode;
-            optype   = instr->optype;
-            emulate  = instr->emulate;
-            len      = addr_mode_len_map[mode];
-            fmt      = addr_mode_format_map[mode];
-            opcount  = len - 1;
-            write_count = 0;
-            operand = -1;
-            read_accumulator = 0;
+            // Start decoding a new instruction
+            cycle             = Cycle_FETCH;
+            opcode            = bus_data;
+            opcount           = instr_table[opcode].len - 1;
+            write_count       = 0;
+            operand           = -1;
+            read_accumulator  = 0;
             write_accumulator = 0;
 
          } else if (pin_rnw == 0) {
@@ -294,6 +289,7 @@ void decode(FILE *stream) {
 }
 
 int main(int argc, char *argv[]) {
+   em_init();
    if (argc != 2) {
       fprintf(stderr, "usage: %s <capture file>\n", argv[0]);
       return 1;
