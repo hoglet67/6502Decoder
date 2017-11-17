@@ -198,10 +198,6 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
    // TODO: Find a more correct way of starting up!
    InstrType *instr = &instr_table[opcode >= 0 ? opcode : 0xEA];
 
-   if (bus_cycle > cycle_count) {
-      printf("cycle count error, %d %d\n", bus_cycle, cycle_count);
-   }
-
    if (bus_cycle == 1 && opcount >= 1) {
       op1 = bus_data;
    }
@@ -212,7 +208,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
 
    // Account for extra cycle in a page crossing in (indirect), Y
    if (bus_cycle == 4) {
-      // Applies to ABSX and ABSY, but need to exclude stores
+      // Applies to INDY, but need to exclude stores
       if ((instr->mode == INDY) && (instr->optype == READOP)) {
          int index = em_get_Y();
          if (index >= 0) {
@@ -243,8 +239,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
 
    // Account for extra cycles in a branch
    if (bus_cycle == 1) {
-      if (((opcode & 0x1f) == 0x10) || (opcode == 0x80))
-      {
+      if (((opcode & 0x1f) == 0x10) || (opcode == 0x80)) {
          // Default to backards branches taken, forward not taken
          int taken = ((int8_t)op1) < 0;
          switch (opcode) {
@@ -318,7 +313,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
 
    // Detect interrupts as early as possible...
    if ((pin_rnw == 0) && (*(pin_rnw_q + 1) == 0) && (*(pin_rnw_q + 2) == 0)) {
-         cycle_count = 7;
+      cycle_count = 7;
    }
 
    if (bus_cycle == cycle_count) {
