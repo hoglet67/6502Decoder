@@ -3,6 +3,8 @@
 
 #include "em_6502.h"
 
+// #define DEBUG
+
 enum Cycle {
    Cycle_FETCH,
    Cycle_OP1,
@@ -314,6 +316,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
    // Detect interrupts as early as possible...
    if ((pin_rnw == 0) && (*(pin_rnw_q + 1) == 0) && (*(pin_rnw_q + 2) == 0)) {
       cycle_count = 7;
+      bus_cycle = 2;
    }
 
    if (bus_cycle == cycle_count) {
