@@ -1,7 +1,7 @@
 #ifndef _INCLUDE_EM_6502_H
 #define _INCLUDE_EM_6502_H
 
-void em_init();
+void em_init(int support_c02, int support_undocumented);
 
 void em_interrupt(int operand);
 
@@ -55,6 +55,7 @@ typedef struct {
 
 typedef struct {
    const char *mnemonic;
+   int undocumented;
    AddrMode mode;
    int cycles;
    OpType optype;
@@ -63,6 +64,6 @@ typedef struct {
    const char *fmt;
 } InstrType;
 
-extern InstrType instr_table[];
+extern InstrType *instr_table;
 
 #endif

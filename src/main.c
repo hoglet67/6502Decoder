@@ -25,6 +25,10 @@ uint16_t buffer[BUFSIZE];
 
 const int do_emulate = 1;
 
+int support_c02 = 0;
+
+int support_undocumented = 0;
+
 // TODO: all the pc prediction stuff could be pushed down into the emulation
 
 // Predicted PC value
@@ -226,8 +230,9 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
    if (bus_cycle == 2) {
       // Applies to ABSX and ABSY, but need to exclude stores
       if (((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype == READOP)) {
-         // Also need to exclude DEC and INC, which are 7 cycles regardless
-         if ((opcode != 0xDE) && (opcode != 0xFE)) {
+         // 6502:  Need to exclude ASL/ROL/LSR/ROR/DEC/INC, which are 7 cycles regardless
+         // 65C02: Need to exclude DEC/INC, which are 7 cycles regardless
+         if ((opcode != 0xDE) && (opcode != 0xFE) && (support_c02 || ((opcode != 0x1E) && (opcode != 0x3E) && (opcode != 0x5E) && (opcode != 0x7E)))) {
             int index = (instr->mode == ABSX) ? em_get_X() : em_get_Y();
             if (index >= 0) {
                int base = op1 + (op2 << 8);
@@ -405,6 +410,10 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync) {
    static int read_accumulator     = 0;
    static int write_accumulator    = 0;
 
+#ifdef DEBUG
+   printf("%d %02x %d %d\n", sample_count, bus_data, pin_rnw, pin_sync);
+#endif
+
    if (pin_sync == 1) {
 
       // Sync indicates the start of a new instruction, the following variables pertain to the previous instruction
@@ -445,16 +454,15 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync) {
          op2 = bus_data;
       }
 
+   } else if (opcode == 0x20 && write_count < 3) {
+      // JSR and not an interrupt, see above
+      cycle = Cycle_OP2;
+      opcount -= 1;
+      op2 = bus_data;
    } else {
-      if (opcode == 0x20) { // JSR, see above
-         cycle = Cycle_OP2;
-         opcount -= 1;
-         op2 = bus_data;
-      } else {
-         cycle = Cycle_MEMRD;
-         operand = bus_data;
-         read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
-      }
+      cycle = Cycle_MEMRD;
+      operand = bus_data;
+      read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
    }
 
    // Increment the cycle number (used only to detect taken branches)
@@ -467,7 +475,7 @@ void decode(FILE *stream) {
    // TODO: make these configurable
    int idx_data  =  0;
    int idx_rnw   =  8;
-   int idx_sync  = -1;
+   int idx_sync  =  9;
    int idx_rdy   = 10;
    int idx_phi2  = 11;
 
@@ -496,7 +504,7 @@ void decode(FILE *stream) {
          // The current 16-bit capture sample
          uint16_t sample = *sampleptr++;
 #ifdef DEBUG
-         printf("%02x %x %x %x %x\n", sample&255, (sample >> 8)&1,  (sample >> 9)&1,  (sample >> 10)&1,  (sample >> 11)&1  );
+         // printf("%02x %x %x %x %x\n", sample&255, (sample >> 8)&1,  (sample >> 9)&1,  (sample >> 10)&1,  (sample >> 11)&1  );
          sample_count++;
 #endif
 
@@ -556,7 +564,7 @@ void decode(FILE *stream) {
 }
 
 int main(int argc, char *argv[]) {
-   em_init();
+   em_init(support_c02, support_undocumented);
    if (argc != 2) {
       fprintf(stderr, "usage: %s <capture file>\n", argv[0]);
       return 1;
