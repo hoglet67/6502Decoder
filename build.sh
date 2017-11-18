@@ -1,3 +1,3 @@
 #!/bin/bash
 
-gcc -Wall -O3 -o decoder src/main.c src/em_6502.c
+gcc -Wall -O3 -o decode6502 src/main.c src/em_6502.c

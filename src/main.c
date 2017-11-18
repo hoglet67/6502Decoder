@@ -1,9 +1,10 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <inttypes.h>
+#include <argp.h>
+#include <string.h>
 
 #include "em_6502.h"
-
-// #define DEBUG
 
 enum Cycle {
    Cycle_FETCH,
@@ -22,12 +23,122 @@ enum Cycle {
 uint16_t buffer[BUFSIZE];
 
 // Whether to emulate each decoded instruction, to track additional state (registers and flags)
+int do_emulate = 0;
 
-const int do_emulate = 1;
+// ====================================================================
+// Argp processing
+// ====================================================================
+const char *argp_program_version = "decode6502 0.1";
 
-int support_c02 = 0;
+const char *argp_program_bug_address = "<dave@hoglet.com>";
 
-int support_undocumented = 0;
+static char doc[] = "Decoder for 6502/65C02 logic analyzer capture files.\n \
+\n \
+Default pin assignments are:  \n \
+ - data: bit 0 (assumes 8 consecutive bits) \n \
+ - rnw:  bit 8 \n \
+ - sync: bit 9 \n \
+ - rdy:  bit 10 \n \
+ - phi2: bit 11 \n \
+ \n \
+If sync is not connected, a heuristic based decoder is used.\n \
+If rdy is not connected, a value of '1' is assumed.\n \
+If phi2 is not connected, it once sample per clock cycle is assumed.\
+";
+
+static char args_doc[] = "FILENAME";
+
+static struct argp_option options[] = {
+   { "data",           1, "BITNUM",                   0, "The bit number for data"},
+   { "rnw",            2, "BITNUM",                   0, "The bit number for rnw"},
+   { "sync",           3, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for sync, or empty if pin not connected"},
+   { "rdy",            4, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for  rdy, or empty if pin not connected"},
+   { "phi2",           5, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for phi2, or empty if pin not connected"},
+   { "state",        's',        0,                   0, "Show register/flag state."},
+   { "c02",          'c',        0,                   0, "Enable 65C02 mode."},
+   { "undocumented", 'u',        0,                   0, "Enable undocumented 6502 opcodes (currently incomplete)"},
+   { "debug",        'd',  "LEVEL",                   0, "Sets debug level (0 1 or 2)"},
+   { 0 }
+};
+
+struct arguments {
+   int idx_data;
+   int idx_rnw;
+   int idx_sync;
+   int idx_rdy;
+   int idx_phi2;
+   int show_state;
+   int c02;
+   int undocumented;
+   int debug;
+   char *filename;
+} arguments;
+
+static error_t parse_opt(int key, char *arg, struct argp_state *state) {
+   struct arguments *arguments = state->input;
+   switch (key) {
+   case   1:
+      arguments->idx_data = atoi(arg);
+   case   2:
+      arguments->idx_rnw = atoi(arg);
+      break;
+   case   3:
+      if (strlen(arg) > 0) {
+         arguments->idx_sync = atoi(arg);
+      } else {
+         arguments->idx_sync = -1;
+      }
+      break;
+   case   4:
+      if (strlen(arg) > 0) {
+         arguments->idx_rdy = atoi(arg);
+      } else {
+         arguments->idx_rdy = -1;
+      }
+      break;
+   case   5:
+      if (strlen(arg) > 0) {
+         arguments->idx_phi2 = atoi(arg);
+      } else {
+         arguments->idx_phi2 = -1;
+      }
+      break;
+   case 'c':
+      if (arguments->undocumented) {
+         argp_error(state, "undocumented and c02 flags mutually exclusive");
+      }
+      arguments->c02 = 1;
+      break;
+   case 'd':
+      arguments->debug = atoi(arg);
+      break;
+   case 's':
+      arguments->show_state = 1;
+      break;
+   case 'u':
+      if (arguments->c02) {
+         argp_error(state, "undocumented and c02 flags mutually exclusive");
+      }
+      arguments->undocumented = 1;
+      break;
+   case ARGP_KEY_ARG:
+      arguments->filename = arg;
+      break;
+   case ARGP_KEY_END:
+      if (state->arg_num == 0) {
+         argp_error(state, "missing capture file argument");
+      }
+      if (state->arg_num > 1) {
+         argp_error(state, "multiple capture file arguments");
+      }
+      break;
+   default:
+      return ARGP_ERR_UNKNOWN;
+   }
+   return 0;
+}
+
+static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 
 // TODO: all the pc prediction stuff could be pushed down into the emulation
 
@@ -139,7 +250,7 @@ static void analyze_cycle(int opcode, int op1, int op2, int read_accumulator, in
       }
    }
 
-   if (do_emulate) {
+   if (arguments.show_state) {
       // Pad opcode to 14 characters, to match python
       while (numchars++ < 14) {
          printf(" ");
@@ -232,7 +343,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
       if (((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype == READOP)) {
          // 6502:  Need to exclude ASL/ROL/LSR/ROR/DEC/INC, which are 7 cycles regardless
          // 65C02: Need to exclude DEC/INC, which are 7 cycles regardless
-         if ((opcode != 0xDE) && (opcode != 0xFE) && (support_c02 || ((opcode != 0x1E) && (opcode != 0x3E) && (opcode != 0x5E) && (opcode != 0x7E)))) {
+         if ((opcode != 0xDE) && (opcode != 0xFE) && (arguments.c02 || ((opcode != 0x1E) && (opcode != 0x3E) && (opcode != 0x5E) && (opcode != 0x7E)))) {
             int index = (instr->mode == ABSX) ? em_get_X() : em_get_Y();
             if (index >= 0) {
                int base = op1 + (op2 << 8);
@@ -366,9 +477,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
    cyclenum ++;
 }
 
-#ifdef DEBUG
 int sample_count = 0;
-#endif
 
 void lookahead_decode_cycle_without_sync(int bus_data, int pin_rnw) {
    static int bus_data_q[DEPTH];
@@ -381,9 +490,9 @@ void lookahead_decode_cycle_without_sync(int bus_data, int pin_rnw) {
       fill++;
    } else {
       decode_cycle_without_sync(bus_data_q, pin_rnw_q);
-#ifdef DEBUG
-      printf("%d %02x %d\n", sample_count, *bus_data_q, *pin_rnw_q);
-#endif
+      if (arguments.debug >= 1) {
+         printf("%d %02x %d\n", sample_count, *bus_data_q, *pin_rnw_q);
+      }
       for (int i = 0; i < DEPTH - 1; i++) {
          bus_data_q[i] = bus_data_q[i + 1];
          pin_rnw_q[i] = pin_rnw_q[i + 1];
@@ -410,9 +519,9 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync) {
    static int read_accumulator     = 0;
    static int write_accumulator    = 0;
 
-#ifdef DEBUG
-   printf("%d %02x %d %d\n", sample_count, bus_data, pin_rnw, pin_sync);
-#endif
+   if (arguments.debug >= 1) {
+      printf("%d %02x %d %d\n", sample_count, bus_data, pin_rnw, pin_sync);
+   }
 
    if (pin_sync == 1) {
 
@@ -472,12 +581,11 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync) {
 void decode(FILE *stream) {
 
    // Pin mappings into the 16 bit words
-   // TODO: make these configurable
-   int idx_data  =  0;
-   int idx_rnw   =  8;
-   int idx_sync  =  9;
-   int idx_rdy   = 10;
-   int idx_phi2  = 11;
+   int idx_data  = arguments.idx_data;
+   int idx_rnw   = arguments.idx_rnw ;
+   int idx_sync  = arguments.idx_sync;
+   int idx_rdy   = arguments.idx_rdy ;
+   int idx_phi2  = arguments.idx_phi2;
 
    // Pin values
    int bus_data  =  0;
@@ -503,10 +611,10 @@ void decode(FILE *stream) {
 
          // The current 16-bit capture sample
          uint16_t sample = *sampleptr++;
-#ifdef DEBUG
-         // printf("%02x %x %x %x %x\n", sample&255, (sample >> 8)&1,  (sample >> 9)&1,  (sample >> 10)&1,  (sample >> 11)&1  );
+         if (arguments.debug >= 2) {
+            printf("%d %02x %x %x %x %x\n", sample_count, sample&255, (sample >> 8)&1,  (sample >> 9)&1,  (sample >> 10)&1,  (sample >> 11)&1  );
+         }
          sample_count++;
-#endif
 
          // Phi2 is optional
          // - if asynchronous capture is used, it must be connected
@@ -564,12 +672,24 @@ void decode(FILE *stream) {
 }
 
 int main(int argc, char *argv[]) {
-   em_init(support_c02, support_undocumented);
-   if (argc != 2) {
-      fprintf(stderr, "usage: %s <capture file>\n", argv[0]);
-      return 1;
+   arguments.idx_data     =  0;
+   arguments.idx_rnw      =  8;
+   arguments.idx_sync     =  9;
+   arguments.idx_rdy      = 10;
+   arguments.idx_phi2     = 11;
+   arguments.show_state   = 0;
+   arguments.c02          = 0;
+   arguments.undocumented = 0;
+   arguments.debug        = 0;
+
+   argp_parse(&argp, argc, argv, 0, 0, &arguments);
+
+   if (arguments.show_state || arguments.idx_sync < 0) {
+      do_emulate = 1;
    }
-   FILE *stream = fopen(argv[1], "r");
+
+   em_init(arguments.c02, arguments.undocumented);
+   FILE *stream = fopen(arguments.filename, "r");
    if (stream == NULL) {
       perror("failed to open capture file");
       return 2;
