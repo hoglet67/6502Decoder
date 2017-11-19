@@ -6,17 +6,11 @@
 
 #include "em_6502.h"
 
-enum Cycle {
-   Cycle_FETCH,
-   Cycle_OP1,
-   Cycle_OP2,
-   Cycle_MEMRD,
-   Cycle_MEMWR
-};
-
-// Sync-loess decoder queue depth (samples)
+// Sync-less decoder queue depth (samples)
 // (min of 3 needed to reliably detect interrupts)
 #define DEPTH 3
+
+int sample_count = 0;
 
 #define BUFSIZE 8192
 
@@ -28,6 +22,7 @@ int do_emulate = 0;
 // ====================================================================
 // Argp processing
 // ====================================================================
+
 const char *argp_program_version = "decode6502 0.1";
 
 const char *argp_program_bug_address = "<dave@hoglet.com>";
@@ -150,12 +145,16 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
 
 static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 
+// ====================================================================
+// Analyze a complete instruction
+// ====================================================================
+
 // TODO: all the pc prediction stuff could be pushed down into the emulation
 
 // Predicted PC value
 int pc = -1;
 
-static void analyze_cycle(int opcode, int op1, int op2, int read_accumulator, int write_accumulator, int write_count, int operand, int num_cycles) {
+static void analyze_instruction(int opcode, int op1, int op2, int read_accumulator, int write_accumulator, int write_count, int operand, int num_cycles) {
 
    int offset;
    char target[16];
@@ -298,6 +297,9 @@ static void analyze_cycle(int opcode, int op1, int op2, int read_accumulator, in
    }
 }
 
+// ====================================================================
+// Sync-less bus cycle decoder
+// ====================================================================
 
 void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
 
@@ -449,7 +451,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
 
       // Analyze the  previous instrucution
       if (opcode >= 0) {
-         analyze_cycle(opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand, cyclenum - last_cyclenum);
+         analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand, cyclenum - last_cyclenum);
       }
       last_cyclenum  = cyclenum;
 
@@ -465,18 +467,19 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
       cycle_count       = instr_table[opcode].cycles ;
       opcount           = instr_table[opcode].len - 1;
 
+   } else if (pin_rnw == 0) {
+
+      write_count ++;
+      write_accumulator = (write_accumulator << 8) | bus_data;
+
    } else {
 
-      if (pin_rnw == 0) {
-         write_count ++;
-         write_accumulator = (write_accumulator << 8) | bus_data;
-      } else {
-         operand = bus_data;
-         read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
-      }
+      operand = bus_data;
+      read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
+
    }
 
-   // JSR is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
+   // JSR is <opcode> <op1> <dummy stack rd> <stack wr> <stack wr> <op2>
    if (opcode == 0x20) {
       op2 = bus_data;
    }
@@ -486,8 +489,6 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
    // Increment the cycle number (used only to detect taken branches)
    cyclenum ++;
 }
-
-int sample_count = 0;
 
 void lookahead_decode_cycle_without_sync(int bus_data, int pin_rnw) {
    static int bus_data_q[DEPTH];
@@ -509,6 +510,18 @@ void lookahead_decode_cycle_without_sync(int bus_data, int pin_rnw) {
       }
    }
 }
+
+// ====================================================================
+// Sync-based bus cycle decoder
+// ====================================================================
+
+enum Cycle {
+   Cycle_FETCH,
+   Cycle_OP1,
+   Cycle_OP2,
+   Cycle_MEMRD,
+   Cycle_MEMWR
+};
 
 void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync) {
 
@@ -540,7 +553,7 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync) {
 
       // Analyze the  previous instrucution
       if (opcode >= 0) {
-         analyze_cycle(opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand, cyclenum - last_cyclenum);
+         analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand, cyclenum - last_cyclenum);
       }
       last_cyclenum  = cyclenum;
 
@@ -578,15 +591,21 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync) {
       cycle = Cycle_OP2;
       opcount -= 1;
       op2 = bus_data;
+
    } else {
       cycle = Cycle_MEMRD;
       operand = bus_data;
       read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
+
    }
 
    // Increment the cycle number (used only to detect taken branches)
    cyclenum ++;
 }
+
+// ====================================================================
+// Input file processing and bus cycle extraction
+// ====================================================================
 
 void decode(FILE *stream) {
 
@@ -680,6 +699,10 @@ void decode(FILE *stream) {
       }
    }
 }
+
+// ====================================================================
+// Main program entry point
+// ====================================================================
 
 int main(int argc, char *argv[]) {
    arguments.idx_data     =  0;
