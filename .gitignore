@@ -1,3 +1,5 @@
 *~
 #*
-decoder
+decode6502
+*.bin
+
