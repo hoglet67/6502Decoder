@@ -31,29 +31,42 @@ int do_emulate = 0;
 const char *argp_program_version = "decode6502 0.1";
 
 const char *argp_program_bug_address = "<dave@hoglet.com>";
-
-static char doc[] = "Decoder for 6502/65C02 logic analyzer capture files.\n \
-\n \
-Default pin assignments are:  \n \
- - data: bit 0 (assumes 8 consecutive bits) \n \
- - rnw:  bit 8 \n \
- - sync: bit 9 \n \
- - rdy:  bit 10 \n \
- - phi2: bit 11 \n \
- \n \
-If sync is not connected, a heuristic based decoder is used.\n \
-If rdy is not connected, a value of '1' is assumed.\n \
-If phi2 is not connected, it once sample per clock cycle is assumed.\
+//ndatory or optional arguments to long options are also mandatory or optional
+static char doc[] = "\n\
+Decoder for 6502/65C02 logic analyzer capture files.\n\
+\n\
+FILENAME must be a binary capture file with 16 bit samples.\n\
+\n\
+If FILENAME is omitted, stdin is read instead.\n\
+\n\
+The default bit assignments for the input signals is:\n\
+ - data: bit  0 (assumes 8 consecutive bits)\n\
+ -  rnw: bit  8\n\
+ - sync: bit  9\n\
+ -  rdy: bit 10\n\
+ - phi2: bit 11\n\
+\n\
+To specify that an input is unconnected, include the option with an empty\n\
+BITNUM. e.g. --sync=\n\
+\n\
+If phi2 is not connected the capture file should contain one sample per\n\
+falling edge of phi2.\n\
+\n\
+If rdy is not connected a value of '1' is assumed.\n\
+\n\
+If sync is not connected a heuristic based decoder is used. This works well,\n\
+but can take several instructions to lock onto the instruction stream.\n\
+Use of sync, is preferred.\n\
 ";
 
-static char args_doc[] = "FILENAME";
+static char args_doc[] = "[FILENAME]";
 
 static struct argp_option options[] = {
-   { "data",           1, "BITNUM",                   0, "The bit number for data"},
+   { "data",           1, "BITNUM",                   0, "The start bit number for data"},
    { "rnw",            2, "BITNUM",                   0, "The bit number for rnw"},
-   { "sync",           3, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for sync, or empty if pin not connected"},
-   { "rdy",            4, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for  rdy, or empty if pin not connected"},
-   { "phi2",           5, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for phi2, or empty if pin not connected"},
+   { "sync",           3, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for sync, blank if unconnected"},
+   { "rdy",            4, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for rdy, blank if unconnected"},
+   { "phi2",           5, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for phi2, blank if unconnected"},
    { "state",        's',        0,                   0, "Show register/flag state."},
    { "c02",          'c',        0,                   0, "Enable 65C02 mode."},
    { "undocumented", 'u',        0,                   0, "Enable undocumented 6502 opcodes (currently incomplete)"},
@@ -125,9 +138,6 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       arguments->filename = arg;
       break;
    case ARGP_KEY_END:
-      if (state->arg_num == 0) {
-         argp_error(state, "missing capture file argument");
-      }
       if (state->arg_num > 1) {
          argp_error(state, "multiple capture file arguments");
       }
@@ -681,6 +691,7 @@ int main(int argc, char *argv[]) {
    arguments.c02          = 0;
    arguments.undocumented = 0;
    arguments.debug        = 0;
+   arguments.filename     = NULL;
 
    argp_parse(&argp, argc, argv, 0, 0, &arguments);
 
@@ -688,12 +699,17 @@ int main(int argc, char *argv[]) {
       do_emulate = 1;
    }
 
-   em_init(arguments.c02, arguments.undocumented);
-   FILE *stream = fopen(arguments.filename, "r");
-   if (stream == NULL) {
-      perror("failed to open capture file");
-      return 2;
+   FILE *stream;
+   if (!arguments.filename || !strcmp(arguments.filename, "-")) {
+      stream = stdin;
+   } else {
+      stream = fopen(arguments.filename, "r");
+      if (stream == NULL) {
+         perror("failed to open capture file");
+         return 2;
+      }
    }
+   em_init(arguments.c02, arguments.undocumented);
    decode(stream);
    fclose(stream);
    return 0;
