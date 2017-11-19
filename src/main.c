@@ -40,6 +40,7 @@ The default bit assignments for the input signals is:\n\
  - sync: bit  9\n\
  -  rdy: bit 10\n\
  - phi2: bit 11\n\
+ -  rst: bit 14\n\
 \n\
 To specify that an input is unconnected, include the option with an empty\n\
 BITNUM. e.g. --sync=\n\
@@ -62,6 +63,7 @@ static struct argp_option options[] = {
    { "sync",           3, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for sync, blank if unconnected"},
    { "rdy",            4, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for rdy, blank if unconnected"},
    { "phi2",           5, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for phi2, blank if unconnected"},
+   { "rst",            6, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for rst, blank if unconnected"},
    { "state",        's',        0,                   0, "Show register/flag state."},
    { "c02",          'c',        0,                   0, "Enable 65C02 mode."},
    { "undocumented", 'u',        0,                   0, "Enable undocumented 6502 opcodes (currently incomplete)"},
@@ -75,6 +77,7 @@ struct arguments {
    int idx_sync;
    int idx_rdy;
    int idx_phi2;
+   int idx_rst;
    int show_state;
    int c02;
    int undocumented;
@@ -109,6 +112,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->idx_phi2 = atoi(arg);
       } else {
          arguments->idx_phi2 = -1;
+      }
+      break;
+   case   6:
+      if (strlen(arg) > 0) {
+         arguments->idx_rst = atoi(arg);
+      } else {
+         arguments->idx_rst = -1;
       }
       break;
    case 'c':
@@ -154,7 +164,7 @@ static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 // Predicted PC value
 int pc = -1;
 
-static void analyze_instruction(int opcode, int op1, int op2, int read_accumulator, int write_accumulator, int write_count, int operand, int num_cycles) {
+static void analyze_instruction(int opcode, int op1, int op2, int read_accumulator, int write_accumulator, int write_count, int operand, int num_cycles, int rst_seen) {
 
    int offset;
    char target[16];
@@ -182,13 +192,19 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
    }
 
    if (pc < 0) {
-      printf(" ????: ");
+      printf("????: ");
    } else {
-      printf(" %04X: ", pc);
+      printf("%04X: ", pc);
    }
 
    int numchars = 0;
-   if (write_count == 3 && opcode != 0) {
+   if (rst_seen) {
+      // Annotate a reset
+      numchars = printf("RESET !!");
+      if (do_emulate) {
+         em_interrupt(write_accumulator & 0xff);
+      }
+   } else if (write_count == 3 && opcode != 0) {
       // Annotate an interrupt
       numchars = printf("INTERRUPT !!");
       if (do_emulate) {
@@ -301,7 +317,7 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
 // Sync-less bus cycle decoder
 // ====================================================================
 
-void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
+void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) {
 
    // Count of the 6502 bus cycles
    static int cyclenum             = 0;
@@ -320,9 +336,26 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
    static int bus_cycle            = 0;
    static int cycle_count          = 0;
    static int opcount              = 0;
+   static int rst_seen             = 0;
 
    int bus_data = *bus_data_q;
    int pin_rnw = *pin_rnw_q;
+   int pin_rst = *pin_rst_q;
+
+   // Detect a rising edge of reset
+   if (pin_rst == 0) {
+      if (*(pin_rst_q + 1) == 1) {
+         cycle_count = 7;
+         bus_cycle = -2;
+         opcode = 0;
+         rst_seen = 1;
+      }
+      return;
+   }
+
+   if (arguments.debug >= 1) {
+      printf("%d %02x %d %d\n", sample_count, bus_data, pin_rnw, pin_rst);
+   }
 
    // TODO: Find a more correct way of starting up!
    InstrType *instr = &instr_table[opcode >= 0 ? opcode : 0xEA];
@@ -343,7 +376,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
          if (index >= 0) {
             int base = (read_accumulator >> 8) & 0xffff;
             if ((base & 0xff00) != ((base + index) & 0xff00)) {
-               cycle_count ++;
+               cycle_count++;
             }
          }
       }
@@ -360,7 +393,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
             if (index >= 0) {
                int base = op1 + (op2 << 8);
                if ((base & 0xff00) != ((base + index) & 0xff00)) {
-                  cycle_count ++;
+                  cycle_count++;
                }
             }
          }
@@ -451,7 +484,8 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
 
       // Analyze the  previous instrucution
       if (opcode >= 0) {
-         analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand, cyclenum - last_cyclenum);
+         analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand, cyclenum - last_cyclenum, rst_seen);
+         rst_seen = 0;
       }
       last_cyclenum  = cyclenum;
 
@@ -469,7 +503,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
 
    } else if (pin_rnw == 0) {
 
-      write_count ++;
+      write_count++;
       write_accumulator = (write_accumulator << 8) | bus_data;
 
    } else {
@@ -487,26 +521,26 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q) {
    bus_cycle++;
 
    // Increment the cycle number (used only to detect taken branches)
-   cyclenum ++;
+   cyclenum++;
 }
 
-void lookahead_decode_cycle_without_sync(int bus_data, int pin_rnw) {
+void lookahead_decode_cycle_without_sync(int bus_data, int pin_rnw, int pin_rst) {
    static int bus_data_q[DEPTH];
    static int pin_rnw_q[DEPTH];
+   static int pin_rst_q[DEPTH];
    static int fill = 0;
 
    bus_data_q[fill] = bus_data;
    pin_rnw_q[fill] = pin_rnw;
+   pin_rst_q[fill] = pin_rst;
    if (fill < DEPTH - 1) {
       fill++;
    } else {
-      decode_cycle_without_sync(bus_data_q, pin_rnw_q);
-      if (arguments.debug >= 1) {
-         printf("%d %02x %d\n", sample_count, *bus_data_q, *pin_rnw_q);
-      }
+      decode_cycle_without_sync(bus_data_q, pin_rnw_q, pin_rst_q);
       for (int i = 0; i < DEPTH - 1; i++) {
          bus_data_q[i] = bus_data_q[i + 1];
          pin_rnw_q[i] = pin_rnw_q[i + 1];
+         pin_rst_q[i] = pin_rst_q[i + 1];
       }
    }
 }
@@ -523,7 +557,7 @@ enum Cycle {
    Cycle_MEMWR
 };
 
-void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync) {
+void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst) {
 
    // Count of the 6502 bus cycles
    static int cyclenum             = 0;
@@ -541,66 +575,81 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync) {
    static int write_count          = 0;
    static int read_accumulator     = 0;
    static int write_accumulator    = 0;
+   static int last_pin_rst         = 1;
+   static int rst_seen             = 0;
 
-   if (arguments.debug >= 1) {
-      printf("%d %02x %d %d\n", sample_count, bus_data, pin_rnw, pin_sync);
-   }
+   if (pin_rst == 1) {
 
-   if (pin_sync == 1) {
 
-      // Sync indicates the start of a new instruction, the following variables pertain to the previous instruction
-      // opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand
-
-      // Analyze the  previous instrucution
-      if (opcode >= 0) {
-         analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand, cyclenum - last_cyclenum);
+      if (arguments.debug >= 1) {
+         printf("%d %02x %d %d %d\n", sample_count, bus_data, pin_rnw, pin_sync, pin_rst);
       }
-      last_cyclenum  = cyclenum;
 
-      // Re-initialize the state for the new instruction
-      cycle             = Cycle_FETCH;
-      opcode            = bus_data;
-      opcount           = instr_table[opcode].len - 1;
-      write_count       = 0;
-      operand           = -1;
-      read_accumulator  = 0;
-      write_accumulator = 0;
+      if (last_pin_rst == 0) {
+         rst_seen = 1;
+         opcode = -1;
+      }
 
-   } else if (pin_rnw == 0) {
-      cycle = Cycle_MEMWR;
-      write_count ++;
-      write_accumulator = (write_accumulator << 8) | bus_data;
+      if (pin_sync == 1) {
 
-   } else if (cycle == Cycle_FETCH && opcount > 0) {
-      cycle = Cycle_OP1;
-      opcount -= 1;
-      op1 = bus_data;
-      operand = bus_data;
+         // Sync indicates the start of a new instruction, the following variables pertain to the previous instruction
+         // opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand
 
-   } else if (cycle == Cycle_OP1 && opcount > 0) {
-      if (opcode == 0x20) { // JSR is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
-         cycle = Cycle_MEMRD;
-      } else {
+         // Analyze the  previous instrucution
+         if (opcode >= 0) {
+            analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand, cyclenum - last_cyclenum, rst_seen);
+            rst_seen = 0;
+         }
+         last_cyclenum  = cyclenum;
+
+         // Re-initialize the state for the new instruction
+         cycle             = Cycle_FETCH;
+         opcode            = bus_data;
+         opcount           = instr_table[opcode].len - 1;
+         write_count       = 0;
+         operand           = -1;
+         read_accumulator  = 0;
+         write_accumulator = 0;
+
+      } else if (pin_rnw == 0) {
+         cycle = Cycle_MEMWR;
+         write_count++;
+         write_accumulator = (write_accumulator << 8) | bus_data;
+
+      } else if (cycle == Cycle_FETCH && opcount > 0) {
+         cycle = Cycle_OP1;
+         opcount -= 1;
+         op1 = bus_data;
+         operand = bus_data;
+
+      } else if (cycle == Cycle_OP1 && opcount > 0) {
+         if (opcode == 0x20) { // JSR is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
+            cycle = Cycle_MEMRD;
+         } else {
+            cycle = Cycle_OP2;
+            opcount -= 1;
+            op2 = bus_data;
+         }
+
+      } else if (opcode == 0x20 && write_count < 3) {
+         // JSR and not an interrupt, see above
          cycle = Cycle_OP2;
          opcount -= 1;
          op2 = bus_data;
+
+      } else {
+         cycle = Cycle_MEMRD;
+         operand = bus_data;
+         read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
+
       }
-
-   } else if (opcode == 0x20 && write_count < 3) {
-      // JSR and not an interrupt, see above
-      cycle = Cycle_OP2;
-      opcount -= 1;
-      op2 = bus_data;
-
-   } else {
-      cycle = Cycle_MEMRD;
-      operand = bus_data;
-      read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
-
    }
 
    // Increment the cycle number (used only to detect taken branches)
-   cyclenum ++;
+   cyclenum++;
+
+   // Maintain an edge detector for rst
+   last_pin_rst = pin_rst;
 }
 
 // ====================================================================
@@ -615,6 +664,7 @@ void decode(FILE *stream) {
    int idx_sync  = arguments.idx_sync;
    int idx_rdy   = arguments.idx_rdy ;
    int idx_phi2  = arguments.idx_phi2;
+   int idx_rst   = arguments.idx_rst;
 
    // Pin values
    int bus_data  =  0;
@@ -622,6 +672,7 @@ void decode(FILE *stream) {
    int pin_sync  =  0;
    int pin_rdy   =  1;
    int pin_phi2  =  0;
+   int pin_rst   =  1;
 
    int num;
 
@@ -640,6 +691,7 @@ void decode(FILE *stream) {
 
          // The current 16-bit capture sample
          uint16_t sample = *sampleptr++;
+         // TODO: fix the hard coded values!!!
          if (arguments.debug >= 2) {
             printf("%d %02x %x %x %x %x\n", sample_count, sample&255, (sample >> 8)&1,  (sample >> 9)&1,  (sample >> 10)&1,  (sample >> 11)&1  );
          }
@@ -657,7 +709,10 @@ void decode(FILE *stream) {
                pin_sync = (sample >> idx_sync) & 1;
             }
             if (idx_rdy >= 0) {
-               pin_rdy = (sample >> idx_rdy ) & 1;
+               pin_rdy = (sample >> idx_rdy) & 1;
+            }
+            if (idx_rst >= 0) {
+               pin_rst = (sample >> idx_rst) & 1;
             }
 
          } else {
@@ -681,7 +736,10 @@ void decode(FILE *stream) {
                pin_sync = (last_sample >> idx_sync) & 1;
             }
             if (idx_rdy >= 0) {
-               pin_rdy = (last_sample >> idx_rdy ) & 1;
+               pin_rdy = (last_sample >> idx_rdy) & 1;
+            }
+            if (idx_rst >= 0) {
+               pin_rst = (last_sample >> idx_rst) & 1;
             }
             // Sample write data before the clock edge, and read data after the clock edge
             bus_data  = ((pin_rnw ? sample : last_sample) >> idx_data ) & 255;
@@ -692,9 +750,9 @@ void decode(FILE *stream) {
             continue;
 
          if (idx_sync < 0) {
-            lookahead_decode_cycle_without_sync(bus_data, pin_rnw);
+            lookahead_decode_cycle_without_sync(bus_data, pin_rnw, pin_rst);
          } else {
-            decode_cycle_with_sync(bus_data, pin_rnw, pin_sync);
+            decode_cycle_with_sync(bus_data, pin_rnw, pin_sync, pin_rst);
          }
       }
    }
@@ -710,6 +768,7 @@ int main(int argc, char *argv[]) {
    arguments.idx_sync     =  9;
    arguments.idx_rdy      = 10;
    arguments.idx_phi2     = 11;
+   arguments.idx_rst      = 14;
    arguments.show_state   = 0;
    arguments.c02          = 0;
    arguments.undocumented = 0;
