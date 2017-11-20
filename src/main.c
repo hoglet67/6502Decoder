@@ -65,6 +65,7 @@ static struct argp_option options[] = {
    { "phi2",           5, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for phi2, blank if unconnected"},
    { "rst",            6, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for rst, blank if unconnected"},
    { "state",        's',        0,                   0, "Show register/flag state."},
+   { "hex",          'h',        0,                   0, "Show hex bytes of instruction."},
    { "c02",          'c',        0,                   0, "Enable 65C02 mode."},
    { "undocumented", 'u',        0,                   0, "Enable undocumented 6502 opcodes (currently incomplete)"},
    { "debug",        'd',  "LEVEL",                   0, "Sets debug level (0 1 or 2)"},
@@ -79,6 +80,7 @@ struct arguments {
    int idx_phi2;
    int idx_rst;
    int show_state;
+   int show_hex;
    int c02;
    int undocumented;
    int debug;
@@ -129,6 +131,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       break;
    case 'd':
       arguments->debug = atoi(arg);
+      break;
+   case 'h':
+      arguments->show_hex = 1;
       break;
    case 's':
       arguments->show_state = 1;
@@ -192,25 +197,40 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
    }
 
    if (pc < 0) {
-      printf("????: ");
+      printf("???? : ");
    } else {
-      printf("%04X: ", pc);
+      printf("%04X : ", pc);
    }
 
    int numchars = 0;
    if (rst_seen) {
       // Annotate a reset
+      if (arguments.show_hex) {
+         printf("         : ");
+      }
       numchars = printf("RESET !!");
       if (do_emulate) {
          em_reset();
       }
    } else if (write_count == 3 && opcode != 0) {
       // Annotate an interrupt
+      if (arguments.show_hex) {
+         printf("         : ");
+      }
       numchars = printf("INTERRUPT !!");
       if (do_emulate) {
          em_interrupt(write_accumulator & 0xff);
       }
    } else {
+      if (arguments.show_hex) {
+         if (instr->len == 1) {
+            printf("%02X       : ", opcode);
+         } else if (instr->len == 2) {
+            printf("%02X %02X    : ", opcode, op1);
+         } else {
+            printf("%02X %02X %02X : ", opcode, op1, op2);
+         }
+      }
       // Annotate a normal instruction
       const char *mnemonic = instr->mnemonic;
       const char *fmt = instr->fmt;
@@ -769,6 +789,7 @@ int main(int argc, char *argv[]) {
    arguments.idx_rdy      = 10;
    arguments.idx_phi2     = 11;
    arguments.idx_rst      = 14;
+   arguments.show_hex   = 0;
    arguments.show_state   = 0;
    arguments.c02          = 0;
    arguments.undocumented = 0;
