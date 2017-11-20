@@ -34,7 +34,7 @@ FILENAME must be a binary capture file with 16 bit samples.\n\
 \n\
 If FILENAME is omitted, stdin is read instead.\n\
 \n\
-The default bit assignments for the input signals is:\n\
+The default bit assignments for the input signals are:\n\
  - data: bit  0 (assumes 8 consecutive bits)\n\
  -  rnw: bit  8\n\
  - sync: bit  9\n\
@@ -321,15 +321,19 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
    } else if (opcode == 0x80) {
       // BRA
       pc += ((int8_t)(op1)) + 2;
+      pc &= 0xffff;
    } else if ((opcode & 0x0f) == 0x0f && num_cycles != 2) {
       // BBR/BBS
       pc += ((int8_t)(op2)) + 2;
+      pc &= 0xffff;
    } else if ((opcode & 0x1f) == 0x10 && num_cycles != 2) {
       // BXX: op1 if taken
       pc += ((int8_t)(op1)) + 2;
+      pc &= 0xffff;
    } else {
       // Otherwise, increment pc by length of instuction
       pc += instr->len;
+      pc &= 0xffff;
    }
 }
 
