@@ -595,6 +595,7 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
    static int op1                  = 0;
    static int op2                  = 0;
    static int operand              = 0;
+   static int bus_cycle            = 0;
    static int write_count          = 0;
    static int read_accumulator     = 0;
    static int write_accumulator    = 0;
@@ -602,11 +603,6 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
    static int rst_seen             = 0;
 
    if (pin_rst == 1) {
-
-
-      if (arguments.debug >= 1) {
-         printf("%d %02x %d %d %d\n", sample_count, bus_data, pin_rnw, pin_sync, pin_rst);
-      }
 
       if (last_pin_rst == 0) {
          rst_seen = 1;
@@ -627,6 +623,7 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
 
          // Re-initialize the state for the new instruction
          cycle             = Cycle_FETCH;
+         bus_cycle         = 0;
          opcode            = bus_data;
          opcount           = instr_table[opcode].len - 1;
          write_count       = 0;
@@ -636,7 +633,9 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
 
       } else if (pin_rnw == 0) {
          cycle = Cycle_MEMWR;
-         write_count++;
+         if (bus_cycle == 2 || bus_cycle == 3 || bus_cycle == 4) {
+            write_count++;
+         }
          write_accumulator = (write_accumulator << 8) | bus_data;
 
       } else if (cycle == Cycle_FETCH && opcount > 0) {
@@ -666,6 +665,12 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
          read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
 
       }
+
+      if (arguments.debug >= 1) {
+         printf("%d %02x %d %d %d\n", bus_cycle, bus_data, pin_rnw, pin_sync, pin_rst);
+      }
+
+      bus_cycle++;
    }
 
    // Increment the cycle number (used only to detect taken branches)
