@@ -169,7 +169,7 @@ static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 // Predicted PC value
 int pc = -1;
 
-static void analyze_instruction(int opcode, int op1, int op2, int read_accumulator, int write_accumulator, int write_count, int operand, int num_cycles, int rst_seen) {
+static void analyze_instruction(int opcode, int op1, int op2, int read_accumulator, int write_accumulator, int intr_seen, int operand, int num_cycles, int rst_seen) {
 
    int offset;
    char target[16];
@@ -180,7 +180,7 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
    // For instructions that push the current address to the stack we
    // can use the stacked address to determine the current PC
    int newpc = -1;
-   if (write_count == 3) {
+   if (intr_seen) {
       // IRQ/NMI/RST
       newpc = (write_accumulator >> 8) & 0xffff;
    } else if (opcode == 0x20) {
@@ -212,7 +212,7 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
       if (do_emulate) {
          em_reset();
       }
-   } else if (write_count == 3 && opcode != 0) {
+   } else if (intr_seen && opcode != 0) {
       // Annotate an interrupt
       if (arguments.show_hex) {
          printf("         : ");
@@ -306,7 +306,7 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
    }
 
    // Look for control flow changes and update the PC
-   if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c || write_count == 3) {
+   if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c || intr_seen) {
       // RTI, BRK, INTR, JMP (ind), JMP (ind, X), IRQ/NMI/RST
       pc = (read_accumulator >> 8) & 0xffff;
    } else if (opcode == 0x20 || opcode == 0x4c) {
@@ -355,12 +355,12 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    static int op2                  = 0;
    static int read_accumulator     = 0;
    static int write_accumulator    = 0;
-   static int write_count          = 0;
    static int operand              = 0;
    static int bus_cycle            = 0;
    static int cycle_count          = 0;
    static int opcount              = 0;
    static int rst_seen             = 0;
+   static int intr_seen            = 0;
 
    int bus_data = *bus_data_q;
    int pin_rnw = *pin_rnw_q;
@@ -497,14 +497,16 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    // Detect interrupts as early as possible...
    if ((bus_cycle == 2) && (pin_rnw == 0) && (*(pin_rnw_q + 1) == 0) && (*(pin_rnw_q + 2) == 0)) {
       cycle_count = 7;
+      intr_seen = 1;
    }
 
    if (bus_cycle == cycle_count) {
 
       // Analyze the  previous instrucution
       if (opcode >= 0) {
-         analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand, cyclenum - last_cyclenum, rst_seen);
+         analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, intr_seen, operand, cyclenum - last_cyclenum, rst_seen);
          rst_seen = 0;
+         intr_seen = 0;
       }
       last_cyclenum  = cyclenum;
 
@@ -514,7 +516,6 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       op2               = 0;
       read_accumulator  = 0;
       write_accumulator = 0;
-      write_count       = 0;
       operand           = 0;
       bus_cycle         = 0;
       cycle_count       = instr_table[opcode].cycles ;
@@ -522,7 +523,6 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
 
    } else if (pin_rnw == 0) {
 
-      write_count++;
       write_accumulator = (write_accumulator << 8) | bus_data;
 
    } else {
@@ -616,7 +616,7 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
 
          // Analyze the  previous instrucution
          if (opcode >= 0) {
-            analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand, cyclenum - last_cyclenum, rst_seen);
+            analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, write_count == 3, operand, cyclenum - last_cyclenum, rst_seen);
             rst_seen = 0;
          }
          last_cyclenum  = cyclenum;
