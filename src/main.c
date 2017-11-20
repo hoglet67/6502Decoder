@@ -369,16 +369,12 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    // Detect a rising edge of reset
    if (pin_rst == 0) {
       if (*(pin_rst_q + 1) == 1) {
-         cycle_count = 7;
-         bus_cycle = -2;
+         cycle_count = 8;
+         bus_cycle = -1;
          opcode = 0;
          rst_seen = 1;
       }
       return;
-   }
-
-   if (arguments.debug >= 1) {
-      printf("%d %02x %d %d\n", sample_count, bus_data, pin_rnw, pin_rst);
    }
 
    // TODO: Find a more correct way of starting up!
@@ -540,6 +536,10 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    // JSR is <opcode> <op1> <dummy stack rd> <stack wr> <stack wr> <op2>
    if (opcode == 0x20) {
       op2 = bus_data;
+   }
+
+   if (arguments.debug >= 1) {
+      printf("%d %02x %d %d\n", bus_cycle, bus_data, pin_rnw, pin_rst);
    }
 
    bus_cycle++;
