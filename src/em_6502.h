@@ -3,6 +3,8 @@
 
 void em_init(int support_c02, int support_undocumented);
 
+void em_reset();
+
 void em_interrupt(int operand);
 
 int em_get_N();

@@ -135,6 +135,14 @@ void em_interrupt(int operand) {
       D = 0;
    }
 }
+
+void em_reset() {
+   I = 1;
+   if (c02) {
+      D = 0;
+   }
+}
+
 static void write_hex1(char *buffer, int value) {
    *buffer = value + (value < 10 ? '0' : 'A' - 10);
 }

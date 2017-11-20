@@ -202,7 +202,7 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
       // Annotate a reset
       numchars = printf("RESET !!");
       if (do_emulate) {
-         em_interrupt(write_accumulator & 0xff);
+         em_reset();
       }
    } else if (write_count == 3 && opcode != 0) {
       // Annotate an interrupt
