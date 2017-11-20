@@ -572,14 +572,6 @@ void lookahead_decode_cycle_without_sync(int bus_data, int pin_rnw, int pin_rst)
 // Sync-based bus cycle decoder
 // ====================================================================
 
-enum Cycle {
-   Cycle_FETCH,
-   Cycle_OP1,
-   Cycle_OP2,
-   Cycle_MEMRD,
-   Cycle_MEMWR
-};
-
 void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst) {
 
    // Count of the 6502 bus cycles
@@ -589,7 +581,6 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
    static int last_cyclenum        = 0;
 
    // State to decode the 6502 bus activity
-   static int cycle                = Cycle_MEMRD;
    static int opcode               = -1;
    static int opcount              = 0;
    static int op1                  = 0;
@@ -621,8 +612,6 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
          }
          last_cyclenum  = cyclenum;
 
-         // Re-initialize the state for the new instruction
-         cycle             = Cycle_FETCH;
          bus_cycle         = 0;
          opcode            = bus_data;
          opcount           = instr_table[opcode].len - 1;
@@ -632,38 +621,24 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
          write_accumulator = 0;
 
       } else if (pin_rnw == 0) {
-         cycle = Cycle_MEMWR;
          if (bus_cycle == 2 || bus_cycle == 3 || bus_cycle == 4) {
             write_count++;
          }
          write_accumulator = (write_accumulator << 8) | bus_data;
 
-      } else if (cycle == Cycle_FETCH && opcount > 0) {
-         cycle = Cycle_OP1;
+      } else if (bus_cycle == 1 && opcount > 0) {
          opcount -= 1;
          op1 = bus_data;
          operand = bus_data;
 
-      } else if (cycle == Cycle_OP1 && opcount > 0) {
-         if (opcode == 0x20) { // JSR is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
-            cycle = Cycle_MEMRD;
-         } else {
-            cycle = Cycle_OP2;
-            opcount -= 1;
-            op2 = bus_data;
-         }
-
-      } else if (opcode == 0x20 && write_count < 3) {
-         // JSR and not an interrupt, see above
-         cycle = Cycle_OP2;
+      } else if (bus_cycle == (opcode == 0x20 && write_count < 3 ? 5 : 2) && opcount > 0) {
+         // JSR is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
          opcount -= 1;
          op2 = bus_data;
 
       } else {
-         cycle = Cycle_MEMRD;
          operand = bus_data;
          read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
-
       }
 
       if (arguments.debug >= 1) {
