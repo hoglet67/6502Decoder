@@ -19,6 +19,15 @@ uint16_t buffer[BUFSIZE];
 // Whether to emulate each decoded instruction, to track additional state (registers and flags)
 int do_emulate = 0;
 
+#define MACHINE_DEFAULT 0
+#define MACHINE_MASTER  1
+
+const char *machine_names[] = {
+   "default",
+   "master",
+   0
+};
+
 // ====================================================================
 // Argp processing
 // ====================================================================
@@ -64,6 +73,7 @@ static struct argp_option options[] = {
    { "rdy",            4, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for rdy, blank if unconnected"},
    { "phi2",           5, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for phi2, blank if unconnected"},
    { "rst",            6, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for rst, blank if unconnected"},
+   { "machine",      'm', "MACHINE",                  0, "Enable machine specific behaviour"},
    { "state",        's',        0,                   0, "Show register/flag state."},
    { "hex",          'h',        0,                   0, "Show hex bytes of instruction."},
    { "c02",          'c',        0,                   0, "Enable 65C02 mode."},
@@ -79,6 +89,7 @@ struct arguments {
    int idx_rdy;
    int idx_phi2;
    int idx_rst;
+   int machine;
    int show_state;
    int show_hex;
    int c02;
@@ -88,6 +99,7 @@ struct arguments {
 } arguments;
 
 static error_t parse_opt(int key, char *arg, struct argp_state *state) {
+   int i;
    struct arguments *arguments = state->input;
    switch (key) {
    case   1:
@@ -128,6 +140,17 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          argp_error(state, "undocumented and c02 flags mutually exclusive");
       }
       arguments->c02 = 1;
+      break;
+   case 'm':
+      i = 0;
+      while (machine_names[i]) {
+         if (strcasecmp(arg, machine_names[i]) == 0) {
+            arguments->machine = i;
+            return 0;
+         }
+         i++;
+      }
+      argp_error(state, "unsupported machine type");
       break;
    case 'd':
       arguments->debug = atoi(arg);
@@ -384,7 +407,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       op1 = bus_data;
    }
 
-   if (bus_cycle == 2 && opcount >= 2) {
+   if (bus_cycle == ((opcode == 0x20) ? 5 : 2) && opcount >= 2) {
       op2 = bus_data;
    }
 
@@ -484,6 +507,48 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       }
    }
 
+   // Master specific behaviour to remain in sync if rdy is not available
+   if ((arguments.machine == MACHINE_MASTER) && (arguments.idx_rdy < 0)) {
+      static int mhz1_phase = 0;
+      if ((bus_cycle == 3) && (instr->len == 3)) {
+         if ((op2 == 0xfc) ||                 // &FC00-&FCFF
+             (op2 == 0xfd) ||                 // &FD00-&FDFF
+             (op2 == 0xfe && (
+                ((op1 & 0xE0) == 0x00) ||     // &FE00-&FE1F
+                ((op1 & 0xC0) == 0x40) ||     // &FE40-&FE7F
+                ((op1 & 0xE0) == 0x80) ||     // &FE80-&FE9F
+                ((op1 & 0xE0) == 0xC0)        // &FEC0-&FEDF
+                ))) {
+            // Use STA/STX/STA to determine 1MHz clock phase
+            if (opcode == 0x8C || opcode == 0x8D || opcode == 0x8E) {
+               if (*(bus_data_q + 1) == bus_data) {
+                  int new_phase;
+                  if (*(bus_data_q + 2) == bus_data) {
+                     new_phase = 1;
+                  } else {
+                     new_phase = 0;
+                  }
+                  if (mhz1_phase != new_phase) {
+                     printf("correcting 1MHz phase\n");
+                     mhz1_phase = new_phase;
+                  }
+               } else {
+                  printf("fail: 1MHz access not extended as expected\n");
+               }
+            }
+            // Correct cycle count based on expected cycle stretching behaviour
+            if (opcode == 0x9D) {
+               // STA abs, X which has an unfortunate dummy cycle
+               cycle_count += 2 + mhz1_phase;
+            } else {
+               cycle_count += 1 + mhz1_phase;
+            }
+         }
+      }
+      // Toggle the phase every cycle
+      mhz1_phase = 1 - mhz1_phase;
+   }
+
    // An interrupt sequence looks like:
    // 0 <opcode>            Rd
    // 1 <opcode>            Rd // address not incremented
@@ -530,11 +595,6 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       operand = bus_data;
       read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
 
-   }
-
-   // JSR is <opcode> <op1> <dummy stack rd> <stack wr> <stack wr> <op2>
-   if (opcode == 0x20) {
-      op2 = bus_data;
    }
 
    if (arguments.debug >= 1) {
@@ -772,7 +832,8 @@ int main(int argc, char *argv[]) {
    arguments.idx_rdy      = 10;
    arguments.idx_phi2     = 11;
    arguments.idx_rst      = 14;
-   arguments.show_hex   = 0;
+   arguments.machine      = MACHINE_DEFAULT;
+   arguments.show_hex     = 0;
    arguments.show_state   = 0;
    arguments.c02          = 0;
    arguments.undocumented = 0;
