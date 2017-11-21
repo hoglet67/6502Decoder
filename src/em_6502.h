@@ -11,6 +11,10 @@ int em_get_N();
 
 int em_get_V();
 
+int em_get_D();
+
+int em_get_I();
+
 int em_get_Z();
 
 int em_get_C();
@@ -60,6 +64,7 @@ typedef struct {
    int undocumented;
    AddrMode mode;
    int cycles;
+   int decimalcorrect;
    OpType optype;
    void (*emulate)(int);
    int len;

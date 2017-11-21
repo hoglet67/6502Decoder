@@ -270,7 +270,7 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
             if (offset < 0) {
                sprintf(target, "pc-%d", -offset);
             } else {
-               sprintf(target,"pc-%d", offset);
+               sprintf(target,"pc+%d", offset);
             }
          } else {
             sprintf(target, "%04X", pc + 2 + offset);
@@ -378,7 +378,6 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    static int op2                  = 0;
    static int read_accumulator     = 0;
    static int write_accumulator    = 0;
-   static int operand              = 0;
    static int bus_cycle            = 0;
    static int cycle_count          = 0;
    static int opcount              = 0;
@@ -409,6 +408,11 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
 
    if (bus_cycle == ((opcode == 0x20) ? 5 : 2) && opcount >= 2) {
       op2 = bus_data;
+   }
+
+   // Account for extra cycle in ADC/SBC in decimal mode in C02
+   if (arguments.c02 && instr->decimalcorrect && bus_cycle == 1 && em_get_D() == 1) {
+      cycle_count++;
    }
 
    // Account for extra cycle in a page crossing in (indirect), Y
@@ -566,9 +570,9 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    }
 
    if (bus_cycle == cycle_count) {
-
       // Analyze the  previous instrucution
       if (opcode >= 0) {
+         int operand = instr->mode == IMM ? op1 : ((read_accumulator >> 16) & 255);
          analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, intr_seen, operand, cyclenum - last_cyclenum, rst_seen);
          rst_seen = 0;
          intr_seen = 0;
@@ -581,7 +585,6 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       op2               = 0;
       read_accumulator  = 0;
       write_accumulator = 0;
-      operand           = 0;
       bus_cycle         = 0;
       cycle_count       = instr_table[opcode].cycles ;
       opcount           = instr_table[opcode].len - 1;
@@ -592,7 +595,6 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
 
    } else {
 
-      operand = bus_data;
       read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
 
    }
@@ -643,9 +645,9 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
    // State to decode the 6502 bus activity
    static int opcode               = -1;
    static int opcount              = 0;
+   static int mode                 = 0;
    static int op1                  = 0;
    static int op2                  = 0;
-   static int operand              = 0;
    static int bus_cycle            = 0;
    static int write_count          = 0;
    static int read_accumulator     = 0;
@@ -667,6 +669,7 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
 
          // Analyze the  previous instrucution
          if (opcode >= 0) {
+            int operand = mode == IMM ? op1 : ((read_accumulator >> 16) & 255);
             analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, write_count == 3, operand, cyclenum - last_cyclenum, rst_seen);
             rst_seen = 0;
          }
@@ -675,8 +678,8 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
          bus_cycle         = 0;
          opcode            = bus_data;
          opcount           = instr_table[opcode].len - 1;
+         mode              = instr_table[opcode].mode;
          write_count       = 0;
-         operand           = -1;
          read_accumulator  = 0;
          write_accumulator = 0;
 
@@ -686,18 +689,14 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
          }
          write_accumulator = (write_accumulator << 8) | bus_data;
 
-      } else if (bus_cycle == 1 && opcount > 0) {
-         opcount -= 1;
+      } else if (bus_cycle == 1 && opcount >= 1) {
          op1 = bus_data;
-         operand = bus_data;
 
-      } else if (bus_cycle == (opcode == 0x20 && write_count < 3 ? 5 : 2) && opcount > 0) {
+      } else if (bus_cycle == (opcode == 0x20 && write_count < 3 ? 5 : 2) && opcount >= 2) {
          // JSR is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
-         opcount -= 1;
          op2 = bus_data;
 
       } else {
-         operand = bus_data;
          read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
       }
 
