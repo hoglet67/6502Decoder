@@ -192,7 +192,7 @@ static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 // Predicted PC value
 int pc = -1;
 
-static void analyze_instruction(int opcode, int op1, int op2, int read_accumulator, int write_accumulator, int intr_seen, int operand, int num_cycles, int rst_seen) {
+static void analyze_instruction(int opcode, int op1, int op2, int read_accumulator, int write_accumulator, int intr_seen, int num_cycles, int rst_seen) {
 
    int offset;
    char target[16];
@@ -302,6 +302,9 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
       // Emulate the instruction
       if (do_emulate) {
          if (instr->emulate) {
+            // The extra cycle for BCD correction on the C02 adds a bit of complexity here
+            int bcd_extra = instr->decimalcorrect && (em_get_D() == 1);
+            int operand = instr->mode == IMM ? op1 : ((read_accumulator >> (bcd_extra ? 8 : 16)) & 255);
             if (opcode == 0x40) {
                // special case RTI, operand (flags) is the first read cycle of three
                operand = read_accumulator & 0xff;
@@ -572,10 +575,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    if (bus_cycle == cycle_count) {
       // Analyze the  previous instrucution
       if (opcode >= 0) {
-         // The extra cycle for BCD correction on the C02 adds a bit of complexity here
-         int bcd_extra = instr->decimalcorrect && (em_get_D() == 1);
-         int operand = instr->mode == IMM ? op1 : ((read_accumulator >> (bcd_extra ? 8 : 16)) & 255);
-         analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, intr_seen, operand, cyclenum - last_cyclenum, rst_seen);
+         analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, intr_seen, cyclenum - last_cyclenum, rst_seen);
          rst_seen = 0;
          intr_seen = 0;
       }
@@ -647,7 +647,6 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
    // State to decode the 6502 bus activity
    static int opcode               = -1;
    static int opcount              = 0;
-   static int mode                 = 0;
    static int op1                  = 0;
    static int op2                  = 0;
    static int bus_cycle            = 0;
@@ -671,10 +670,7 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
 
          // Analyze the  previous instrucution
          if (opcode >= 0) {
-            // The extra cycle for BCD correction on the C02 adds a bit of complexity here
-            int bcd_extra = instr_table[opcode].decimalcorrect && (em_get_D() == 1);
-            int operand = mode == IMM ? op1 : ((read_accumulator >> (bcd_extra ? 8 : 16)) & 255);
-            analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, write_count == 3, operand, cyclenum - last_cyclenum, rst_seen);
+            analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, write_count == 3, cyclenum - last_cyclenum, rst_seen);
             rst_seen = 0;
          }
          last_cyclenum  = cyclenum;
@@ -682,7 +678,6 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
          bus_cycle         = 0;
          opcode            = bus_data;
          opcount           = instr_table[opcode].len - 1;
-         mode              = instr_table[opcode].mode;
          write_count       = 0;
          read_accumulator  = 0;
          write_accumulator = 0;
