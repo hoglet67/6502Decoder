@@ -776,6 +776,7 @@ static void op_TAX(int operand) {
       X = A;
       set_NZ(X);
    } else {
+      X = -1;
       set_NZ_unknown();
    }
 }
@@ -785,6 +786,7 @@ static void op_TAY(int operand) {
       Y = A;
       set_NZ(Y);
    } else {
+      Y = -1;
       set_NZ_unknown();
    }
 }
@@ -802,6 +804,7 @@ static void op_TSX(int operand) {
       X = S;
       set_NZ(X);
    } else {
+      X = -1;
       set_NZ_unknown();
    }
 }
@@ -811,6 +814,7 @@ static void op_TXA(int operand) {
       A = X;
       set_NZ(A);
    } else {
+      A = -1;
       set_NZ_unknown();
    }
 }
@@ -818,6 +822,8 @@ static void op_TXA(int operand) {
 static void op_TXS(int operand) {
    if (X >= 0) {
       S = X;
+   } else {
+      S = -1;
    }
 }
 
@@ -826,6 +832,7 @@ static void op_TYA(int operand) {
       A = Y;
       set_NZ(A);
    } else {
+      A = -1;
       set_NZ_unknown();
    }
 }
