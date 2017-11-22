@@ -304,10 +304,10 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
          if (instr->emulate) {
             // The extra cycle for BCD correction on the C02 adds a bit of complexity here
             int bcd_extra = instr->decimalcorrect && (em_get_D() == 1);
-            int operand = instr->mode == IMM ? op1 : ((read_accumulator >> (bcd_extra ? 8 : 16)) & 255);
+            int operand = instr->mode == IMM ? op1 : ((bcd_extra ? (read_accumulator >> 8) : read_accumulator) & 255);
             if (opcode == 0x40) {
                // special case RTI, operand (flags) is the first read cycle of three
-               operand = read_accumulator & 0xff;
+               operand = (read_accumulator >> 16) & 0xff;
             }
             if (instr->optype == WRITEOP) {
                // special case instructions where the operand is being written (STA/STX/STY/PHP/PHA/PHX/PHY/BRK)
@@ -334,13 +334,13 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
    // Look for control flow changes and update the PC
    if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c || intr_seen) {
       // RTI, BRK, INTR, JMP (ind), JMP (ind, X), IRQ/NMI/RST
-      pc = (read_accumulator >> 8) & 0xffff;
+      pc = ((read_accumulator & 0xFF00) >> 8) | ((read_accumulator & 0x00FF) << 8);
    } else if (opcode == 0x20 || opcode == 0x4c) {
       // JSR abs, JMP abs
       pc = op2 << 8 | op1;
    } else if (opcode == 0x60) {
       // RTS
-      pc = (read_accumulator + 1) & 0xffff;
+      pc = ((((read_accumulator & 0xff0000) >> 16) | (read_accumulator & 0xff00)) + 1) & 0xffff;
    } else if (pc < 0) {
       // PC value is not known yet, everything below this point is relative
       pc = -1;
@@ -424,7 +424,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       if ((instr->mode == INDY) && (instr->optype == READOP)) {
          int index = em_get_Y();
          if (index >= 0) {
-            int base = (read_accumulator >> 8) & 0xffff;
+            int base = ((read_accumulator & 0xFF00) >> 8) | ((read_accumulator & 0x00FF) << 8);
             if ((base & 0xff00) != ((base + index) & 0xff00)) {
                cycle_count++;
             }
@@ -597,7 +597,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
 
    } else {
 
-      read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
+      read_accumulator = (read_accumulator << 8) | bus_data;
 
    }
 
@@ -696,7 +696,7 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
          op2 = bus_data;
 
       } else {
-         read_accumulator = (read_accumulator >> 8) | (bus_data << 16);
+         read_accumulator = (read_accumulator <<  8) | bus_data;
       }
 
       if (arguments.debug >= 1) {
