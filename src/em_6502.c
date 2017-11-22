@@ -237,7 +237,6 @@ static void op_ADC(int operand) {
    if (A >= 0 && C >= 0) {
       if (D == 1) {
          // Decimal mode ADC
-         // TODO: Add variations for 65C02
          int al;
          int ah;
          uint8_t tmp;
@@ -265,6 +264,10 @@ static void op_ADC(int operand) {
             ah &= 0xF;
          }
          A = (al & 0xF) | (ah << 4);
+         // On 65C02 ADC, only the NZ flags are different to the 6502
+         if (c02) {
+            set_NZ(A);
+         }
       } else {
          // Normal mode ADC
          int tmp = A + operand + C;
@@ -686,38 +689,54 @@ static void op_RTI(int operand) {
 static void op_SBC(int operand) {
    if (A >= 0 && C >= 0) {
       if (D == 1) {
-         int hc;
-         int al;
-         int ah;
-         uint8_t tmp;
          // Decimal mode SBC
-         // TODO: Add variations for 65C02
-         hc = 0;
-         Z = N = 0;
-         tmp = A - operand - ((C) ? 0 : 1);
-         if (!(tmp)) {
-            Z = 1;
+         if (c02) {
+            int al;
+            int tmp;
+            // On 65C02 SBC, both flags and A can be different to the 6502
+            al = (A & 15) - (operand & 15) - ((C) ? 0 : 1);
+            tmp = A - operand - ((C) ? 0 : 1);
+            C = (tmp & 0x100) ? 0 : 1;
+            V = ((A ^ operand) & 0x80) && ((A ^ tmp) & 0x80);
+            if (tmp < 0) {
+               tmp = tmp - 0x60;
+            }
+            if (al < 0) {
+               tmp = tmp - 0x06;
+            }
+            A = tmp & 255;
+            set_NZ(A);
+         } else {
+            int al;
+            int ah;
+            int hc = 0;
+            uint8_t tmp = A - operand - ((C) ? 0 : 1);
+            Z = N = 0;
+            if (!(tmp)) {
+               Z = 1;
+            }
+            al = (A & 15) - (operand & 15) - ((C) ? 0 : 1);
+            if (al & 16) {
+               al -= 6;
+               al &= 0xF;
+               hc = 1;
+            }
+            ah = (A >> 4) - (operand >> 4);
+            if (hc) {
+               ah--;
+            }
+            if ((A - (operand + ((C) ? 0 : 1))) & 0x80) {
+               N = 1;
+            }
+            V = ((A ^ operand) & 0x80) && ((A ^ tmp) & 0x80);
+            C = 1;
+            if (ah & 16) {
+               C = 0;
+               ah -= 6;
+               ah &= 0xF;
+            }
+            A = (al & 0xF) | ((ah & 0xF) << 4);
          }
-         al = (A & 15) - (operand & 15) - ((C) ? 0 : 1);
-         if (al & 16) {
-            al -= 6;
-            al &= 0xF;
-            hc = 1;
-         }
-         ah = (A >> 4) - (operand >> 4);
-         if (hc) {
-            ah--;
-         }
-         if ((A - (operand + ((C) ? 0 : 1))) & 0x80)
-            N = 1;
-         V = ((A ^ operand) & 0x80) && ((A ^ tmp) & 0x80);
-         C = 1;
-         if (ah & 16) {
-            C = 0;
-            ah -= 6;
-            ah &= 0xF;
-         }
-         A = (al & 0xF) | ((ah & 0xF) << 4);
       } else {
          // Normal mode SBC
          int tmp = A - operand - (1 - C);

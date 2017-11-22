@@ -572,7 +572,9 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    if (bus_cycle == cycle_count) {
       // Analyze the  previous instrucution
       if (opcode >= 0) {
-         int operand = instr->mode == IMM ? op1 : ((read_accumulator >> 16) & 255);
+         // The extra cycle for BCD correction on the C02 adds a bit of complexity here
+         int bcd_extra = instr->decimalcorrect && (em_get_D() == 1);
+         int operand = instr->mode == IMM ? op1 : ((read_accumulator >> (bcd_extra ? 8 : 16)) & 255);
          analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, intr_seen, operand, cyclenum - last_cyclenum, rst_seen);
          rst_seen = 0;
          intr_seen = 0;
@@ -669,7 +671,9 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
 
          // Analyze the  previous instrucution
          if (opcode >= 0) {
-            int operand = mode == IMM ? op1 : ((read_accumulator >> 16) & 255);
+            // The extra cycle for BCD correction on the C02 adds a bit of complexity here
+            int bcd_extra = instr_table[opcode].decimalcorrect && (em_get_D() == 1);
+            int operand = mode == IMM ? op1 : ((read_accumulator >> (bcd_extra ? 8 : 16)) & 255);
             analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, write_count == 3, operand, cyclenum - last_cyclenum, rst_seen);
             rst_seen = 0;
          }
