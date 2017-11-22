@@ -2,4 +2,5 @@
 #*
 decode6502
 *.bin
+not_in_git/
 
