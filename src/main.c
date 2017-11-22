@@ -302,19 +302,25 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
       // Emulate the instruction
       if (do_emulate) {
          if (instr->emulate) {
-            // The extra cycle for BCD correction on the C02 adds a bit of complexity here
-            int bcd_extra = instr->decimalcorrect && (em_get_D() == 1);
-            int operand = instr->mode == IMM ? op1 : ((bcd_extra ? (read_accumulator >> 8) : read_accumulator) & 255);
-            if (opcode == 0x40) {
-               // special case RTI, operand (flags) is the first read cycle of three
-               operand = (read_accumulator >> 16) & 0xff;
-            }
+            int operand;
             if (instr->optype == WRITEOP) {
-               // special case instructions where the operand is being written (STA/STX/STY/PHP/PHA/PHX/PHY/BRK)
+               // the operand is the value being written (STA/STX/STY/PHP/PHA/PHX/PHY/BRK)
                operand = write_accumulator & 0xff;
             } else if (instr->optype == BRANCHOP) {
-               // special case branch instructions, operand is true if branch taken
+               // the operand is true if branch taken
                operand = (num_cycles != 2);
+            } else if (opcode == 0x40) {
+               // RTI: the operand (flags) is the first read cycle of three
+               operand = (read_accumulator >> 16) & 0xff;
+            } else if (instr->mode == IMM) {
+               // Immediate addressing mode: the operand is the 2nd byte of the instruction
+               operand = op1;
+            } else if (instr->decimalcorrect && (em_get_D() == 1)) {
+               // read operations on the C02 that have an extra cycle added
+               operand = (read_accumulator >> 8) & 0xff;
+            } else {
+               // read operations in general, use the most recent read
+               operand = read_accumulator & 0xff;
             }
             instr->emulate(operand);
          }
