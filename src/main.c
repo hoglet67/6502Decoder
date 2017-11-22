@@ -318,6 +318,9 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
             } else if (instr->decimalcorrect && (em_get_D() == 1)) {
                // read operations on the C02 that have an extra cycle added
                operand = (read_accumulator >> 8) & 0xff;
+            } else if (instr->optype == TSBTRBOP) {
+               // For TSB/TRB, the operand is the last-but-one read, followed by a dummy read
+               operand = (read_accumulator >> 8) & 0xff;
             } else {
                // read operations in general, use the most recent read
                operand = read_accumulator & 0xff;
