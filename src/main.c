@@ -747,11 +747,12 @@ void decode(FILE *stream) {
    int num;
 
    // The previous sample of the 16-bit capture (async sampling only)
-   uint16_t last_sample = -1;
+   uint16_t sample       = -1;
+   uint16_t last_sample  = -1;
+   uint16_t last2_sample = -1;
 
    // The previous sample of phi2 (async sampling only)
    int last_phi2 = -1;
-   int last2_phi2 = -1;
 
    while ((num = fread(buffer, sizeof(uint16_t), BUFSIZE, stream)) > 0) {
 
@@ -759,8 +760,11 @@ void decode(FILE *stream) {
 
       while (num-- > 0) {
 
-         // The current 16-bit capture sample
-         uint16_t sample = *sampleptr++;
+         // The current 16-bit capture sample, and the previous two
+         last2_sample = last_sample;
+         last_sample  = sample;
+         sample       = *sampleptr++;
+
          // TODO: fix the hard coded values!!!
          if (arguments.debug >= 2) {
             printf("%d %02x %x %x %x %x\n", sample_count, sample&255, (sample >> 8)&1,  (sample >> 9)&1,  (sample >> 10)&1,  (sample >> 11)&1  );
@@ -787,32 +791,49 @@ void decode(FILE *stream) {
 
          } else {
 
-            // If Phi2 is present, look for the falling edge, and proceed with the previous sample
+            // If Phi2 is present, look for an edge
             pin_phi2 = (sample >> idx_phi2) & 1;
-            if (pin_phi2 == 1 || last_phi2 != 1 || last2_phi2 != 1) {
-               last2_phi2 = last_phi2;
-               last_phi2 = pin_phi2;
-               last_sample = sample;
+            if (pin_phi2 == last_phi2) {
+               // continue for more samples
                continue;
             }
+            last_phi2 = pin_phi2;
 
-            // At this point, last2_phi2, last_phi2 = 1 and phi2 = 0 (i.e. falling edge)
-            last_phi2 = 0;
-            last2_phi2 = 0;
-
-            // Sample the control signals before the clock edge
-            pin_rnw = (last_sample >> idx_rnw ) & 1;
-            if (idx_sync >= 0) {
-               pin_sync = (last_sample >> idx_sync) & 1;
+            if (pin_phi2) {
+               // sample control signals just after rising edge of Phi2
+               pin_rnw = (sample >> idx_rnw ) & 1;
+               if (idx_sync >= 0) {
+                  pin_sync = (sample >> idx_sync) & 1;
+               }
+               if (idx_rst >= 0) {
+                  pin_rst = (sample >> idx_rst) & 1;
+               }
+               // continue for more samples
+               continue;
+            } else {
+               if (idx_rdy >= 0) {
+                  pin_rdy = (last_sample >> idx_rdy) & 1;
+               }
+               if (arguments.machine == MACHINE_MASTER) {
+                  // Data bus sampling for the Master
+                  if (pin_rnw) {
+                     // sample read data just before falling edge of Phi2
+                     bus_data = last_sample & 255;
+                  } else {
+                     // sample write data one cycle earlier
+                     bus_data = last2_sample & 255;
+                  }
+               } else {
+                  // Data bus sampling for the Beeb, one cycle later
+                  if (pin_rnw) {
+                     // sample read data just after falling edge of Phi2
+                     bus_data = sample & 255;
+                  } else {
+                     // sample write data one cycle earlier
+                     bus_data = last_sample & 255;
+                  }
+               }
             }
-            if (idx_rdy >= 0) {
-               pin_rdy = (last_sample >> idx_rdy) & 1;
-            }
-            if (idx_rst >= 0) {
-               pin_rst = (last_sample >> idx_rst) & 1;
-            }
-            // Sample write data before the clock edge, and read data after the clock edge
-            bus_data  = ((pin_rnw ? sample : last_sample) >> idx_data ) & 255;
          }
 
          // Ignore the cycle if RDY is low
