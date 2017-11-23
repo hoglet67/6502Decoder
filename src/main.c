@@ -263,9 +263,8 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
          numchars = printf(fmt, mnemonic);
          break;
       case BRA:
-      case ZPR:
-         // Calculate branch target using op1 for normal branches and op2 for BBR/BBS
-         offset = (int8_t) (((opcode & 0x0f) == 0x0f)  ? op2 : op1);
+         // Calculate branch target using op1 for normal branches
+         offset = (int8_t) op1;
          if (pc < 0) {
             if (offset < 0) {
                sprintf(target, "pc-%d", -offset);
@@ -275,11 +274,21 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
          } else {
             sprintf(target, "%04X", pc + 2 + offset);
          }
-         if (instr->mode == BRA) {
-            numchars = printf(fmt, mnemonic, target);
+         numchars = printf(fmt, mnemonic, target);
+         break;
+      case ZPR:
+         // Calculate branch target using op2 for BBR/BBS
+         offset = (int8_t) op2;
+         if (pc < 0) {
+            if (offset < 0) {
+               sprintf(target, "pc-%d", -offset);
+            } else {
+               sprintf(target,"pc+%d", offset);
+            }
          } else {
-            numchars = printf(fmt, mnemonic, op1, target);
+            sprintf(target, "%04X", pc + 3 + offset);
          }
+         numchars = printf(fmt, mnemonic, op1, target);
          break;
       case IMM:
       case ZP:
@@ -357,9 +366,9 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
       // BRA
       pc += ((int8_t)(op1)) + 2;
       pc &= 0xffff;
-   } else if ((opcode & 0x0f) == 0x0f && num_cycles != 2) {
-      // BBR/BBS
-      pc += ((int8_t)(op2)) + 2;
+   } else if (((opcode & 0x0f) == 0x0f) && (num_cycles != 5)) {
+      // BBR/BBS: op2 if taken
+      pc += ((int8_t)(op2)) + 3;
       pc &= 0xffff;
    } else if ((opcode & 0x1f) == 0x10 && num_cycles != 2) {
       // BXX: op1 if taken
@@ -418,7 +427,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       op1 = bus_data;
    }
 
-   if (bus_cycle == ((opcode == 0x20) ? 5 : 2) && opcount >= 2) {
+   if (bus_cycle == ((opcode == 0x20) ? 5 : ((opcode & 0x0f) == 0x0f) ? 4 : 2) && opcount >= 2) {
       op2 = bus_data;
    }
 
@@ -453,6 +462,41 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
                int base = op1 + (op2 << 8);
                if ((base & 0xff00) != ((base + index) & 0xff00)) {
                   cycle_count++;
+               }
+            }
+         }
+      }
+   }
+
+   // Account for extra cycles in BBR/BBS
+   //
+   // Example: BBR0, $50, +6
+   // 0 8f 1 1 1 <opcode>
+   // 1 50 1 0 1 <op1> i.e. ZP address
+   // 2 01 1 0 1 <mem rd>
+   // 3 01 1 0 1 <mem rd>
+   // 4 06 1 0 1 <op2> i.e.
+   // 5 20 1 0 1 (<branch taken penalty>)
+   // 6          (<page crossed penalty>)
+   //
+
+   if (bus_cycle == 4) {
+      if ((opcode & 0x0f) == 0x0f) {
+         int operand = (read_accumulator >> 8) & 0xff;
+         // invert operand for BBR
+         if (opcode <= 0x80) {
+            operand ^= 0xff;
+         }
+         int bit = (opcode >> 4) & 7;
+         // Figure out if the branch was taken
+         if (operand & (1 << bit)) {
+            // A taken bbr/bbs branch is 6 cycles, not 5
+            cycle_count = 6;
+            // A taken bbr/bbs branch that crosses a page boundary is 7 cycles
+            if (pc >= 0) {
+               int target =  (pc + 3) + ((int8_t)(op2));
+               if ((target & 0xFF00) != ((pc + 3) & 0xff00)) {
+                  cycle_count = 7;
                }
             }
          }
@@ -700,8 +744,9 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
       } else if (bus_cycle == 1 && opcount >= 1) {
          op1 = bus_data;
 
-      } else if (bus_cycle == (opcode == 0x20 && write_count < 3 ? 5 : 2) && opcount >= 2) {
-         // JSR is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
+      } else if (bus_cycle == ((opcode == 0x20) ? 5 : ((opcode & 0x0f) == 0x0f) ? 4 : 2) && opcount >= 2 && write_count < 3) {
+         // JSR     is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
+         // BBR/BBS is <opcode> <op1> <zp> <dummy> <op2> (<branch taken penalty>) (<page cross penatly)
          op2 = bus_data;
 
       } else {
