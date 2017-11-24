@@ -362,7 +362,7 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
    printf("\n");
 
    // Look for control flow changes and update the PC
-   if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c || intr_seen) {
+   if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c || intr_seen || rst_seen) {
       // RTI, BRK, INTR, JMP (ind), JMP (ind, X), IRQ/NMI/RST
       pc = ((read_accumulator & 0xFF00) >> 8) | ((read_accumulator & 0x00FF) << 8);
    } else if (opcode == 0x20 || opcode == 0x4c) {
