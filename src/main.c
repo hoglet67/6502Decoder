@@ -110,28 +110,28 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       arguments->idx_rnw = atoi(arg);
       break;
    case   3:
-      if (strlen(arg) > 0) {
+      if (arg && strlen(arg) > 0) {
          arguments->idx_sync = atoi(arg);
       } else {
          arguments->idx_sync = -1;
       }
       break;
    case   4:
-      if (strlen(arg) > 0) {
+      if (arg && strlen(arg) > 0) {
          arguments->idx_rdy = atoi(arg);
       } else {
          arguments->idx_rdy = -1;
       }
       break;
    case   5:
-      if (strlen(arg) > 0) {
+      if (arg && strlen(arg) > 0) {
          arguments->idx_phi2 = atoi(arg);
       } else {
          arguments->idx_phi2 = -1;
       }
       break;
    case   6:
-      if (strlen(arg) > 0) {
+      if (arg && strlen(arg) > 0) {
          arguments->idx_rst = atoi(arg);
       } else {
          arguments->idx_rst = -1;
