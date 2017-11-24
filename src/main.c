@@ -21,10 +21,12 @@ int do_emulate = 0;
 
 #define MACHINE_DEFAULT 0
 #define MACHINE_MASTER  1
+#define MACHINE_ELK  2
 
 const char *machine_names[] = {
    "default",
    "master",
+   "elk",
    0
 };
 
@@ -871,7 +873,17 @@ void decode(FILE *stream) {
                if (idx_rdy >= 0) {
                   pin_rdy = (last_sample >> idx_rdy) & 1;
                }
-               if (arguments.machine == MACHINE_MASTER) {
+               // TODO: try to rationalize this!
+               if (arguments.machine == MACHINE_ELK) {
+                  // Data bus sampling for the Elk
+                  if (pin_rnw) {
+                     // sample read data just before falling edge of Phi2
+                     bus_data = last_sample & 255;
+                  } else {
+                     // sample write data one cycle earlier
+                     bus_data = last_sample & 255;
+                  }
+               } else if (arguments.machine == MACHINE_MASTER) {
                   // Data bus sampling for the Master
                   if (pin_rnw) {
                      // sample read data just before falling edge of Phi2
