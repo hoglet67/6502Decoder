@@ -76,6 +76,7 @@ static struct argp_option options[] = {
    { "machine",      'm', "MACHINE",                  0, "Enable machine specific behaviour"},
    { "state",        's',        0,                   0, "Show register/flag state."},
    { "hex",          'h',        0,                   0, "Show hex bytes of instruction."},
+   { "cycles",       'y',        0,                   0, "Show number of bus cycles."},
    { "c02",          'c',        0,                   0, "Enable 65C02 mode."},
    { "undocumented", 'u',        0,                   0, "Enable undocumented 6502 opcodes (currently incomplete)"},
    { "debug",        'd',  "LEVEL",                   0, "Sets debug level (0 1 or 2)"},
@@ -91,6 +92,7 @@ struct arguments {
    int idx_rst;
    int machine;
    int show_state;
+   int show_cycles;
    int show_hex;
    int c02;
    int undocumented;
@@ -160,6 +162,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       break;
    case 's':
       arguments->show_state = 1;
+      break;
+   case 'y':
+      arguments->show_cycles = 1;
       break;
    case 'u':
       if (arguments->c02) {
@@ -344,10 +349,14 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
       while (numchars++ < 14) {
          printf(" ");
       }
-      printf("%s\n", em_get_state());
-   } else {
-      printf("\n");
+      printf(" : %s", em_get_state());
    }
+
+   if (arguments.show_cycles) {
+      printf(" : %d", num_cycles);
+   }
+
+   printf("\n");
 
    // Look for control flow changes and update the PC
    if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c || intr_seen) {
@@ -908,6 +917,7 @@ int main(int argc, char *argv[]) {
    arguments.machine      = MACHINE_DEFAULT;
    arguments.show_hex     = 0;
    arguments.show_state   = 0;
+   arguments.show_cycles  = 0;
    arguments.c02          = 0;
    arguments.undocumented = 0;
    arguments.debug        = 0;
