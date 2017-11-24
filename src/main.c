@@ -344,16 +344,19 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
       }
    }
 
-   if (arguments.show_state) {
+   if ((arguments.show_cycles || (arguments.show_state))) {
       // Pad opcode to 14 characters, to match python
       while (numchars++ < 14) {
          printf(" ");
       }
-      printf(" : %s", em_get_state());
    }
 
    if (arguments.show_cycles) {
       printf(" : %d", num_cycles);
+   }
+
+   if (arguments.show_state) {
+      printf(" : %s", em_get_state());
    }
 
    printf("\n");
