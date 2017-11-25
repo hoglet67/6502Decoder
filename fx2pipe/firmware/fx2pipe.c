@@ -45,7 +45,7 @@ typedef unsigned int uint16;  // int is 16 bit.
 // E.g. with a 48MHz clock, 17 NOPs require more than 7MHz to work sometimes 
 // and 10MHz to work reliably while we'd expect 5.2MHz to be more than 
 // enough... (Wolfgang)
-#define	NOP		_asm nop _endasm
+#define	NOP		__asm nop __endasm
 #define	SYNCDELAY	\
 	NOP; NOP; NOP; NOP; NOP; NOP; NOP; NOP; \
 	NOP; NOP; NOP; NOP; NOP; NOP; NOP; NOP; \
@@ -60,7 +60,7 @@ static void Initialize(void)
 	// NOTE: This is for FX2LP; the FX2 has fewer SRAM and so we cannot use 
 	//       0x3000 but rather 0x1000 or so. 
 	//       Now we use 0x1000 to support both devices. 
-	xdata char *cfg_data=(xdata char*)0x1003;
+	__xdata char *cfg_data=(__xdata char*)0x1003;
 	// First cfg_data must be 21 or 12 to be considered valid. 
 	char cfg_data_ok = (cfg_data[0]==0x12U || cfg_data[0]==0x21U);
 	

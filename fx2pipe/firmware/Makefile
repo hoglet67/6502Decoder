@@ -2,6 +2,8 @@ INCLUDES=-Iinclude
 
 CC=sdcc -mmcs51
 
+SHELL=bash
+
 fx2pipe_static.cc: fx2pipe.ihx
 	@echo "#include <stdio.h>  /* For NULL... */" > fx2pipe_static.cc
 	@echo >> fx2pipe_static.cc
@@ -17,3 +19,6 @@ fx2pipe.ihx: fx2pipe.c
 
 clean:
 	rm -f fx2pipe.{asm,ihx,lnk,lst,map,mem,rel,rst,sym}
+
+clobber: clean
+	rm -f fx2pipe_static.cc
