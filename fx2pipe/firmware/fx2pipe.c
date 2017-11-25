@@ -101,8 +101,8 @@ static void Initialize(void)
 	PORTACFG = 0x00;
 	SYNCDELAY; // maybe not needed
 	
-	// All default polarities: SLWR active low,...
-	FIFOPINPOLAR=0x00;
+	// All default polarities: except SLWR active high,...
+	FIFOPINPOLAR=0x04;
 	SYNCDELAY;
 	
 	// Reset...
