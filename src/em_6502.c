@@ -138,6 +138,15 @@ void em_interrupt(int operand) {
 }
 
 void em_reset() {
+   A = -1;
+   X = -1;
+   Y = -1;
+   S = -1;
+   N = -1;
+   V = -1;
+   D = -1;
+   Z = -1;
+   C = -1;
    I = 1;
    if (c02) {
       D = 0;
