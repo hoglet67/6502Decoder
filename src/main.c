@@ -210,12 +210,15 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
    // For instructions that push the current address to the stack we
    // can use the stacked address to determine the current PC
    int newpc = -1;
-   if (intr_seen) {
+   if (intr_seen && opcode != 0x00) {
       // IRQ/NMI/RST
       newpc = (write_accumulator >> 8) & 0xffff;
    } else if (opcode == 0x20) {
       // JSR
       newpc = (write_accumulator - 2) & 0xffff;
+   } else if (opcode == 0x00) {
+      // BRK
+      newpc = ((write_accumulator >> 8) - 2) & 0xffff;
    }
 
    // Sanity check the current pc prediction has not gone awry
