@@ -51,6 +51,7 @@ typedef enum {
 typedef enum {
    READOP,
    WRITEOP,
+   RMWOP,
    TSBTRBOP,
    BRANCHOP
 } OpType;

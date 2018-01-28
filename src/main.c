@@ -324,13 +324,21 @@ static void analyze_instruction(int opcode, int op1, int op2, int accumulator, i
          break;
       }
 
+      if ((arguments.show_cycles || (arguments.show_state))) {
+         // Pad opcode to 14 characters, to match python
+         while (numchars++ < 14) {
+            printf(" ");
+         }
+      }
+
       // Emulate the instruction
       if (do_emulate) {
          if (instr->emulate) {
             int operand;
-            if (instr->optype == WRITEOP) {
-               // the operand is the value being written (STA/STX/STY/PHP/PHA/PHX/PHY/BRK)
-               operand = accumulator & 0xff;
+            if (instr->optype == RMWOP) {
+               // e.g. <opcode> <op1> <op2> <read> <write> <write>
+               // Want to pick off the read
+               operand = (accumulator >> 16) & 0xff;
             } else if (instr->optype == BRANCHOP) {
                // the operand is true if branch taken
                operand = (num_cycles != 2);
@@ -350,15 +358,9 @@ static void analyze_instruction(int opcode, int op1, int op2, int accumulator, i
                // read operations in general, use the most recent read
                operand = accumulator & 0xff;
             }
+            printf(" : op=%02x", operand);
             instr->emulate(operand);
          }
-      }
-   }
-
-   if ((arguments.show_cycles || (arguments.show_state))) {
-      // Pad opcode to 14 characters, to match python
-      while (numchars++ < 14) {
-         printf(" ");
       }
    }
 
@@ -690,7 +692,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    }
 
    if (arguments.debug >= 1) {
-      printf("%d %02x\n", bus_cycle, bus_data);
+      printf("%d %02x", bus_cycle, bus_data);
       if (arguments.idx_rnw >= 0) {
          printf(" %d", pin_rnw);
       }
