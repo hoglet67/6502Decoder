@@ -205,7 +205,7 @@ static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 // Predicted PC value
 int pc = -1;
 
-static void analyze_instruction(int opcode, int op1, int op2, int accumulator, int intr_seen, int num_cycles, int rst_seen) {
+static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulator, int intr_seen, int num_cycles, int rst_seen) {
 
    int offset;
    char target[16];
@@ -218,7 +218,7 @@ static void analyze_instruction(int opcode, int op1, int op2, int accumulator, i
    int newpc = -1;
    if (rst_seen || (intr_seen && opcode != 0x00)) {
       // IRQ/NMI/RST
-      newpc = ((accumulator >> 8) & 0xff) | ((accumulator & 0xff) << 8);
+      newpc = (accumulator >> 24) & 0xffff;
    } else if (opcode == 0x20) {
       // JSR
       newpc = ((accumulator >> 8) - 2) & 0xffff;
@@ -258,7 +258,7 @@ static void analyze_instruction(int opcode, int op1, int op2, int accumulator, i
       }
       numchars = printf("INTERRUPT !!");
       if (do_emulate) {
-         em_interrupt(accumulator & 0xff);
+         em_interrupt((accumulator >> 16) & 0xff);
       }
    } else {
       if (arguments.show_hex) {
@@ -422,7 +422,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    static int opcode               = -1;
    static int op1                  = 0;
    static int op2                  = 0;
-   static int accumulator          = 0;
+   static uint64_t accumulator     = 0;
    static int bus_cycle            = 0;
    static int cycle_count          = 0;
    static int opcount              = 0;
