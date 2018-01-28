@@ -224,7 +224,7 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
       newpc = ((accumulator >> 8) - 2) & 0xffff;
    } else if (opcode == 0x00) {
       // BRK
-      newpc = ((accumulator >> 8) - 2) & 0xffff;
+      newpc = ((accumulator >> 24) - 2) & 0xffff;
    }
 
    // Sanity check the current pc prediction has not gone awry
@@ -352,10 +352,10 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
                // read operations on the C02 that have an extra cycle added
                operand = (accumulator >> 8) & 0xff;
             } else if (instr->optype == TSBTRBOP) {
-               // For TSB/TRB, the operand is the last-but-one read, followed by a dummy read
-               operand = (accumulator >> 8) & 0xff;
+               // For TSB/TRB, <opcode> <op1> <read> <dummy> <write> the operand is the <read>
+               operand = (accumulator >> 16) & 0xff;
             } else {
-               // read operations in general, use the most recent read
+               // default to using the last bus cycle as the operand
                operand = accumulator & 0xff;
             }
             printf(" : op=%02x", operand);
