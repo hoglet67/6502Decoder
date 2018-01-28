@@ -70,7 +70,7 @@ static char args_doc[] = "[FILENAME]";
 
 static struct argp_option options[] = {
    { "data",           1, "BITNUM",                   0, "The start bit number for data"},
-   { "rnw",            2, "BITNUM",                   0, "The bit number for rnw"},
+   { "rnw",            2, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for rnw"},
    { "sync",           3, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for sync, blank if unconnected"},
    { "rdy",            4, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for rdy, blank if unconnected"},
    { "phi2",           5, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for phi2, blank if unconnected"},
@@ -81,6 +81,7 @@ static struct argp_option options[] = {
    { "cycles",       'y',        0,                   0, "Show number of bus cycles."},
    { "c02",          'c',        0,                   0, "Enable 65C02 mode."},
    { "undocumented", 'u',        0,                   0, "Enable undocumented 6502 opcodes (currently incomplete)"},
+   { "byte",         'b',        0,                   0, "Byte samples"},
    { "debug",        'd',  "LEVEL",                   0, "Sets debug level (0 1 or 2)"},
    { 0 }
 };
@@ -98,6 +99,7 @@ struct arguments {
    int show_hex;
    int c02;
    int undocumented;
+   int byte;
    int debug;
    char *filename;
 } arguments;
@@ -109,7 +111,11 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
    case   1:
       arguments->idx_data = atoi(arg);
    case   2:
-      arguments->idx_rnw = atoi(arg);
+      if (arg && strlen(arg) > 0) {
+         arguments->idx_rnw = atoi(arg);
+      } else {
+         arguments->idx_rnw = -1;
+      }
       break;
    case   3:
       if (arg && strlen(arg) > 0) {
@@ -199,7 +205,7 @@ static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 // Predicted PC value
 int pc = -1;
 
-static void analyze_instruction(int opcode, int op1, int op2, int read_accumulator, int write_accumulator, int intr_seen, int num_cycles, int rst_seen) {
+static void analyze_instruction(int opcode, int op1, int op2, int accumulator, int intr_seen, int num_cycles, int rst_seen) {
 
    int offset;
    char target[16];
@@ -210,15 +216,15 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
    // For instructions that push the current address to the stack we
    // can use the stacked address to determine the current PC
    int newpc = -1;
-   if (intr_seen && opcode != 0x00) {
+   if (rst_seen || (intr_seen && opcode != 0x00)) {
       // IRQ/NMI/RST
-      newpc = (write_accumulator >> 8) & 0xffff;
+      newpc = ((accumulator >> 8) & 0xff) | ((accumulator & 0xff) << 8);
    } else if (opcode == 0x20) {
       // JSR
-      newpc = (write_accumulator - 2) & 0xffff;
+      newpc = ((accumulator >> 8) - 2) & 0xffff;
    } else if (opcode == 0x00) {
       // BRK
-      newpc = ((write_accumulator >> 8) - 2) & 0xffff;
+      newpc = ((accumulator >> 8) - 2) & 0xffff;
    }
 
    // Sanity check the current pc prediction has not gone awry
@@ -252,7 +258,7 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
       }
       numchars = printf("INTERRUPT !!");
       if (do_emulate) {
-         em_interrupt(write_accumulator & 0xff);
+         em_interrupt(accumulator & 0xff);
       }
    } else {
       if (arguments.show_hex) {
@@ -324,25 +330,25 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
             int operand;
             if (instr->optype == WRITEOP) {
                // the operand is the value being written (STA/STX/STY/PHP/PHA/PHX/PHY/BRK)
-               operand = write_accumulator & 0xff;
+               operand = accumulator & 0xff;
             } else if (instr->optype == BRANCHOP) {
                // the operand is true if branch taken
                operand = (num_cycles != 2);
             } else if (opcode == 0x40) {
                // RTI: the operand (flags) is the first read cycle of three
-               operand = (read_accumulator >> 16) & 0xff;
+               operand = (accumulator >> 16) & 0xff;
             } else if (instr->mode == IMM) {
                // Immediate addressing mode: the operand is the 2nd byte of the instruction
                operand = op1;
             } else if (instr->decimalcorrect && (em_get_D() == 1)) {
                // read operations on the C02 that have an extra cycle added
-               operand = (read_accumulator >> 8) & 0xff;
+               operand = (accumulator >> 8) & 0xff;
             } else if (instr->optype == TSBTRBOP) {
                // For TSB/TRB, the operand is the last-but-one read, followed by a dummy read
-               operand = (read_accumulator >> 8) & 0xff;
+               operand = (accumulator >> 8) & 0xff;
             } else {
                // read operations in general, use the most recent read
-               operand = read_accumulator & 0xff;
+               operand = accumulator & 0xff;
             }
             instr->emulate(operand);
          }
@@ -369,13 +375,13 @@ static void analyze_instruction(int opcode, int op1, int op2, int read_accumulat
    // Look for control flow changes and update the PC
    if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c || intr_seen || rst_seen) {
       // RTI, BRK, INTR, JMP (ind), JMP (ind, X), IRQ/NMI/RST
-      pc = ((read_accumulator & 0xFF00) >> 8) | ((read_accumulator & 0x00FF) << 8);
+      pc = ((accumulator & 0xFF00) >> 8) | ((accumulator & 0x00FF) << 8);
    } else if (opcode == 0x20 || opcode == 0x4c) {
       // JSR abs, JMP abs
       pc = op2 << 8 | op1;
    } else if (opcode == 0x60) {
       // RTS
-      pc = ((((read_accumulator & 0xff0000) >> 16) | (read_accumulator & 0xff00)) + 1) & 0xffff;
+      pc = ((((accumulator & 0xff0000) >> 16) | (accumulator & 0xff00)) + 1) & 0xffff;
    } else if (pc < 0) {
       // PC value is not known yet, everything below this point is relative
       pc = -1;
@@ -414,8 +420,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    static int opcode               = -1;
    static int op1                  = 0;
    static int op2                  = 0;
-   static int read_accumulator     = 0;
-   static int write_accumulator    = 0;
+   static int accumulator          = 0;
    static int bus_cycle            = 0;
    static int cycle_count          = 0;
    static int opcount              = 0;
@@ -427,14 +432,25 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    int pin_rst = *pin_rst_q;
 
    // Detect a rising edge of reset
-   if (pin_rst == 0) {
-      if (*(pin_rst_q + 1) == 1) {
-         cycle_count = 8;
+   if (arguments.idx_rst >= 0) {
+      if (pin_rst == 0) {
+         if (*(pin_rst_q + 1) == 1) {
+            cycle_count = 8;
+            bus_cycle = -1;
+            opcode = 0;
+            rst_seen = 1;
+         }
+         return;
+      }
+   } else {
+      // no reset line
+      if ((bus_data_q[0] == 0xCD) && (bus_data_q[1] == 0xD9) && (bus_data_q[2] == 0xA9)) {
+         // reset vector answer B 1.20 OS + LDA#
+         cycle_count = 1;
          bus_cycle = -1;
          opcode = 0;
          rst_seen = 1;
       }
-      return;
    }
 
    // TODO: Find a more correct way of starting up!
@@ -459,7 +475,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       if ((instr->mode == INDY) && (instr->optype == READOP)) {
          int index = em_get_Y();
          if (index >= 0) {
-            int base = ((read_accumulator & 0xFF00) >> 8) | ((read_accumulator & 0x00FF) << 8);
+            int base = ((accumulator & 0xFF00) >> 8) | ((accumulator & 0x00FF) << 8);
             if ((base & 0xff00) != ((base + index) & 0xff00)) {
                cycle_count++;
             }
@@ -499,7 +515,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
 
    if (bus_cycle == 4) {
       if ((opcode & 0x0f) == 0x0f) {
-         int operand = (read_accumulator >> 8) & 0xff;
+         int operand = (accumulator >> 8) & 0xff;
          // invert operand for BBR
          if (opcode <= 0x80) {
             operand ^= 0xff;
@@ -637,15 +653,22 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    // 7 <opcode>            Rd
 
    // Detect interrupts as early as possible...
-   if ((bus_cycle == 2) && (pin_rnw == 0) && (*(pin_rnw_q + 1) == 0) && (*(pin_rnw_q + 2) == 0)) {
-      cycle_count = 7;
-      intr_seen = 1;
+   if (arguments.idx_rnw >= 0) {
+      if ((bus_cycle == 2) && (pin_rnw == 0) && (*(pin_rnw_q + 1) == 0) && (*(pin_rnw_q + 2) == 0)) {
+         cycle_count = 7;
+         intr_seen = 1;
+      }
+   } else {
+      if ((bus_cycle == 2) && (bus_data_q[0] == ((pc >> 8) & 0xff)) && (bus_data_q[1] == (pc & 0xff))) {
+         cycle_count = 7;
+         intr_seen = 1;
+      }
    }
 
    if (bus_cycle == cycle_count) {
       // Analyze the  previous instrucution
       if (opcode >= 0) {
-         analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, intr_seen, cyclenum - last_cyclenum, rst_seen);
+         analyze_instruction(opcode, op1, op2, accumulator, intr_seen, cyclenum - last_cyclenum, rst_seen);
          rst_seen = 0;
          intr_seen = 0;
       }
@@ -655,24 +678,26 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       opcode            = bus_data;
       op1               = 0;
       op2               = 0;
-      read_accumulator  = 0;
-      write_accumulator = 0;
+      accumulator       = 0;
       bus_cycle         = 0;
       cycle_count       = instr_table[opcode].cycles ;
       opcount           = instr_table[opcode].len - 1;
 
-   } else if (pin_rnw == 0) {
-
-      write_accumulator = (write_accumulator << 8) | bus_data;
-
    } else {
 
-      read_accumulator = (read_accumulator << 8) | bus_data;
+      accumulator = (accumulator << 8) | bus_data;
 
    }
 
    if (arguments.debug >= 1) {
-      printf("%d %02x %d %d\n", bus_cycle, bus_data, pin_rnw, pin_rst);
+      printf("%d %02x\n", bus_cycle, bus_data);
+      if (arguments.idx_rnw >= 0) {
+         printf(" %d", pin_rnw);
+      }
+      if (arguments.idx_rst >= 0) {
+         printf(" %d", pin_rst);
+      }
+      printf("\n");
    }
 
    bus_cycle++;
@@ -707,6 +732,7 @@ void lookahead_decode_cycle_without_sync(int bus_data, int pin_rnw, int pin_rst)
 // ====================================================================
 
 void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst) {
+#if 0
 
    // Count of the 6502 bus cycles
    static int cyclenum             = 0;
@@ -782,6 +808,7 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
 
    // Maintain an edge detector for rst
    last_pin_rst = pin_rst;
+#endif
 }
 
 // ====================================================================
@@ -798,9 +825,9 @@ void decode(FILE *stream) {
    int idx_phi2  = arguments.idx_phi2;
    int idx_rst   = arguments.idx_rst;
 
-   // Pin values
+   // Default Pin values
    int bus_data  =  0;
-   int pin_rnw   =  0;
+   int pin_rnw   =  1;
    int pin_sync  =  0;
    int pin_rdy   =  1;
    int pin_phi2  =  0;
@@ -840,7 +867,9 @@ void decode(FILE *stream) {
 
             // If Phi2 is not present, use the pins directly
             bus_data = (sample >> idx_data) & 255;
-            pin_rnw = (sample >> idx_rnw ) & 1;
+            if (idx_rnw >= 0) {
+               pin_rnw = (sample >> idx_rnw ) & 1;
+            }
             if (idx_sync >= 0) {
                pin_sync = (sample >> idx_sync) & 1;
             }
@@ -863,7 +892,9 @@ void decode(FILE *stream) {
 
             if (pin_phi2) {
                // sample control signals just after rising edge of Phi2
-               pin_rnw = (sample >> idx_rnw ) & 1;
+               if (idx_rnw >= 0) {
+                  pin_rnw = (sample >> idx_rnw ) & 1;
+               }
                if (idx_sync >= 0) {
                   pin_sync = (sample >> idx_sync) & 1;
                }
@@ -879,7 +910,7 @@ void decode(FILE *stream) {
                // TODO: try to rationalize this!
                if (arguments.machine == MACHINE_ELK) {
                   // Data bus sampling for the Elk
-                  if (pin_rnw) {
+                  if (idx_rnw < 0 || pin_rnw) {
                      // sample read data just before falling edge of Phi2
                      bus_data = last_sample & 255;
                   } else {
@@ -888,7 +919,7 @@ void decode(FILE *stream) {
                   }
                } else if (arguments.machine == MACHINE_MASTER) {
                   // Data bus sampling for the Master
-                  if (pin_rnw) {
+                  if (idx_rnw < 0 || pin_rnw) {
                      // sample read data just before falling edge of Phi2
                      bus_data = last_sample & 255;
                   } else {
@@ -897,7 +928,7 @@ void decode(FILE *stream) {
                   }
                } else {
                   // Data bus sampling for the Beeb, one cycle later
-                  if (pin_rnw) {
+                  if (idx_rnw < 0 || pin_rnw) {
                      // sample read data just after falling edge of Phi2
                      bus_data = sample & 255;
                   } else {
@@ -938,6 +969,7 @@ int main(int argc, char *argv[]) {
    arguments.show_cycles  = 0;
    arguments.c02          = 0;
    arguments.undocumented = 0;
+   arguments.byte         = 1;
    arguments.debug        = 0;
    arguments.filename     = NULL;
 
