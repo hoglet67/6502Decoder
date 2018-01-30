@@ -492,7 +492,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    }
 
    // Account for extra cycle in a page crossing in (indirect), Y
-   if (bus_cycle == 4) {
+   if (!intr_seen && bus_cycle == 4) {
       // Applies to INDY, but need to exclude stores
       if ((instr->mode == INDY) && (instr->optype == READOP)) {
          int index = em_get_Y();
@@ -535,7 +535,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    // 6          (<page crossed penalty>)
    //
 
-   if (bus_cycle == 4) {
+   if (!intr_seen && bus_cycle == 4) {
       if ((opcode & 0x0f) == 0x0f) {
          int operand = (accumulator >> 8) & 0xff;
          // invert operand for BBR
