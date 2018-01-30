@@ -14,6 +14,8 @@ int sample_count = 0;
 
 #define BUFSIZE 8192
 
+uint8_t buffer8[BUFSIZE];
+
 uint16_t buffer[BUFSIZE];
 
 // Whether to emulate each decoded instruction, to track additional state (registers and flags)
@@ -64,6 +66,11 @@ If rdy is not connected a value of '1' is assumed.\n\
 If sync is not connected a heuristic based decoder is used. This works well,\n\
 but can take several instructions to lock onto the instruction stream.\n\
 Use of sync, is preferred.\n\
+\n\
+If RST is not connected, an alternative is to specify the reset vector:\n\
+ - D9CD (D9 is the high byte, CD is the low byte)\n\
+ - A9D9CD (optionally, also specify the first opcode, LDA # in this case)\n\
+\n\
 ";
 
 static char args_doc[] = "[FILENAME]";
@@ -75,6 +82,7 @@ static struct argp_option options[] = {
    { "rdy",            4, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for rdy, blank if unconnected"},
    { "phi2",           5, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for phi2, blank if unconnected"},
    { "rst",            6, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for rst, blank if unconnected"},
+   { "vecrst",         7,    "HEX", OPTION_ARG_OPTIONAL, "The reset vector, black if not known"},
    { "machine",      'm', "MACHINE",                  0, "Enable machine specific behaviour"},
    { "state",        's',        0,                   0, "Show register/flag state."},
    { "hex",          'h',        0,                   0, "Show hex bytes of instruction."},
@@ -93,6 +101,7 @@ struct arguments {
    int idx_rdy;
    int idx_phi2;
    int idx_rst;
+   int vec_rst;
    int machine;
    int show_state;
    int show_cycles;
@@ -145,6 +154,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->idx_rst = -1;
       }
       break;
+   case   7:
+      if (arg && strlen(arg) > 0) {
+         arguments->vec_rst = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->vec_rst = -1;
+      }
+      break;
    case 'c':
       if (arguments->undocumented) {
          argp_error(state, "undocumented and c02 flags mutually exclusive");
@@ -164,6 +180,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       break;
    case 'd':
       arguments->debug = atoi(arg);
+      break;
+   case 'b':
+      arguments->byte = 1;
       break;
    case 'h':
       arguments->show_hex = 1;
@@ -446,12 +465,14 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       }
    } else {
       // no reset line
-      if ((bus_data_q[0] == 0xCD) && (bus_data_q[1] == 0xD9) && (bus_data_q[2] == 0xA9)) {
-         // reset vector answer B 1.20 OS + LDA#
-         cycle_count = 1;
-         bus_cycle = -1;
-         opcode = 0;
-         rst_seen = 1;
+      if ((bus_data_q[0] + (bus_data_q[1] << 8)) == (arguments.vec_rst & 0xFFFF)) {
+         int rst_opcode = (arguments.vec_rst >> 16) & 0xff;
+         if (!rst_opcode || (bus_data_q[2] == rst_opcode)) {
+            cycle_count = 1;
+            bus_cycle = -1;
+            opcode = 0;
+            rst_seen = 1;
+         }
       }
    }
 
@@ -755,6 +776,9 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
    static int last_pin_rst         = 1;
    static int rst_seen             = 0;
 
+   // TODO, sync based decoder probably should fall back to testing the
+   // reset vector if rst is not connected.
+
    if (pin_rst == 1) {
 
       if (last_pin_rst == 0) {
@@ -878,110 +902,129 @@ void decode(FILE *stream) {
    // The previous sample of phi2 (async sampling only)
    int last_phi2 = -1;
 
-   while ((num = fread(buffer, sizeof(uint16_t), BUFSIZE, stream)) > 0) {
+   if (arguments.byte) {
 
-      uint16_t *sampleptr = &buffer[0];
+      // In byte mode we have only data bus samples, nothing else so we must
+      // use the sync-less decoder. The values of pin_rnw and pin_rst are set
+      // to 1, but the decoder should never actually use them.
 
-      while (num-- > 0) {
-
-         // The current 16-bit capture sample, and the previous two
-         last2_sample = last_sample;
-         last_sample  = sample;
-         sample       = *sampleptr++;
-
-         // TODO: fix the hard coded values!!!
-         if (arguments.debug >= 2) {
-            printf("%d %02x %x %x %x %x\n", sample_count, sample&255, (sample >> 8)&1,  (sample >> 9)&1,  (sample >> 10)&1,  (sample >> 11)&1  );
+      while ((num = fread(buffer8, sizeof(uint8_t), BUFSIZE, stream)) > 0) {
+         uint8_t *sampleptr = &buffer8[0];
+         while (num-- > 0) {
+            lookahead_decode_cycle_without_sync(*sampleptr++, 1, 1);
          }
-         sample_count++;
+      }
 
-         // Phi2 is optional
-         // - if asynchronous capture is used, it must be connected
-         // - if synchronous capture is used, it must not connected
-         if (idx_phi2 < 0) {
+   } else {
 
-            // If Phi2 is not present, use the pins directly
-            bus_data = (sample >> idx_data) & 255;
-            if (idx_rnw >= 0) {
-               pin_rnw = (sample >> idx_rnw ) & 1;
-            }
-            if (idx_sync >= 0) {
-               pin_sync = (sample >> idx_sync) & 1;
-            }
-            if (idx_rdy >= 0) {
-               pin_rdy = (sample >> idx_rdy) & 1;
-            }
-            if (idx_rst >= 0) {
-               pin_rst = (sample >> idx_rst) & 1;
-            }
+      // In word mode (the default) we have data bus samples, plus optionally
+      // rnw, sync, rdy, phy2 and rst.
 
-         } else {
+      while ((num = fread(buffer, sizeof(uint16_t), BUFSIZE, stream)) > 0) {
 
-            // If Phi2 is present, look for an edge
-            pin_phi2 = (sample >> idx_phi2) & 1;
-            if (pin_phi2 == last_phi2) {
-               // continue for more samples
-               continue;
+         uint16_t *sampleptr = &buffer[0];
+
+         while (num-- > 0) {
+
+            // The current 16-bit capture sample, and the previous two
+            last2_sample = last_sample;
+            last_sample  = sample;
+            sample       = *sampleptr++;
+
+            // TODO: fix the hard coded values!!!
+            if (arguments.debug >= 2) {
+               printf("%d %02x %x %x %x %x\n", sample_count, sample&255, (sample >> 8)&1,  (sample >> 9)&1,  (sample >> 10)&1,  (sample >> 11)&1  );
             }
-            last_phi2 = pin_phi2;
+            sample_count++;
 
-            if (pin_phi2) {
-               // sample control signals just after rising edge of Phi2
+            // Phi2 is optional
+            // - if asynchronous capture is used, it must be connected
+            // - if synchronous capture is used, it must not connected
+            if (idx_phi2 < 0) {
+
+               // If Phi2 is not present, use the pins directly
+               bus_data = (sample >> idx_data) & 255;
                if (idx_rnw >= 0) {
                   pin_rnw = (sample >> idx_rnw ) & 1;
                }
                if (idx_sync >= 0) {
                   pin_sync = (sample >> idx_sync) & 1;
                }
+               if (idx_rdy >= 0) {
+                  pin_rdy = (sample >> idx_rdy) & 1;
+               }
                if (idx_rst >= 0) {
                   pin_rst = (sample >> idx_rst) & 1;
                }
-               // continue for more samples
-               continue;
+
             } else {
-               if (idx_rdy >= 0) {
-                  pin_rdy = (last_sample >> idx_rdy) & 1;
+
+               // If Phi2 is present, look for an edge
+               pin_phi2 = (sample >> idx_phi2) & 1;
+               if (pin_phi2 == last_phi2) {
+                  // continue for more samples
+                  continue;
                }
-               // TODO: try to rationalize this!
-               if (arguments.machine == MACHINE_ELK) {
-                  // Data bus sampling for the Elk
-                  if (idx_rnw < 0 || pin_rnw) {
-                     // sample read data just before falling edge of Phi2
-                     bus_data = last_sample & 255;
-                  } else {
-                     // sample write data one cycle earlier
-                     bus_data = last_sample & 255;
+               last_phi2 = pin_phi2;
+
+               if (pin_phi2) {
+                  // sample control signals just after rising edge of Phi2
+                  if (idx_rnw >= 0) {
+                     pin_rnw = (sample >> idx_rnw ) & 1;
                   }
-               } else if (arguments.machine == MACHINE_MASTER) {
-                  // Data bus sampling for the Master
-                  if (idx_rnw < 0 || pin_rnw) {
-                     // sample read data just before falling edge of Phi2
-                     bus_data = last_sample & 255;
-                  } else {
-                     // sample write data one cycle earlier
-                     bus_data = last2_sample & 255;
+                  if (idx_sync >= 0) {
+                     pin_sync = (sample >> idx_sync) & 1;
                   }
+                  if (idx_rst >= 0) {
+                     pin_rst = (sample >> idx_rst) & 1;
+                  }
+                  // continue for more samples
+                  continue;
                } else {
-                  // Data bus sampling for the Beeb, one cycle later
-                  if (idx_rnw < 0 || pin_rnw) {
-                     // sample read data just after falling edge of Phi2
-                     bus_data = sample & 255;
+                  if (idx_rdy >= 0) {
+                     pin_rdy = (last_sample >> idx_rdy) & 1;
+                  }
+                  // TODO: try to rationalize this!
+                  if (arguments.machine == MACHINE_ELK) {
+                     // Data bus sampling for the Elk
+                     if (idx_rnw < 0 || pin_rnw) {
+                        // sample read data just before falling edge of Phi2
+                        bus_data = last_sample & 255;
+                     } else {
+                        // sample write data one cycle earlier
+                        bus_data = last_sample & 255;
+                     }
+                  } else if (arguments.machine == MACHINE_MASTER) {
+                     // Data bus sampling for the Master
+                     if (idx_rnw < 0 || pin_rnw) {
+                        // sample read data just before falling edge of Phi2
+                        bus_data = last_sample & 255;
+                     } else {
+                        // sample write data one cycle earlier
+                        bus_data = last2_sample & 255;
+                     }
                   } else {
-                     // sample write data one cycle earlier
-                     bus_data = last_sample & 255;
+                     // Data bus sampling for the Beeb, one cycle later
+                     if (idx_rnw < 0 || pin_rnw) {
+                        // sample read data just after falling edge of Phi2
+                        bus_data = sample & 255;
+                     } else {
+                        // sample write data one cycle earlier
+                        bus_data = last_sample & 255;
+                     }
                   }
                }
             }
-         }
 
-         // Ignore the cycle if RDY is low
-         if (pin_rdy == 0)
-            continue;
+            // Ignore the cycle if RDY is low
+            if (pin_rdy == 0)
+               continue;
 
-         if (idx_sync < 0) {
-            lookahead_decode_cycle_without_sync(bus_data, pin_rnw, pin_rst);
-         } else {
-            decode_cycle_with_sync(bus_data, pin_rnw, pin_sync, pin_rst);
+            if (idx_sync < 0) {
+               lookahead_decode_cycle_without_sync(bus_data, pin_rnw, pin_rst);
+            } else {
+               decode_cycle_with_sync(bus_data, pin_rnw, pin_sync, pin_rst);
+            }
          }
       }
    }
@@ -998,17 +1041,29 @@ int main(int argc, char *argv[]) {
    arguments.idx_rdy      = 10;
    arguments.idx_phi2     = 11;
    arguments.idx_rst      = 14;
+   arguments.vec_rst      = 0xA9D9CD; // These are the defaults for the beeb
    arguments.machine      = MACHINE_DEFAULT;
    arguments.show_hex     = 0;
    arguments.show_state   = 0;
    arguments.show_cycles  = 0;
    arguments.c02          = 0;
    arguments.undocumented = 0;
-   arguments.byte         = 1;
+   arguments.byte         = 0;
    arguments.debug        = 0;
    arguments.filename     = NULL;
 
    argp_parse(&argp, argc, argv, 0, 0, &arguments);
+
+   // Normally the data file should be 16 bit samples. In byte mode
+   // the data file is 8 bit samples, and all the control signals are
+   // assumed to be don't care.
+   if (arguments.byte) {
+      arguments.idx_rnw  = -1;
+      arguments.idx_sync = -1;
+      arguments.idx_rdy  = -1;
+      arguments.idx_phi2 = -1;
+      arguments.idx_rst  = -1;
+   }
 
    if (arguments.show_state || arguments.idx_sync < 0 || arguments.idx_rnw < 0) {
       do_emulate = 1;
