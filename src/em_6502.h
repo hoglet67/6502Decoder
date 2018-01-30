@@ -7,6 +7,8 @@ void em_reset();
 
 void em_interrupt(int operand);
 
+int compare_NVDIZC(int operand);
+
 int em_get_N();
 
 int em_get_V();

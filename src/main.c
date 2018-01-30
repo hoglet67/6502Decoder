@@ -662,8 +662,11 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       }
    } else {
       if ((bus_cycle == 2) && (bus_data_q[0] == ((pc >> 8) & 0xff)) && (bus_data_q[1] == (pc & 0xff))) {
-         cycle_count = 7;
-         intr_seen = 1;
+         // Now test unused flag is 1, B is 0, and all other known flags match
+         if (((bus_data_q[2] & 0x30) == 0x20) && !compare_NVDIZC(bus_data_q[2])) {
+            cycle_count = 7;
+            intr_seen = 1;
+         }
       }
    }
 
@@ -734,7 +737,6 @@ void lookahead_decode_cycle_without_sync(int bus_data, int pin_rnw, int pin_rst)
 // ====================================================================
 
 void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst) {
-#if 0
 
    // Count of the 6502 bus cycles
    static int cyclenum             = 0;
@@ -749,8 +751,7 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
    static int op2                  = 0;
    static int bus_cycle            = 0;
    static int write_count          = 0;
-   static int read_accumulator     = 0;
-   static int write_accumulator    = 0;
+   static uint64_t accumulator     = 0;
    static int last_pin_rst         = 1;
    static int rst_seen             = 0;
 
@@ -761,14 +762,44 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
          opcode = -1;
       }
 
+      // Write count is only used to determine if an interrupt has occurred
+      if (arguments.idx_rnw >= 0) {
+         // If we have the RNW pin connected, we use it's value directly
+         if (pin_rnw == 0) {
+            if (bus_cycle == 2 || bus_cycle == 3 || bus_cycle == 4) {
+               write_count++;
+            }
+         }
+      } else {
+         // If not, then we use a heuristic, based on what we expect to see on the data
+         // bus in cycles 2, 3 and 4, i.e. PCH, PCL, PSW
+         // (It's unlikely sync would be connected but rnw not, but lets try to cope)
+         if ((bus_cycle == 2) && (bus_data == ((pc >> 8) & 0xff))) {
+            // Matched PCH
+            write_count++;
+         }
+         if ((bus_cycle == 3) && (bus_data == (pc & 0xff))) {
+            // Matched PCL
+            write_count++;
+         }
+         // Now test unused flag is 1, B is 0
+         if ((bus_cycle == 4) && ((bus_data & 0x30) == 0x20)) {
+            // Finally test all other known flags match
+            if (!compare_NVDIZC(bus_data)) {
+               // Matched PSW = NV-BDIZC
+               write_count++;
+            }
+         }
+      }
+
       if (pin_sync == 1) {
 
          // Sync indicates the start of a new instruction, the following variables pertain to the previous instruction
-         // opcode, op1, op2, read_accumulator, write_accumulator, write_count, operand
+         // opcode, op1, op2, accumulator, write_count, operand
 
          // Analyze the  previous instrucution
          if (opcode >= 0) {
-            analyze_instruction(opcode, op1, op2, read_accumulator, write_accumulator, write_count == 3, cyclenum - last_cyclenum, rst_seen);
+            analyze_instruction(opcode, op1, op2, accumulator, write_count == 3, cyclenum - last_cyclenum, rst_seen);
             rst_seen = 0;
          }
          last_cyclenum  = cyclenum;
@@ -777,29 +808,32 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
          opcode            = bus_data;
          opcount           = instr_table[opcode].len - 1;
          write_count       = 0;
-         read_accumulator  = 0;
-         write_accumulator = 0;
-
-      } else if (pin_rnw == 0) {
-         if (bus_cycle == 2 || bus_cycle == 3 || bus_cycle == 4) {
-            write_count++;
-         }
-         write_accumulator = (write_accumulator << 8) | bus_data;
-
-      } else if (bus_cycle == 1 && opcount >= 1) {
-         op1 = bus_data;
-
-      } else if (bus_cycle == ((opcode == 0x20) ? 5 : ((opcode & 0x0f) == 0x0f) ? 4 : 2) && opcount >= 2 && write_count < 3) {
-         // JSR     is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
-         // BBR/BBS is <opcode> <op1> <zp> <dummy> <op2> (<branch taken penalty>) (<page cross penatly)
-         op2 = bus_data;
+         accumulator       = 0;
 
       } else {
-         read_accumulator = (read_accumulator <<  8) | bus_data;
+
+         if (bus_cycle == 1 && opcount >= 1) {
+            op1 = bus_data;
+         }
+
+         if (bus_cycle == ((opcode == 0x20) ? 5 : ((opcode & 0x0f) == 0x0f) ? 4 : 2) && opcount >= 2 && write_count < 3) {
+            // JSR     is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
+            // BBR/BBS is <opcode> <op1> <zp> <dummy> <op2> (<branch taken penalty>) (<page cross penatly)
+            op2 = bus_data;
+         }
+
+         accumulator = (accumulator <<  8) | bus_data;
       }
 
       if (arguments.debug >= 1) {
-         printf("%d %02x %d %d %d\n", bus_cycle, bus_data, pin_rnw, pin_sync, pin_rst);
+         printf("%d %02x %d", bus_cycle, bus_data, pin_sync);
+         if (arguments.idx_rnw >= 0) {
+            printf(" %d", pin_rnw);
+         }
+         if (arguments.idx_rst >= 0) {
+            printf(" %d", pin_rst);
+         }
+         printf("\n");
       }
 
       bus_cycle++;
@@ -810,7 +844,6 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
 
    // Maintain an edge detector for rst
    last_pin_rst = pin_rst;
-#endif
 }
 
 // ====================================================================
@@ -977,7 +1010,7 @@ int main(int argc, char *argv[]) {
 
    argp_parse(&argp, argc, argv, 0, 0, &arguments);
 
-   if (arguments.show_state || arguments.idx_sync < 0) {
+   if (arguments.show_state || arguments.idx_sync < 0 || arguments.idx_rnw < 0) {
       do_emulate = 1;
    }
 

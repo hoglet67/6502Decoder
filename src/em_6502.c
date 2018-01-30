@@ -60,37 +60,42 @@ static void op_STA(int operand);
 static void op_STX(int operand);
 static void op_STY(int operand);
 
-static void check_NVDIZC(int operand) {
+int compare_NVDIZC(int operand) {
    if (N >= 0) {
       if (N != ((operand >> 7) & 1)) {
-         failflag = 1;
+         return 1;
       }
    }
    if (V >= 0) {
       if (V != ((operand >> 6) & 1)) {
-         failflag = 1;
+         return 1;
       }
    }
    if (D >= 0) {
       if (D != ((operand >> 3) & 1)) {
-         failflag = 1;
+         return 1;
       }
    }
    if (I >= 0) {
       if (I != ((operand >> 2) & 1)) {
-         failflag = 1;
+         return 1;
       }
    }
    if (Z >= 0) {
       if (Z != ((operand >> 1) & 1)) {
-         failflag = 1;
+         return 1;
       }
    }
    if (C >= 0) {
       if (C != ((operand >> 0) & 1)) {
-         failflag = 1;
+         return 1;
       }
    }
+   return 0;
+}
+
+static void check_NVDIZC(int operand) {
+   failflag |= compare_NVDIZC(operand);
 }
 
 static void set_NVDIZC(int operand) {
