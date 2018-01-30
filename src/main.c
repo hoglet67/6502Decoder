@@ -343,13 +343,6 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
          break;
       }
 
-      if ((arguments.show_cycles || (arguments.show_state))) {
-         // Pad opcode to 14 characters, to match python
-         while (numchars++ < 14) {
-            printf(" ");
-         }
-      }
-
       // Emulate the instruction
       if (do_emulate) {
          if (instr->emulate) {
@@ -377,9 +370,15 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
                // default to using the last bus cycle as the operand
                operand = accumulator & 0xff;
             }
-            printf(" : op=%02x", operand);
             instr->emulate(operand);
          }
+      }
+   }
+
+   if ((arguments.show_cycles || (arguments.show_state))) {
+      // Pad opcode to 14 characters, to match python
+      while (numchars++ < 14) {
+         printf(" ");
       }
    }
 
