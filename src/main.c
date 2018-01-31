@@ -254,6 +254,11 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
       }
    }
 
+   // Force the pc to don't case fore the reset cycle (makes test log more consistent)
+   if (rst_seen) {
+      pc = -1;
+   }
+
    if (pc < 0) {
       printf("???? : ");
    } else {
@@ -456,8 +461,8 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    if (arguments.idx_rst >= 0) {
       if (pin_rst == 0) {
          if (*(pin_rst_q + 1) == 1) {
-            cycle_count = 8;
-            bus_cycle = 0;
+            cycle_count = arguments.c02 ? 7 : 8;
+            bus_cycle = -1;
             opcode = 0;
             rst_seen = 1;
          }
