@@ -456,7 +456,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       if (pin_rst == 0) {
          if (*(pin_rst_q + 1) == 1) {
             cycle_count = 8;
-            bus_cycle = -1;
+            bus_cycle = 0;
             opcode = 0;
             rst_seen = 1;
          }
@@ -486,206 +486,209 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       op2 = bus_data;
    }
 
-   // Account for extra cycle in ADC/SBC in decimal mode in C02
-   if (arguments.c02 && instr->decimalcorrect && bus_cycle == 1 && em_get_D() == 1) {
-      cycle_count++;
-   }
+   if (!intr_seen && !rst_seen) {
 
-   // Account for extra cycle in a page crossing in (indirect), Y
-   if (!intr_seen && bus_cycle == 4) {
-      // Applies to INDY, but need to exclude stores
-      if ((instr->mode == INDY) && (instr->optype == READOP)) {
-         int index = em_get_Y();
-         if (index >= 0) {
-            int base = ((accumulator & 0xFF00) >> 8) | ((accumulator & 0x00FF) << 8);
-            if ((base & 0xff00) != ((base + index) & 0xff00)) {
-               cycle_count++;
-            }
-         }
+      // Account for extra cycle in ADC/SBC in decimal mode in C02
+      if (arguments.c02 && instr->decimalcorrect && bus_cycle == 1 && em_get_D() == 1) {
+         cycle_count++;
       }
-   }
 
-   // Account for extra cycle in a page crossing in absolute indexed
-   if (bus_cycle == 2) {
-      // Applies to ABSX and ABSY, but need to exclude stores
-      if (((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype == READOP)) {
-         // 6502:  Need to exclude ASL/ROL/LSR/ROR/DEC/INC, which are 7 cycles regardless
-         // 65C02: Need to exclude DEC/INC, which are 7 cycles regardless
-         if ((opcode != 0xDE) && (opcode != 0xFE) && (arguments.c02 || ((opcode != 0x1E) && (opcode != 0x3E) && (opcode != 0x5E) && (opcode != 0x7E)))) {
-            int index = (instr->mode == ABSX) ? em_get_X() : em_get_Y();
+      // Account for extra cycle in a page crossing in (indirect), Y
+      if (bus_cycle == 4) {
+         // Applies to INDY, but need to exclude stores
+         if ((instr->mode == INDY) && (instr->optype == READOP)) {
+            int index = em_get_Y();
             if (index >= 0) {
-               int base = op1 + (op2 << 8);
+               int base = ((accumulator & 0xFF00) >> 8) | ((accumulator & 0x00FF) << 8);
                if ((base & 0xff00) != ((base + index) & 0xff00)) {
                   cycle_count++;
                }
             }
          }
       }
-   }
 
-   // Account for extra cycles in BBR/BBS
-   //
-   // Example: BBR0, $50, +6
-   // 0 8f 1 1 1 <opcode>
-   // 1 50 1 0 1 <op1> i.e. ZP address
-   // 2 01 1 0 1 <mem rd>
-   // 3 01 1 0 1 <mem rd>
-   // 4 06 1 0 1 <op2> i.e.
-   // 5 20 1 0 1 (<branch taken penalty>)
-   // 6          (<page crossed penalty>)
-   //
-
-   if (!intr_seen && bus_cycle == 4) {
-      if ((opcode & 0x0f) == 0x0f) {
-         int operand = (accumulator >> 8) & 0xff;
-         // invert operand for BBR
-         if (opcode <= 0x80) {
-            operand ^= 0xff;
-         }
-         int bit = (opcode >> 4) & 7;
-         // Figure out if the branch was taken
-         if (operand & (1 << bit)) {
-            // A taken bbr/bbs branch is 6 cycles, not 5
-            cycle_count = 6;
-            // A taken bbr/bbs branch that crosses a page boundary is 7 cycles
-            if (pc >= 0) {
-               int target =  (pc + 3) + ((int8_t)(op2));
-               if ((target & 0xFF00) != ((pc + 3) & 0xff00)) {
-                  cycle_count = 7;
+      // Account for extra cycle in a page crossing in absolute indexed
+      if (bus_cycle == 2) {
+         // Applies to ABSX and ABSY, but need to exclude stores
+         if (((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype == READOP)) {
+            // 6502:  Need to exclude ASL/ROL/LSR/ROR/DEC/INC, which are 7 cycles regardless
+            // 65C02: Need to exclude DEC/INC, which are 7 cycles regardless
+            if ((opcode != 0xDE) && (opcode != 0xFE) && (arguments.c02 || ((opcode != 0x1E) && (opcode != 0x3E) && (opcode != 0x5E) && (opcode != 0x7E)))) {
+               int index = (instr->mode == ABSX) ? em_get_X() : em_get_Y();
+               if (index >= 0) {
+                  int base = op1 + (op2 << 8);
+                  if ((base & 0xff00) != ((base + index) & 0xff00)) {
+                     cycle_count++;
+                  }
                }
             }
          }
       }
-   }
 
-   // Account for extra cycles in a branch
-   if (bus_cycle == 1) {
-      if (((opcode & 0x1f) == 0x10) || (opcode == 0x80)) {
-         // Default to backards branches taken, forward not taken
-         int taken = ((int8_t)op1) < 0;
-         switch (opcode) {
-         case 0x10: // BPL
-            if (em_get_N() >= 0) {
-               taken = !em_get_N();
+      // Account for extra cycles in BBR/BBS
+      //
+      // Example: BBR0, $50, +6
+      // 0 8f 1 1 1 <opcode>
+      // 1 50 1 0 1 <op1> i.e. ZP address
+      // 2 01 1 0 1 <mem rd>
+      // 3 01 1 0 1 <mem rd>
+      // 4 06 1 0 1 <op2> i.e.
+      // 5 20 1 0 1 (<branch taken penalty>)
+      // 6          (<page crossed penalty>)
+      //
+
+      if (bus_cycle == 4) {
+         if ((opcode & 0x0f) == 0x0f) {
+            int operand = (accumulator >> 8) & 0xff;
+            // invert operand for BBR
+            if (opcode <= 0x80) {
+               operand ^= 0xff;
             }
-            break;
-         case 0x30: // BMI
-            if (em_get_N() >= 0) {
-               taken = em_get_N();
-            }
-            break;
-         case 0x50: // BVC
-            if (em_get_V() >= 0) {
-               taken = !em_get_V();
-            }
-            break;
-         case 0x70: // BVS
-            if (em_get_V() >= 0) {
-               taken = em_get_V();
-            }
-            break;
-         case 0x80: // BRA
-            taken = 1;
-            break;
-         case 0x90: // BCC
-            if (em_get_C() >= 0) {
-               taken = !em_get_C();
-            }
-            break;
-         case 0xB0: // BCS
-            if (em_get_C() >= 0) {
-               taken = em_get_C();
-            }
-            break;
-         case 0xD0: // BNE
-            if (em_get_Z() >= 0) {
-               taken = !em_get_Z();
-            }
-            break;
-         case 0xF0: // BEQ
-            if (em_get_Z() >= 0) {
-               taken = em_get_Z();
-            }
-            break;
-         }
-         if (taken) {
-            // A taken branch is 3 cycles, not 2
-            cycle_count = 3;
-            // A taken branch that crosses a page boundary is 4 cycle
-            if (pc >= 0) {
-               int target =  (pc + 2) + ((int8_t)(op1));
-               if ((target & 0xFF00) != ((pc + 2) & 0xff00)) {
-                  cycle_count = 4;
+            int bit = (opcode >> 4) & 7;
+            // Figure out if the branch was taken
+            if (operand & (1 << bit)) {
+               // A taken bbr/bbs branch is 6 cycles, not 5
+               cycle_count = 6;
+               // A taken bbr/bbs branch that crosses a page boundary is 7 cycles
+               if (pc >= 0) {
+                  int target =  (pc + 3) + ((int8_t)(op2));
+                  if ((target & 0xFF00) != ((pc + 3) & 0xff00)) {
+                     cycle_count = 7;
+                  }
                }
             }
          }
       }
-   }
 
-   // Master specific behaviour to remain in sync if rdy is not available
-   if ((arguments.machine == MACHINE_MASTER) && (arguments.idx_rdy < 0)) {
-      static int mhz1_phase = 0;
-      if ((bus_cycle == 3) && (instr->len == 3)) {
-         if ((op2 == 0xfc) ||                 // &FC00-&FCFF
-             (op2 == 0xfd) ||                 // &FD00-&FDFF
-             (op2 == 0xfe && (
-                ((op1 & 0xE0) == 0x00) ||     // &FE00-&FE1F
-                ((op1 & 0xC0) == 0x40) ||     // &FE40-&FE7F
-                ((op1 & 0xE0) == 0x80) ||     // &FE80-&FE9F
-                ((op1 & 0xE0) == 0xC0)        // &FEC0-&FEDF
-                ))) {
-            // Use STA/STX/STA to determine 1MHz clock phase
-            if (opcode == 0x8C || opcode == 0x8D || opcode == 0x8E) {
-               if (*(bus_data_q + 1) == bus_data) {
-                  int new_phase;
-                  if (*(bus_data_q + 2) == bus_data) {
-                     new_phase = 1;
+      // Account for extra cycles in a branch
+      if (bus_cycle == 1) {
+         if (((opcode & 0x1f) == 0x10) || (opcode == 0x80)) {
+            // Default to backards branches taken, forward not taken
+            int taken = ((int8_t)op1) < 0;
+            switch (opcode) {
+            case 0x10: // BPL
+               if (em_get_N() >= 0) {
+                  taken = !em_get_N();
+               }
+               break;
+            case 0x30: // BMI
+               if (em_get_N() >= 0) {
+                  taken = em_get_N();
+               }
+               break;
+            case 0x50: // BVC
+               if (em_get_V() >= 0) {
+                  taken = !em_get_V();
+               }
+               break;
+            case 0x70: // BVS
+               if (em_get_V() >= 0) {
+                  taken = em_get_V();
+               }
+               break;
+            case 0x80: // BRA
+               taken = 1;
+               break;
+            case 0x90: // BCC
+               if (em_get_C() >= 0) {
+                  taken = !em_get_C();
+               }
+               break;
+            case 0xB0: // BCS
+               if (em_get_C() >= 0) {
+                  taken = em_get_C();
+               }
+               break;
+            case 0xD0: // BNE
+               if (em_get_Z() >= 0) {
+                  taken = !em_get_Z();
+               }
+               break;
+            case 0xF0: // BEQ
+               if (em_get_Z() >= 0) {
+                  taken = em_get_Z();
+               }
+               break;
+            }
+            if (taken) {
+               // A taken branch is 3 cycles, not 2
+               cycle_count = 3;
+               // A taken branch that crosses a page boundary is 4 cycle
+               if (pc >= 0) {
+                  int target =  (pc + 2) + ((int8_t)(op1));
+                  if ((target & 0xFF00) != ((pc + 2) & 0xff00)) {
+                     cycle_count = 4;
+                  }
+               }
+            }
+         }
+      }
+
+      // Master specific behaviour to remain in sync if rdy is not available
+      if ((arguments.machine == MACHINE_MASTER) && (arguments.idx_rdy < 0)) {
+         static int mhz1_phase = 0;
+         if ((bus_cycle == 3) && (instr->len == 3)) {
+            if ((op2 == 0xfc) ||                 // &FC00-&FCFF
+                (op2 == 0xfd) ||                 // &FD00-&FDFF
+                (op2 == 0xfe && (
+                   ((op1 & 0xE0) == 0x00) ||     // &FE00-&FE1F
+                   ((op1 & 0xC0) == 0x40) ||     // &FE40-&FE7F
+                   ((op1 & 0xE0) == 0x80) ||     // &FE80-&FE9F
+                   ((op1 & 0xE0) == 0xC0)        // &FEC0-&FEDF
+                   ))) {
+               // Use STA/STX/STA to determine 1MHz clock phase
+               if (opcode == 0x8C || opcode == 0x8D || opcode == 0x8E) {
+                  if (*(bus_data_q + 1) == bus_data) {
+                     int new_phase;
+                     if (*(bus_data_q + 2) == bus_data) {
+                        new_phase = 1;
+                     } else {
+                        new_phase = 0;
+                     }
+                     if (mhz1_phase != new_phase) {
+                        printf("correcting 1MHz phase\n");
+                        mhz1_phase = new_phase;
+                     }
                   } else {
-                     new_phase = 0;
+                     printf("fail: 1MHz access not extended as expected\n");
                   }
-                  if (mhz1_phase != new_phase) {
-                     printf("correcting 1MHz phase\n");
-                     mhz1_phase = new_phase;
-                  }
+               }
+               // Correct cycle count based on expected cycle stretching behaviour
+               if (opcode == 0x9D) {
+                  // STA abs, X which has an unfortunate dummy cycle
+                  cycle_count += 2 + mhz1_phase;
                } else {
-                  printf("fail: 1MHz access not extended as expected\n");
+                  cycle_count += 1 + mhz1_phase;
                }
             }
-            // Correct cycle count based on expected cycle stretching behaviour
-            if (opcode == 0x9D) {
-               // STA abs, X which has an unfortunate dummy cycle
-               cycle_count += 2 + mhz1_phase;
-            } else {
-               cycle_count += 1 + mhz1_phase;
-            }
          }
+         // Toggle the phase every cycle
+         mhz1_phase = 1 - mhz1_phase;
       }
-      // Toggle the phase every cycle
-      mhz1_phase = 1 - mhz1_phase;
-   }
 
-   // An interrupt sequence looks like:
-   // 0 <opcode>            Rd
-   // 1 <opcode>            Rd // address not incremented
-   // 2 <return address hi> Wr
-   // 3 <return address lo> Wr
-   // 4 <flags>             Wr
-   // 5 <vector lo>         Rd
-   // 6 <vector hu>         Rd
-   // 7 <opcode>            Rd
+      // An interrupt sequence looks like:
+      // 0 <opcode>            Rd
+      // 1 <opcode>            Rd // address not incremented
+      // 2 <return address hi> Wr
+      // 3 <return address lo> Wr
+      // 4 <flags>             Wr
+      // 5 <vector lo>         Rd
+      // 6 <vector hu>         Rd
+      // 7 <opcode>            Rd
 
-   // Detect interrupts as early as possible...
-   if (arguments.idx_rnw >= 0) {
-      if ((bus_cycle == 2) && (pin_rnw == 0) && (*(pin_rnw_q + 1) == 0) && (*(pin_rnw_q + 2) == 0)) {
-         cycle_count = 7;
-         intr_seen = 1;
-      }
-   } else {
-      if ((bus_cycle == 2) && (bus_data_q[0] == ((pc >> 8) & 0xff)) && (bus_data_q[1] == (pc & 0xff))) {
-         // Now test unused flag is 1, B is 0, and all other known flags match
-         if (((bus_data_q[2] & 0x30) == 0x20) && !compare_NVDIZC(bus_data_q[2])) {
+      // Detect interrupts as early as possible...
+      if (arguments.idx_rnw >= 0) {
+         if ((bus_cycle == 2) && (pin_rnw == 0) && (*(pin_rnw_q + 1) == 0) && (*(pin_rnw_q + 2) == 0)) {
             cycle_count = 7;
             intr_seen = 1;
+         }
+      } else {
+         if ((bus_cycle == 2) && (bus_data_q[0] == ((pc >> 8) & 0xff)) && (bus_data_q[1] == (pc & 0xff))) {
+            // Now test unused flag is 1, B is 0, and all other known flags match
+            if (((bus_data_q[2] & 0x30) == 0x20) && !compare_NVDIZC(bus_data_q[2])) {
+               cycle_count = 7;
+               intr_seen = 1;
+            }
          }
       }
    }
