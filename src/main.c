@@ -446,6 +446,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    static int opcount              = 0;
    static int rst_seen             = 0;
    static int intr_seen            = 0;
+   static int mhz1_phase           = 0;
 
    int bus_data = *bus_data_q;
    int pin_rnw = *pin_rnw_q;
@@ -626,7 +627,6 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
 
       // Master specific behaviour to remain in sync if rdy is not available
       if ((arguments.machine == MACHINE_MASTER) && (arguments.idx_rdy < 0)) {
-         static int mhz1_phase = 0;
          if ((bus_cycle == 3) && (instr->len == 3)) {
             if ((op2 == 0xfc) ||                 // &FC00-&FCFF
                 (op2 == 0xfd) ||                 // &FD00-&FDFF
@@ -662,8 +662,6 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
                }
             }
          }
-         // Toggle the phase every cycle
-         mhz1_phase = 1 - mhz1_phase;
       }
 
       // An interrupt sequence looks like:
@@ -691,6 +689,12 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
             }
          }
       }
+   }
+
+   // Master specific behaviour to remain in sync if rdy is not available
+   if ((arguments.machine == MACHINE_MASTER) && (arguments.idx_rdy < 0)) {
+      // Toggle the phase every cycle
+      mhz1_phase = 1 - mhz1_phase;
    }
 
    if (bus_cycle == cycle_count) {
