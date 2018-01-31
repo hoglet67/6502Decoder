@@ -646,7 +646,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
                         new_phase = 0;
                      }
                      if (mhz1_phase != new_phase) {
-                        printf("correcting 1MHz phase\n");
+                        // printf("correcting 1MHz phase\n");
                         mhz1_phase = new_phase;
                      }
                   } else {
