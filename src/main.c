@@ -777,19 +777,36 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
    static int op1                  = 0;
    static int op2                  = 0;
    static int bus_cycle            = 0;
-   static int write_count          = 0;
+   static int rst_state            = 0;
+   static int intr_state           = 0;
    static uint64_t accumulator     = 0;
    static int last_pin_rst         = 1;
-   static int rst_seen             = 0;
 
    // TODO, sync based decoder probably should fall back to testing the
    // reset vector if rst is not connected.
 
    if (pin_rst == 1) {
 
-      if (last_pin_rst == 0) {
-         rst_seen = 1;
-         opcode = -1;
+      if (arguments.idx_rst >= 0) {
+         // If we have the RST pin connected, we use it's value directly
+         if (last_pin_rst == 0) {
+            rst_state = 3;
+         }
+      } else {
+         // If not, then we use a heuristic, based on what we expect to see on the data
+         // bus in cycles 5, 6 and 7, i.e. RSTVECL, RSTVECH, RSTOPCODE
+         if ((bus_cycle == 5) && (bus_data == (arguments.vec_rst & 0xff))) {
+            // Matched RSTVECL
+            rst_state++;
+         }
+         if ((bus_cycle == 6) && (bus_data == ((arguments.vec_rst >> 8) & 0xff))) {
+            // Matched RSTVECH
+            rst_state++;
+         }
+         if ((bus_cycle == 7) && ((bus_data == ((arguments.vec_rst >> 16) & 0xff)) || (((arguments.vec_rst >> 16) & 0xff) == 0))) {
+            // Matched RSTOPCODE if none zerl
+            rst_state++;
+         }
       }
 
       // Write count is only used to determine if an interrupt has occurred
@@ -797,7 +814,7 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
          // If we have the RNW pin connected, we use it's value directly
          if (pin_rnw == 0) {
             if (bus_cycle == 2 || bus_cycle == 3 || bus_cycle == 4) {
-               write_count++;
+               intr_state++;
             }
          }
       } else {
@@ -806,18 +823,18 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
          // (It's unlikely sync would be connected but rnw not, but lets try to cope)
          if ((bus_cycle == 2) && (bus_data == ((pc >> 8) & 0xff))) {
             // Matched PCH
-            write_count++;
+            intr_state++;
          }
          if ((bus_cycle == 3) && (bus_data == (pc & 0xff))) {
             // Matched PCL
-            write_count++;
+            intr_state++;
          }
          // Now test unused flag is 1, B is 0
          if ((bus_cycle == 4) && ((bus_data & 0x30) == 0x20)) {
             // Finally test all other known flags match
             if (!compare_NVDIZC(bus_data)) {
                // Matched PSW = NV-BDIZC
-               write_count++;
+               intr_state++;
             }
          }
       }
@@ -825,19 +842,19 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
       if (pin_sync == 1) {
 
          // Sync indicates the start of a new instruction, the following variables pertain to the previous instruction
-         // opcode, op1, op2, accumulator, write_count, operand
+         // opcode, op1, op2, accumulator, intr_state, operand
 
          // Analyze the  previous instrucution
          if (opcode >= 0) {
-            analyze_instruction(opcode, op1, op2, accumulator, write_count == 3, cyclenum - last_cyclenum, rst_seen);
-            rst_seen = 0;
+            analyze_instruction(opcode, op1, op2, accumulator, intr_state == 3, cyclenum - last_cyclenum, rst_state == 3);
+            rst_state = 0;
          }
          last_cyclenum  = cyclenum;
 
          bus_cycle         = 0;
          opcode            = bus_data;
          opcount           = instr_table[opcode].len - 1;
-         write_count       = 0;
+         intr_state       = 0;
          accumulator       = 0;
 
       } else {
@@ -846,7 +863,7 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
             op1 = bus_data;
          }
 
-         if (bus_cycle == ((opcode == 0x20) ? 5 : ((opcode & 0x0f) == 0x0f) ? 4 : 2) && opcount >= 2 && write_count < 3) {
+         if (bus_cycle == ((opcode == 0x20) ? 5 : ((opcode & 0x0f) == 0x0f) ? 4 : 2) && opcount >= 2 && intr_state < 3) {
             // JSR     is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
             // BBR/BBS is <opcode> <op1> <zp> <dummy> <op2> (<branch taken penalty>) (<page cross penatly)
             op2 = bus_data;
