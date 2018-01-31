@@ -5,31 +5,37 @@ DECODE=../decode6502
 common_options="--phi2= -h -s"
 
 declare -a machine_names
-machine_names=(master beeb)
+
+machine_names=(
+    master
+    beeb
+    elk
+)
 
 declare -A machine_options
 machine_options[master]="--machine=master -c --vecrst=A9E364"
-machine_options[beeb]="--vecrst=A9D9CD"
-machine_options[electon]="--vecrst=A9D8D2"
+machine_options[beeb]="--machine=default --vecrst=A9D9CD"
+machine_options[elk]="--machine=elk --vecrst=A9D8D2"
 
 declare -a test_names
+
 test_names=(
-sync
-sync_nornw
-sync_norst
-sync_nordy
-sync_nornw_norst
-sync_nornw_nordy
-sync_norst_nordy
-sync_nornw_norst_nordy
-nosync
-nosync_nornw
-nosync_norst
-nosync_nordy
-nosync_nornw_norst
-nosync_nornw_nordy
-nosync_norst_nordy
-nosync_nornw_norst_nordy
+    sync
+    sync_nornw
+    sync_norst
+    sync_nordy
+    sync_nornw_norst
+    sync_nornw_nordy
+    sync_norst_nordy
+    sync_nornw_norst_nordy
+    nosync
+    nosync_nornw
+    nosync_norst
+    nosync_nordy
+    nosync_nornw_norst
+    nosync_nornw_nordy
+    nosync_norst_nordy
+    nosync_nornw_norst_nordy
 )
 
 declare -A test_options
