@@ -1056,6 +1056,14 @@ void decode(FILE *stream) {
          }
       }
    }
+
+   // Flush the lookhead decoder so it
+   if (idx_sync < 0) {
+      for (int i = 0; i < DEPTH - 1; i++) {
+         lookahead_decode_cycle_without_sync(0xEA, 1, 1);
+      }
+   }
+      
 }
 
 // ====================================================================
