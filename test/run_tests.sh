@@ -6,6 +6,18 @@ MAXDIFFSIZE=500000000
 
 common_options="--phi2="
 
+declare -a external_master_files
+
+TEST_FILE_URL="https://github.com/hoglet67/6502Decoder/releases/download/test_data"
+
+declare -a external_master_test_files
+
+external_master_test_files=(
+    dormann_d6502.bin.gz
+    dormann_d65c10.bin.gz
+    clark_bcd_full.bin.gz
+)
+
 declare -a machine_names
 
 machine_names=(
@@ -26,13 +38,15 @@ data_names=(
     reset
     dormann_d6502
     dormann_d65c10
+    clark_bcd_full
 )
 
 declare -A data_options
 
 data_options[reset]="-h -s"
-data_options[dormann_d6502]="-h"
-data_options[dormann_d65c10]="-h"
+data_options[dormann_d6502]="-h -s"
+data_options[dormann_d65c10]="-h -s"
+data_options[clark_bcd_full]="-h -s"
 
 declare -a test_names
 
@@ -76,6 +90,13 @@ test_options[nosync_nornw_norst_nordy]="--sync= --rnw= --rst= --rdy="
 
 # Use the sync based decoder as the deference
 ref=${test_names[0]}
+
+for file in "${external_master_test_files[@]}"
+do
+    echo "Downloading $file"
+    wget -nv -N -P master ${TEST_FILE_URL}/${file}
+done
+
 
 for machine in "${machine_names[@]}"
 do
