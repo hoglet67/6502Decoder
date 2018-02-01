@@ -444,6 +444,8 @@ static void op_CMP(int operand) {
       int tmp = A - operand;
       C = tmp >= 0;
       set_NZ(tmp);
+   } else {
+      set_NZC_unknown();
    }
 }
 
@@ -452,6 +454,8 @@ static void op_CPX(int operand) {
       int tmp = X - operand;
       C = tmp >= 0;
       set_NZ(tmp);
+   } else {
+      set_NZC_unknown();
    }
 }
 
@@ -460,6 +464,8 @@ static void op_CPY(int operand) {
       int tmp = Y - operand;
       C = tmp >= 0;
       set_NZ(tmp);
+   } else {
+      set_NZC_unknown();
    }
 }
 
