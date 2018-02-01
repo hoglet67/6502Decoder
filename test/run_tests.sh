@@ -2,7 +2,9 @@
 
 DECODE=../decode6502
 
-common_options="--phi2= -h -s"
+MAXDIFFSIZE=500000000
+
+common_options="--phi2="
 
 declare -a machine_names
 
@@ -13,9 +15,24 @@ machine_names=(
 )
 
 declare -A machine_options
+
 machine_options[master]="--machine=master -c --vecrst=A9E364"
 machine_options[beeb]="--machine=default --vecrst=A9D9CD"
 machine_options[elk]="--machine=elk --vecrst=A9D8D2"
+
+declare -a data_names
+
+data_names=(
+    reset
+    dormann_d6502
+    dormann_d65c10
+)
+
+declare -A data_options
+
+data_options[reset]="-h -s"
+data_options[dormann_d6502]="-h"
+data_options[dormann_d65c10]="-h"
 
 declare -a test_names
 
@@ -39,6 +56,7 @@ test_names=(
 )
 
 declare -A test_options
+
 test_options[sync]=""
 test_options[sync_nornw]="--rnw="
 test_options[sync_norst]="--rst="
@@ -57,48 +75,67 @@ test_options[nosync_norst_nordy]="--sync= --rst= --rdy="
 test_options[nosync_nornw_norst_nordy]="--sync= --rnw= --rst= --rdy="
 
 # Use the sync based decoder as the deference
-ref=sync
+ref=${test_names[0]}
 
 for machine in "${machine_names[@]}"
 do
-    for data in reset
+    for data in "${data_names[@]}"
     do
-        # First, generate all the data for the test cases
-        echo "=============================================================================="
-        echo "Running ${machine} ${data} tests"
-        echo "=============================================================================="
-        echo
-        for test in "${test_names[@]}"
-        do
-            log=${machine}/trace_${data}_${test}.log
-            cmd="gunzip < ${machine}/${data}.bin.gz | ${DECODE} ${common_options} ${machine_options[${machine}]} ${test_options[${test}]} > ${log}"
-            eval $cmd
-            # If the file contains a RESET marker, prune any lines before this
-            if grep -q RESET ${log}; then
-                sed -n '/RESET/,$p' < ${log} > tmp.log
-                mv tmp.log ${log}
-            fi
-
-            fail_count=`grep fail ${log} | wc -l`
-            md5=`md5sum ${log} | cut -c1-8`
-            printf "Machine: %s; Data: %s; Test: %28s; MD5: %s; Fail Count: %s\n" ${machine} ${data} ${test} ${md5} ${fail_count}
-            echo "  % ${cmd}"
+        if [ -f ${machine}/${data}.bin.gz ]; then
+            # First, generate all the data for the test cases
+            echo "=============================================================================="
+            echo "Running ${machine} ${data} tests"
+            echo "=============================================================================="
             echo
-        done
-        echo "=============================================================================="
-        echo "Checking ${machine} ${data} results"
-        echo "=============================================================================="
-        echo
-        # Next, compare the tests against the reference
-        for test in "${test_names[@]}"
-        do
-            testlog=${machine}/trace_${data}_${test}.log
-            reflog=${machine}/trace_${data}_${ref}.log
-            cmd="diff ${reflog} ${testlog}"
-            diff_count=`${cmd} | wc -l`
-            printf "Machine: %s; Data: %s; Test: %28s; Diff Count: %s\n" ${machine} ${data} ${test} ${diff_count}
-            echo "  % ${cmd}"
-            echo
-        done
+            gunzip < ${machine}/${data}.bin.gz > ${machine}/${data}.tmp
+            refmd5=""
+            reflog=""
+            for test in "${test_names[@]}"
+            do
+                log=${machine}/trace_${data}_${test}.log
+                runcmd="${DECODE} ${common_options} ${data_options[${data}]} ${machine_options[${machine}]} ${test_options[${test}]} ${machine}/${data}.tmp > ${log}"
+                echo "Test: ${test}"
+                echo "  % ${runcmd}"
+                eval $runcmd
+                # If the file contains a RESET marker, prune any lines before this
+                if grep -q RESET ${log}; then
+                    sed -n '/RESET/,$p' < ${log} > tmp.log
+                    mv tmp.log ${log}
+                fi
+                fail_count=`grep fail ${log} | wc -l`
+                md5=`md5sum ${log} | cut -c1-8`
+                size=$(stat -c%s "${log}")
+                echo "  Trace MD5: ${md5}; Prediction fail count: ${fail_count}"
+                # Log some context around each failure (limit to 100 failures)
+                # Compare md5 of results with ref, rather than using diff, as diff can blow up
+                if [ "${test}" == "${ref}" ]; then
+                    refmd5=${md5}
+                    reflog=${machine}/trace_${data}_${ref}.log
+                    echo "  this is the reference trace"
+                    if [ "${fail_count}" != "0" ]; then
+                        echo
+                        grep -10 -m 100 fail ${log}
+                        echo
+                    fi
+                elif [ "${md5}" == "${refmd5}" ]; then
+                    echo -e "  \e[32mPASS\e[97m: test trace matches reference trace"
+                else
+                    if [ "${fail_count}" != "0" ]; then
+                        echo
+                        grep -10 -m 100 fail ${log}
+                        echo
+                    fi
+                    difcmd="diff ${reflog} ${log}"
+                    if (( size < MAXDIFFSIZE )); then
+                        diff_count=`${difcmd} | wc -l`
+                        echo -e "  \e[31mFAIL\e[97m: test trace doesn't match reference trace; Diff Count: " ${diff_count}
+                    else
+                        echo -e "  \e[31mFAIL\e[97m: test trace doesn't match reference trace; file too large too diff"
+                    fi
+                    echo "  % ${difcmd}"
+                fi
+                echo
+            done
+        fi
     done
 done
