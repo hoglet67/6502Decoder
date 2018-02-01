@@ -88,6 +88,7 @@ static struct argp_option options[] = {
    { "hex",          'h',        0,                   0, "Show hex bytes of instruction."},
    { "cycles",       'y',        0,                   0, "Show number of bus cycles."},
    { "c02",          'c',        0,                   0, "Enable 65C02 mode."},
+   { "rockwell",     'r',        0,                   0, "Enable additional rockwell instructions."},
    { "undocumented", 'u',        0,                   0, "Enable undocumented 6502 opcodes (currently incomplete)"},
    { "byte",         'b',        0,                   0, "Byte samples"},
    { "debug",        'd',  "LEVEL",                   0, "Sets debug level (0 1 or 2)"},
@@ -107,6 +108,7 @@ struct arguments {
    int show_cycles;
    int show_hex;
    int c02;
+   int rockwell;
    int undocumented;
    int byte;
    int debug;
@@ -166,6 +168,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          argp_error(state, "undocumented and c02 flags mutually exclusive");
       }
       arguments->c02 = 1;
+      break;
+   case 'r':
+      arguments->rockwell = 1;
       break;
    case 'm':
       i = 0;
@@ -414,7 +419,7 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
       // BRA
       pc += ((int8_t)(op1)) + 2;
       pc &= 0xffff;
-   } else if (((opcode & 0x0f) == 0x0f) && (num_cycles != 5)) {
+   } else if (arguments.c02 && arguments.rockwell && ((opcode & 0x0f) == 0x0f) && (num_cycles != 5)) {
       // BBR/BBS: op2 if taken
       pc += ((int8_t)(op2)) + 3;
       pc &= 0xffff;
@@ -544,7 +549,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       //
 
       if (bus_cycle == 4) {
-         if ((opcode & 0x0f) == 0x0f) {
+         if (arguments.c02 && arguments.rockwell && (opcode & 0x0f) == 0x0f) {
             int operand = (accumulator >> 8) & 0xff;
             // invert operand for BBR
             if (opcode <= 0x80) {
@@ -1083,6 +1088,7 @@ int main(int argc, char *argv[]) {
    arguments.show_state   = 0;
    arguments.show_cycles  = 0;
    arguments.c02          = 0;
+   arguments.rockwell     = 0;
    arguments.undocumented = 0;
    arguments.byte         = 0;
    arguments.debug        = 0;
@@ -1115,7 +1121,7 @@ int main(int argc, char *argv[]) {
          return 2;
       }
    }
-   em_init(arguments.c02, arguments.undocumented);
+   em_init(arguments.c02, arguments.rockwell, arguments.undocumented);
    decode(stream);
    fclose(stream);
    return 0;

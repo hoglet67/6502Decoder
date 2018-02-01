@@ -1398,10 +1398,22 @@ static InstrType instr_table_6502[] = {
 
 static char ILLEGAL[] = "???";
 
-void em_init(int support_c02, int support_undocumented) {
+void em_init(int support_c02, int support_rockwell, int support_undocumented) {
    int i;
    c02 = support_c02;
    instr_table = support_c02 ? instr_table_65c02 : instr_table_6502;
+   // If not supporting the Rockwell C02 extensions, tweak the cycle countes
+   if (support_c02 && !support_rockwell) {
+      // x7 (RMB/SMB): 5 cycles -> 1 cycles
+      // xF (BBR/BBS): 5 cycles -> 1 cycles
+      for (i = 0x07; i <= 0xff; i+= 0x08) {
+         instr_table[i].mnemonic = ILLEGAL;
+         instr_table[i].mode     = IMP;
+         instr_table[i].cycles   = 1;
+         instr_table[i].optype   = READOP;
+         instr_table[i].len      = 1;
+      }
+   }
    InstrType *instr = instr_table;
    for (i = 0; i < 256; i++) {
       // Remove the undocumented instructions, if not supported

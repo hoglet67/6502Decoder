@@ -1,7 +1,7 @@
 #ifndef _INCLUDE_EM_6502_H
 #define _INCLUDE_EM_6502_H
 
-void em_init(int support_c02, int support_undocumented);
+void em_init(int support_c02, int support_rockwell, int support_undocumented);
 
 void em_reset();
 
