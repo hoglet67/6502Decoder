@@ -6,17 +6,8 @@ MAXDIFFSIZE=500000000
 
 common_options="--phi2="
 
-declare -a external_master_files
-
-TEST_FILE_URL="https://github.com/hoglet67/6502Decoder/releases/download/test_data"
-
-declare -a external_master_test_files
-
-external_master_test_files=(
-    dormann_d6502.bin.gz
-    dormann_d65c10.bin.gz
-    clark_bcd_full.bin.gz
-)
+EXTENDED_TEST_FILE_BASE="https://github.com/hoglet67/6502Decoder/releases/download/test_data"
+EXTENDED_TEST_FILE_NAME="extended_tests.zip"
 
 declare -a machine_names
 
@@ -24,6 +15,7 @@ machine_names=(
     master
     beeb
     elk
+    beebr65c02
 )
 
 declare -A machine_options
@@ -31,13 +23,17 @@ declare -A machine_options
 machine_options[master]="--machine=master -c --vecrst=A9E364"
 machine_options[beeb]="--machine=default --vecrst=A9D9CD"
 machine_options[elk]="--machine=elk --vecrst=A9D8D2"
+machine_options[beebr65c02]="--machine=default -c -r --vecrst=A9D9CD"
 
 declare -a data_names
 
 data_names=(
     reset
     dormann_d6502
+    dormann_d65c00
+    dormann_d65c01
     dormann_d65c10
+    dormann_d65c11
     clark_bcd_full
 )
 
@@ -45,7 +41,10 @@ declare -A data_options
 
 data_options[reset]="-h -s"
 data_options[dormann_d6502]="-h -s"
+data_options[dormann_d65c00]="-h -s"
+data_options[dormann_d65c01]="-h -s"
 data_options[dormann_d65c10]="-h -s"
+data_options[dormann_d65c11]="-h -s"
 data_options[clark_bcd_full]="-h -s"
 
 declare -a test_names
@@ -91,12 +90,9 @@ test_options[nosync_nornw_norst_nordy]="--sync= --rnw= --rst= --rdy="
 # Use the sync based decoder as the deference
 ref=${test_names[0]}
 
-for file in "${external_master_test_files[@]}"
-do
-    echo "Downloading $file"
-    wget -nv -N -P master ${TEST_FILE_URL}/${file}
-done
-
+echo "Syncing extended test file"
+wget -nv -N ${EXTENDED_TEST_FILE_BASE}/${EXTENDED_TEST_FILE_NAME}
+unzip -o ${EXTENDED_TEST_FILE_NAME}
 
 for machine in "${machine_names[@]}"
 do

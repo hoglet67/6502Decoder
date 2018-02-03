@@ -6,6 +6,7 @@ machine_names=(
     master
     beeb
     elk
+    beebr65c02
 )
 
 for machine in "${machine_names[@]}"
