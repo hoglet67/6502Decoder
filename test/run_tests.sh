@@ -7,9 +7,7 @@ EXTENDED_TEST_FILE_NAME="extended_tests.zip"
 
 MAXDIFFSIZE=500000000
 
-common_options="--phi2="
-
-declare -a machine_names
+common_options="--phi2= --quiet --emulate"
 
 machine_names=(
     master
@@ -38,13 +36,15 @@ extended_data_names=(
     clark_bcd_full
 )
 
-data_options[reset]="-h -s"
-data_options[dormann_d6502]="-h -s"
-data_options[dormann_d65c00]="-h -s"
-data_options[dormann_d65c01]="-h -s"
-data_options[dormann_d65c10]="-h -s"
-data_options[dormann_d65c11]="-h -s"
-data_options[clark_bcd_full]="-h -s"
+declare -A data_options
+
+data_options[reset]="-a -h -i -s"
+data_options[dormann_d6502]="-a"
+data_options[dormann_d65c00]="-a"
+data_options[dormann_d65c01]="-a"
+data_options[dormann_d65c10]="-a"
+data_options[dormann_d65c11]="-a"
+data_options[clark_bcd_full]="-a"
 
 test_names=(
     sync
@@ -64,6 +64,8 @@ test_names=(
     nosync_norst_nordy
     nosync_nornw_norst_nordy
 )
+
+declare -A test_options
 
 test_options[sync]=""
 test_options[sync_nornw]="--rnw="
