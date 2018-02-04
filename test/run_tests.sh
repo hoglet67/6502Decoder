@@ -2,12 +2,12 @@
 
 DECODE=../decode6502
 
+EXTENDED_TEST_FILE_BASE="https://github.com/hoglet67/6502Decoder/releases/download/test_data"
+EXTENDED_TEST_FILE_NAME="extended_tests.zip"
+
 MAXDIFFSIZE=500000000
 
 common_options="--phi2="
-
-EXTENDED_TEST_FILE_BASE="https://github.com/hoglet67/6502Decoder/releases/download/test_data"
-EXTENDED_TEST_FILE_NAME="extended_tests.zip"
 
 declare -a machine_names
 
@@ -25,10 +25,11 @@ machine_options[beeb]="--machine=default --vecrst=A9D9CD"
 machine_options[elk]="--machine=elk --vecrst=A9D8D2"
 machine_options[beebr65c02]="--machine=default -c -r --vecrst=A9D9CD"
 
-declare -a data_names
-
 data_names=(
     reset
+)
+
+extended_data_names=(
     dormann_d6502
     dormann_d65c00
     dormann_d65c01
@@ -37,8 +38,6 @@ data_names=(
     clark_bcd_full
 )
 
-declare -A data_options
-
 data_options[reset]="-h -s"
 data_options[dormann_d6502]="-h -s"
 data_options[dormann_d65c00]="-h -s"
@@ -46,8 +45,6 @@ data_options[dormann_d65c01]="-h -s"
 data_options[dormann_d65c10]="-h -s"
 data_options[dormann_d65c11]="-h -s"
 data_options[clark_bcd_full]="-h -s"
-
-declare -a test_names
 
 test_names=(
     sync
@@ -67,8 +64,6 @@ test_names=(
     nosync_norst_nordy
     nosync_nornw_norst_nordy
 )
-
-declare -A test_options
 
 test_options[sync]=""
 test_options[sync_nornw]="--rnw="
@@ -90,13 +85,37 @@ test_options[nosync_nornw_norst_nordy]="--sync= --rnw= --rst= --rdy="
 # Use the sync based decoder as the deference
 ref=${test_names[0]}
 
-echo "Syncing extended test file"
-wget -nv -N ${EXTENDED_TEST_FILE_BASE}/${EXTENDED_TEST_FILE_NAME}
-unzip -o ${EXTENDED_TEST_FILE_NAME}
-
-for machine in "${machine_names[@]}"
+# Parse the command line options
+POSITIONAL=()
+EXTENDED=0
+while [[ $# -gt 0 ]]
 do
-    for data in "${data_names[@]}"
+    key="$1"
+
+    case $key in
+        -e|--extended)
+            EXTENDED=1
+            shift # past argument
+            ;;
+        *)    # unknown option
+            POSITIONAL+=("$1") # save it in an array for later
+            shift # past argument
+            ;;
+    esac
+done
+
+if [ "${EXTENDED}" == "1" ]; then
+    echo "Running extended tests:"
+    wget -nv -N ${EXTENDED_TEST_FILE_BASE}/${EXTENDED_TEST_FILE_NAME}
+    unzip -o ${EXTENDED_TEST_FILE_NAME}
+    data_names+=(${extended_data_names[@]})
+else
+    echo "Running basic tests:"
+fi
+
+for data in "${data_names[@]}"
+do
+    for machine in "${machine_names[@]}"
     do
         if [ -f ${machine}/${data}.bin.gz ]; then
             # First, generate all the data for the test cases
