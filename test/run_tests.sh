@@ -7,7 +7,7 @@ EXTENDED_TEST_FILE_NAME="extended_tests.zip"
 
 MAXDIFFSIZE=500000000
 
-common_options="--phi2= --quiet --emulate"
+common_options="--phi2="
 
 machine_names=(
     master
@@ -38,13 +38,13 @@ extended_data_names=(
 
 declare -A data_options
 
-data_options[reset]="-a -h -i -s"
-data_options[dormann_d6502]="-a"
-data_options[dormann_d65c00]="-a"
-data_options[dormann_d65c01]="-a"
-data_options[dormann_d65c10]="-a"
-data_options[dormann_d65c11]="-a"
-data_options[clark_bcd_full]="-a"
+data_options[reset]="-h -s"
+data_options[dormann_d6502]="--quiet --emulate"
+data_options[dormann_d65c00]="--quiet --emulate"
+data_options[dormann_d65c01]="--quiet --emulate"
+data_options[dormann_d65c10]="--quiet --emulate"
+data_options[dormann_d65c11]="--quiet --emulate"
+data_options[clark_bcd_full]="--quiet --emulate"
 
 test_names=(
     sync
