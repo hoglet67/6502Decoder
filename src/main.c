@@ -84,14 +84,20 @@ static struct argp_option options[] = {
    { "rst",            6, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for rst, blank if unconnected"},
    { "vecrst",         7,    "HEX", OPTION_ARG_OPTIONAL, "The reset vector, black if not known"},
    { "machine",      'm', "MACHINE",                  0, "Enable machine specific behaviour"},
-   { "state",        's',        0,                   0, "Show register/flag state."},
-   { "hex",          'h',        0,                   0, "Show hex bytes of instruction."},
-   { "cycles",       'y',        0,                   0, "Show number of bus cycles."},
+   { "emulate",      'e',        0,                   0, "Enable emulation, for error checking."},
    { "c02",          'c',        0,                   0, "Enable 65C02 mode."},
    { "rockwell",     'r',        0,                   0, "Enable additional rockwell instructions."},
    { "undocumented", 'u',        0,                   0, "Enable undocumented 6502 opcodes (currently incomplete)"},
    { "byte",         'b',        0,                   0, "Byte samples"},
    { "debug",        'd',  "LEVEL",                   0, "Sets debug level (0 1 or 2)"},
+// Output options
+   { "quiet",        'q',        0,                   0, "Set all the show options to off."},
+   { "address",      'a',        0,                   0, "Show address of instruction."},
+   { "hex",          'h',        0,                   0, "Show hex bytes of instruction."},
+   { "instruction",  'i',        0,                   0, "Show instruction."},
+   { "state",        's',        0,                   0, "Show register/flag state."},
+   { "cycles",       'y',        0,                   0, "Show number of bus cycles."},
+
    { 0 }
 };
 
@@ -104,9 +110,13 @@ struct arguments {
    int idx_rst;
    int vec_rst;
    int machine;
+   int show_address;
+   int show_hex;
+   int show_instruction;
    int show_state;
    int show_cycles;
-   int show_hex;
+   int show_something;
+   int emulate;
    int c02;
    int rockwell;
    int undocumented;
@@ -189,14 +199,30 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
    case 'b':
       arguments->byte = 1;
       break;
+   case 'q':
+      arguments->show_address = 0;
+      arguments->show_hex = 0;
+      arguments->show_instruction = 0;
+      arguments->show_state = 0;
+      arguments->show_cycles = 0;
+      break;
+   case 'a':
+      arguments->show_address = 1;
+      break;
    case 'h':
       arguments->show_hex = 1;
+      break;
+   case 'i':
+      arguments->show_instruction = 1;
       break;
    case 's':
       arguments->show_state = 1;
       break;
    case 'y':
       arguments->show_cycles = 1;
+      break;
+   case 'e':
+      arguments->emulate = 1;
       break;
    case 'u':
       if (arguments->c02) {
@@ -264,95 +290,18 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
       pc = -1;
    }
 
-   if (pc < 0) {
-      printf("???? : ");
-   } else {
-      printf("%04X : ", pc);
-   }
-
-   int numchars = 0;
    if (rst_seen) {
-      // Annotate a reset
-      if (arguments.show_hex) {
-         printf("         : ");
-      }
-      numchars = printf("RESET !!");
+      // Handlea reset
       if (do_emulate) {
          em_reset();
       }
    } else if (intr_seen && opcode != 0) {
-      // Annotate an interrupt
-      if (arguments.show_hex) {
-         printf("         : ");
-      }
-      numchars = printf("INTERRUPT !!");
+      // Handle an interrupt
       if (do_emulate) {
          em_interrupt((accumulator >> 16) & 0xff);
       }
    } else {
-      if (arguments.show_hex) {
-         if (instr->len == 1) {
-            printf("%02X       : ", opcode);
-         } else if (instr->len == 2) {
-            printf("%02X %02X    : ", opcode, op1);
-         } else {
-            printf("%02X %02X %02X : ", opcode, op1, op2);
-         }
-      }
-      // Annotate a normal instruction
-      const char *mnemonic = instr->mnemonic;
-      const char *fmt = instr->fmt;
-      switch (instr->mode) {
-      case IMP:
-      case IMPA:
-         numchars = printf(fmt, mnemonic);
-         break;
-      case BRA:
-         // Calculate branch target using op1 for normal branches
-         offset = (int8_t) op1;
-         if (pc < 0) {
-            if (offset < 0) {
-               sprintf(target, "pc-%d", -offset);
-            } else {
-               sprintf(target,"pc+%d", offset);
-            }
-         } else {
-            sprintf(target, "%04X", pc + 2 + offset);
-         }
-         numchars = printf(fmt, mnemonic, target);
-         break;
-      case ZPR:
-         // Calculate branch target using op2 for BBR/BBS
-         offset = (int8_t) op2;
-         if (pc < 0) {
-            if (offset < 0) {
-               sprintf(target, "pc-%d", -offset);
-            } else {
-               sprintf(target,"pc+%d", offset);
-            }
-         } else {
-            sprintf(target, "%04X", pc + 3 + offset);
-         }
-         numchars = printf(fmt, mnemonic, op1, target);
-         break;
-      case IMM:
-      case ZP:
-      case ZPX:
-      case ZPY:
-      case INDX:
-      case INDY:
-      case IND:
-         numchars = printf(fmt, mnemonic, op1);
-         break;
-      case ABS:
-      case ABSX:
-      case ABSY:
-      case IND16:
-      case IND1X:
-         numchars = printf(fmt, mnemonic, op1, op2);
-         break;
-      }
-
+      // Handle a normal instruction
       // Emulate the instruction
       if (do_emulate) {
          if (instr->emulate) {
@@ -385,22 +334,117 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
       }
    }
 
-   if ((arguments.show_cycles || (arguments.show_state))) {
-      // Pad opcode to 14 characters, to match python
-      while (numchars++ < 14) {
-         printf(" ");
+   int fail = em_get_and_clear_fail();
+
+   if (fail | arguments.show_something) {
+      int numchars = 0;
+      // Show address
+      if (fail || arguments.show_address) {
+         if (pc < 0) {
+            printf("???? : ");
+         } else {
+            printf("%04X : ", pc);
+         }
       }
+      // Show hex bytes
+      if (fail || arguments.show_hex) {
+         if (rst_seen) {
+            printf("         : ");
+         } else if (intr_seen && opcode != 0) {
+            printf("         : ");
+         } else {
+            if (instr->len == 1) {
+               printf("%02X       : ", opcode);
+            } else if (instr->len == 2) {
+               printf("%02X %02X    : ", opcode, op1);
+            } else {
+               printf("%02X %02X %02X : ", opcode, op1, op2);
+            }
+         }
+      }
+      // Show instruction disassembly
+      if (fail || arguments.show_something) {
+         if (rst_seen) {
+            numchars = printf("RESET !!");
+         } else if (intr_seen && opcode != 0) {
+            numchars = printf("INTERRUPT !!");
+         } else {
+            const char *mnemonic = instr->mnemonic;
+            const char *fmt = instr->fmt;
+            switch (instr->mode) {
+            case IMP:
+            case IMPA:
+               numchars = printf(fmt, mnemonic);
+               break;
+            case BRA:
+               // Calculate branch target using op1 for normal branches
+               offset = (int8_t) op1;
+               if (pc < 0) {
+                  if (offset < 0) {
+                     sprintf(target, "pc-%d", -offset);
+                  } else {
+                     sprintf(target,"pc+%d", offset);
+                  }
+               } else {
+                  sprintf(target, "%04X", pc + 2 + offset);
+               }
+               numchars = printf(fmt, mnemonic, target);
+               break;
+            case ZPR:
+               // Calculate branch target using op2 for BBR/BBS
+               offset = (int8_t) op2;
+               if (pc < 0) {
+                  if (offset < 0) {
+                     sprintf(target, "pc-%d", -offset);
+                  } else {
+                     sprintf(target,"pc+%d", offset);
+                  }
+               } else {
+                  sprintf(target, "%04X", pc + 3 + offset);
+               }
+               numchars = printf(fmt, mnemonic, op1, target);
+               break;
+            case IMM:
+            case ZP:
+            case ZPX:
+            case ZPY:
+            case INDX:
+            case INDY:
+            case IND:
+               numchars = printf(fmt, mnemonic, op1);
+               break;
+            case ABS:
+            case ABSX:
+            case ABSY:
+            case IND16:
+            case IND1X:
+               numchars = printf(fmt, mnemonic, op1, op2);
+               break;
+            }
+         }
+      }
+      // Pad if there is more to come
+      if (fail || arguments.show_cycles || arguments.show_state) {
+         // Pad opcode to 14 characters, to match python
+         while (numchars++ < 14) {
+            printf(" ");
+         }
+      }
+      // Show cycles (don't include with fail as it is inconsistent depending on whether rdy is present)
+      if (arguments.show_cycles) {
+         printf(" : %d", num_cycles);
+      }
+      // Show register state
+      if (fail || arguments.show_state) {
+         printf(" : %s", em_get_state());
+      }
+      // Show any errors
+      if (fail) {
+         printf(" prediction failed");
+      }
+      // End the line
+      printf("\n");
    }
-
-   if (arguments.show_cycles) {
-      printf(" : %d", num_cycles);
-   }
-
-   if (arguments.show_state) {
-      printf(" : %s", em_get_state());
-   }
-
-   printf("\n");
 
    // Look for control flow changes and update the PC
    if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c || intr_seen || rst_seen) {
@@ -1068,7 +1112,7 @@ void decode(FILE *stream) {
          lookahead_decode_cycle_without_sync(0xEA, 1, 1);
       }
    }
-      
+
 }
 
 // ====================================================================
@@ -1076,25 +1120,32 @@ void decode(FILE *stream) {
 // ====================================================================
 
 int main(int argc, char *argv[]) {
-   arguments.idx_data     =  0;
-   arguments.idx_rnw      =  8;
-   arguments.idx_sync     =  9;
-   arguments.idx_rdy      = 10;
-   arguments.idx_phi2     = 11;
-   arguments.idx_rst      = 14;
-   arguments.vec_rst      = 0xA9D9CD; // These are the defaults for the beeb
-   arguments.machine      = MACHINE_DEFAULT;
-   arguments.show_hex     = 0;
-   arguments.show_state   = 0;
-   arguments.show_cycles  = 0;
-   arguments.c02          = 0;
-   arguments.rockwell     = 0;
-   arguments.undocumented = 0;
-   arguments.byte         = 0;
-   arguments.debug        = 0;
-   arguments.filename     = NULL;
+   arguments.idx_data         =  0;
+   arguments.idx_rnw          =  8;
+   arguments.idx_sync         =  9;
+   arguments.idx_rdy          = 10;
+   arguments.idx_phi2         = 11;
+   arguments.idx_rst          = 14;
+   arguments.vec_rst          = 0xA9D9CD; // These are the defaults for the beeb
+   arguments.machine          = MACHINE_DEFAULT;
+
+   arguments.show_address     = 1;
+   arguments.show_hex         = 0;
+   arguments.show_instruction = 1;
+   arguments.show_state       = 0;
+   arguments.show_cycles      = 0;
+
+   arguments.emulate          = 0;
+   arguments.c02              = 0;
+   arguments.rockwell         = 0;
+   arguments.undocumented     = 0;
+   arguments.byte             = 0;
+   arguments.debug            = 0;
+   arguments.filename         = NULL;
 
    argp_parse(&argp, argc, argv, 0, 0, &arguments);
+
+   arguments.show_something = arguments.show_address | arguments.show_hex | arguments.show_instruction | arguments.show_state | arguments.show_cycles;
 
    // Normally the data file should be 16 bit samples. In byte mode
    // the data file is 8 bit samples, and all the control signals are
@@ -1107,7 +1158,7 @@ int main(int argc, char *argv[]) {
       arguments.idx_rst  = -1;
    }
 
-   if (arguments.show_state || arguments.idx_sync < 0 || arguments.idx_rnw < 0) {
+   if (arguments.emulate || arguments.show_state || arguments.idx_sync < 0 || arguments.idx_rnw < 0) {
       do_emulate = 1;
    }
 

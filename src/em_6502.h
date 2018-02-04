@@ -31,6 +31,8 @@ int em_get_S();
 
 char *em_get_state();
 
+int em_get_and_clear_fail();
+
 typedef enum {
    IMP,
    IMPA,

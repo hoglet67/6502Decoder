@@ -239,13 +239,14 @@ char *em_get_state() {
    if (C >= 0) {
       buffer[OFFSET_C] = '0' + C;
    }
-   if (failflag) {
-      sprintf(buffer + OFFSET_FF, " prediction failed");
-   }
-   failflag = 0;
    return buffer;
 }
 
+int em_get_and_clear_fail() {
+   int ret = failflag;
+   failflag = 0;
+   return ret;
+}
 
 static void op_ADC(int operand) {
    if (A >= 0 && C >= 0) {
