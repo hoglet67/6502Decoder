@@ -18,6 +18,8 @@ uint8_t buffer8[BUFSIZE];
 
 uint16_t buffer[BUFSIZE];
 
+uint32_t profile_counts[0x10000];
+
 // Whether to emulate each decoded instruction, to track additional state (registers and flags)
 int do_emulate = 0;
 
@@ -97,6 +99,8 @@ static struct argp_option options[] = {
    { "instruction",  'i',        0,                   0, "Show instruction."},
    { "state",        's',        0,                   0, "Show register/flag state."},
    { "cycles",       'y',        0,                   0, "Show number of bus cycles."},
+   { "profile",      'p',  "RANGE", OPTION_ARG_OPTIONAL, "Profile instruction cycles."},
+
 
    { 0 }
 };
@@ -122,6 +126,9 @@ struct arguments {
    int undocumented;
    int byte;
    int debug;
+   int profile;
+   int profile_min;
+   int profile_max;
    char *filename;
 } arguments;
 
@@ -223,6 +230,21 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       break;
    case 'e':
       arguments->emulate = 1;
+      break;
+   case 'p':
+      arguments->profile = 1;
+      arguments->profile_min = 0x0000;
+      arguments->profile_max = 0xffff;
+      if (arg && strlen(arg) > 0) {
+         char *min = strtok(arg, ",");
+         char *max = strtok(NULL, ",");
+         if (min && strlen(min) > 0) {
+            arguments->profile_min = strtol(min, (char **)NULL, 16);
+         }
+         if (max && strlen(max) > 0) {
+            arguments->profile_max = strtol(max, (char **)NULL, 16);
+         }
+      }
       break;
    case 'u':
       if (arguments->c02) {
@@ -331,6 +353,12 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
             }
             instr->emulate(operand);
          }
+      }
+   }
+
+   if (arguments.profile) {
+      if (pc >=arguments.profile_min && pc <= arguments.profile_max) {
+         profile_counts[pc & 0xffff] += num_cycles;
       }
    }
 
@@ -1115,6 +1143,29 @@ void decode(FILE *stream) {
 
 }
 
+void dump_profile() {
+   int addr;
+   uint64_t total_cycles = 0;
+   double total_percent = 0.0;
+   uint32_t *cycles;
+
+   cycles = profile_counts;
+   for (addr = 0; addr < 0x10000; addr++) {
+      total_cycles += *cycles++;
+   }
+   
+   cycles = profile_counts;
+   for (addr = 0; addr < 0x10000; addr++) {
+      if (*cycles) {
+         double percent = 100.0 * (*cycles) / (double) total_cycles;
+         total_percent += percent;
+         printf("%04x : %8d (%10.6f%%)\n", addr, (*cycles), percent);
+      }
+      cycles++;      
+   }
+   printf("     : %8ld (%10.6f%%)\n", total_cycles, total_percent);
+}
+
 // ====================================================================
 // Main program entry point
 // ====================================================================
@@ -1141,6 +1192,7 @@ int main(int argc, char *argv[]) {
    arguments.undocumented     = 0;
    arguments.byte             = 0;
    arguments.debug            = 0;
+   arguments.profile          = 0;
    arguments.filename         = NULL;
 
    argp_parse(&argp, argc, argv, 0, 0, &arguments);
@@ -1162,6 +1214,10 @@ int main(int argc, char *argv[]) {
       do_emulate = 1;
    }
 
+   if (arguments.profile) {
+      memset((void *)profile_counts, 0, sizeof(profile_counts));
+   }
+
    FILE *stream;
    if (!arguments.filename || !strcmp(arguments.filename, "-")) {
       stream = stdin;
@@ -1175,5 +1231,9 @@ int main(int argc, char *argv[]) {
    em_init(arguments.c02, arguments.rockwell, arguments.undocumented);
    decode(stream);
    fclose(stream);
+
+   if (arguments.profile) {
+      dump_profile();
+   }
    return 0;
 }
