@@ -20,6 +20,8 @@ uint16_t buffer[BUFSIZE];
 
 uint32_t profile_counts[0x10000];
 
+#define BUCKET_SIZE 16
+
 // Whether to emulate each decoded instruction, to track additional state (registers and flags)
 int do_emulate = 0;
 
@@ -1148,20 +1150,29 @@ void dump_profile() {
    uint64_t total_cycles = 0;
    double total_percent = 0.0;
    uint32_t *cycles;
+   int i;
+   uint32_t bucket;
 
    cycles = profile_counts;
    for (addr = 0; addr < 0x10000; addr++) {
       total_cycles += *cycles++;
    }
-   
+
    cycles = profile_counts;
-   for (addr = 0; addr < 0x10000; addr++) {
-      if (*cycles) {
-         double percent = 100.0 * (*cycles) / (double) total_cycles;
-         total_percent += percent;
-         printf("%04x : %8d (%10.6f%%)\n", addr, (*cycles), percent);
+   for (addr = 0; addr < 0x10000; addr += BUCKET_SIZE) {
+      bucket = 0;
+      for (i = 0; i < BUCKET_SIZE; i++) {
+         bucket += *cycles++;
       }
-      cycles++;      
+      if (bucket) {
+         double percent = 100.0 * bucket / (double) total_cycles;
+         total_percent += percent;
+         printf("%04x : %8d (%10.6f%%) ", addr, bucket, percent);
+         for (i = 0; i < percent * 10; i++) {
+            printf("*");
+         }
+         printf("\n");
+      }
    }
    printf("     : %8ld (%10.6f%%)\n", total_cycles, total_percent);
 }
