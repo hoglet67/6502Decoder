@@ -131,6 +131,10 @@ struct arguments {
 static error_t parse_opt(int key, char *arg, struct argp_state *state) {
    int i;
    struct arguments *arguments = state->input;
+
+   // First, pass argument to the profiler moduler
+   profiler_parse_opt(key, arg, state);
+
    switch (key) {
    case   1:
       arguments->idx_data = atoi(arg);
@@ -229,7 +233,6 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       break;
    case 'p':
       arguments->profile = 1;
-      profiler_parse_args(arg);
       break;
    case 'u':
       if (arguments->c02) {
@@ -342,7 +345,7 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
    }
 
    if (arguments.profile) {
-      profiler_instruction(pc, opcode, op1, op2, num_cycles);
+      profiler_profile_instruction(pc, opcode, op1, op2, num_cycles);
    }
 
    int fail = em_get_and_clear_fail();
@@ -1196,6 +1199,6 @@ int main(int argc, char *argv[]) {
    if (arguments.profile) {
       profiler_done();
    }
-   
+
    return 0;
 }
