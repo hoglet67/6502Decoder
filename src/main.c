@@ -18,9 +18,18 @@ uint8_t buffer8[BUFSIZE];
 
 uint16_t buffer[BUFSIZE];
 
-uint32_t profile_counts[0x10000];
+// Profiling
 
-#define BUCKET_SIZE 16
+int call_profiling = 1;
+
+#define CALL_STACK_SIZE 128
+#define ROOT_CONTEXT   0x10000
+
+int call_stack[CALL_STACK_SIZE] = { ROOT_CONTEXT };
+int call_stack_index = 1;
+uint32_t profile_counts[0x10000 + 1];
+
+#define BUCKET_SIZE 1
 
 // Whether to emulate each decoded instruction, to track additional state (registers and flags)
 int do_emulate = 0;
@@ -359,9 +368,46 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
    }
 
    if (arguments.profile) {
-      if (pc >=arguments.profile_min && pc <= arguments.profile_max) {
-         profile_counts[pc & 0xffff] += num_cycles;
-      }
+      if (call_profiling) {
+         if (opcode == 0x20) {
+            // TODO: What about interrupts
+            if (call_stack_index < CALL_STACK_SIZE) {
+               int addr = (op2 << 8 | op1) & 0xffff;
+               //printf("*** pushing %04x to %d\n", addr, call_stack_index);
+               call_stack[call_stack_index++] = addr;
+            } else {
+               printf("fail: call stack overflowed, disabling further profiling\n");
+               //for (i = 0; i < call_stack_index; i++) {
+               //   printf("stack[%3d] = %04x\n", i, call_stack[i]);
+               //}
+               arguments.profile = 0;
+            }
+         }
+         //for (i = 0; i < call_stack_index; i++) {
+         //   profile_counts[call_stack[i]] += num_cycles;
+         //}
+         profile_counts[call_stack[call_stack_index - 1]] += num_cycles;
+         if (opcode == 0x60) {
+            if (call_stack_index > 1) {
+               call_stack_index--;
+               //printf("*** popping %d\n", call_stack_index);
+            } else {
+               //uint64_t dropped = 0;
+               //for (int i = 0; i <= 0x10000; i++) {
+               //   dropped += profile_counts[i];
+               //}
+               //memset((void *)profile_counts, 0, sizeof(profile_counts));
+               //printf("fail: call stack underflowed, dropping %ld cycles\n", dropped);
+               printf("fail: call stack underflowed\n");
+            }
+         }
+      } else {
+         if (pc >=arguments.profile_min && pc <= arguments.profile_max) {
+            profile_counts[pc & 0xffff] += num_cycles;         
+         } else {
+            profile_counts[0x10000] += num_cycles;         
+         }
+      }                   
    }
 
    int fail = em_get_and_clear_fail();
@@ -1154,12 +1200,12 @@ void dump_profile() {
    uint32_t bucket;
 
    cycles = profile_counts;
-   for (addr = 0; addr < 0x10000; addr++) {
+   for (addr = 0; addr <= 0x10000; addr++) {
       total_cycles += *cycles++;
    }
 
    cycles = profile_counts;
-   for (addr = 0; addr < 0x10000; addr += BUCKET_SIZE) {
+   for (addr = 0; addr <= 0x10000; addr += BUCKET_SIZE) {
       bucket = 0;
       for (i = 0; i < BUCKET_SIZE; i++) {
          bucket += *cycles++;
@@ -1167,8 +1213,13 @@ void dump_profile() {
       if (bucket) {
          double percent = 100.0 * bucket / (double) total_cycles;
          total_percent += percent;
-         printf("%04x : %8d (%10.6f%%) ", addr, bucket, percent);
-         for (i = 0; i < percent * 10; i++) {
+         if (addr < 0x10000) {
+            printf("%04x", addr);
+         } else {
+            printf("????");
+         }              
+         printf(" : %8d (%10.6f%%) ", bucket, percent);
+         for (i = 0; i < percent; i++) {
             printf("*");
          }
          printf("\n");
