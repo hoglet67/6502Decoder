@@ -61,7 +61,7 @@ void profiler_parse_opt(int key, char *arg, struct argp_state *state) {
             profile_max = strtol(max, (char **)NULL, 16);
          }
          if (bucket && strlen(bucket) > 0) {
-            profile_bucket = atoi(bucket);
+            profile_bucket = strtol(bucket, (char **)NULL, 16);
          }
       }
       break;
