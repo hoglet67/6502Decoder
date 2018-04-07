@@ -2,20 +2,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <search.h>
 
 #include "profiler.h"
 
 #define DEBUG           0
-#define DROP_UNDERFLOW  0
 
 // Define profiling type
 #define TYPE_INSTR      1   // profile each instruction
-#define TYPE_CALL_INC   2   // profile function calls, including children
-#define TYPE_CALL_EXC   3   // profile function calls, excluding children
+#define TYPE_CALL       2   // profile function calls
 
 // Slot for instructions that fall outside the region of interest
 // (don't change this or lots of things will break!)
-#define ROOT_CONTEXT    0x10000
+#define OTHER_CONTEXT    0x10000
 
 // Constants for call based profiling
 // (6502 stack can only hold 128 addresses)
@@ -30,9 +29,53 @@ static int profile_min;
 static int profile_max;
 static int profile_bucket;
 
-static int call_stack[CALL_STACK_SIZE] = { ROOT_CONTEXT };
-static int call_stack_index = 1;
-static uint32_t profile_counts[ROOT_CONTEXT + 1];
+static uint32_t profile_counts[OTHER_CONTEXT + 1];
+
+typedef struct call_stack {
+   int stack[CALL_STACK_SIZE];
+   struct call_stack *parent;
+   int index;
+   uint64_t count;
+} call_stack_t;
+
+static void *root = NULL;
+
+static call_stack_t *current;
+
+static int compare_nodes(const void *av, const void *bv) {
+   const call_stack_t *a = (call_stack_t *) av;
+   const call_stack_t *b = (call_stack_t *) bv;
+   int ret = 0;
+   for (int i = 0; i < a->index && i < b->index; i++) {
+      if (a->stack[i] < b->stack[i]) {
+         ret = -1;
+         break;
+      } else if (a->stack[i] > b->stack[i]) {
+         ret = 1;
+         break;
+      }
+   }
+   if (ret == 0) {
+      if (a->index < b->index) {
+         ret = -1;
+      } else if (a->index > b->index) {
+         ret = 1;
+      }
+   }
+   return ret;
+}
+
+static void profiler_init_call_graph() {
+   call_stack_t *root_context = (call_stack_t *)malloc(sizeof(call_stack_t));
+   root_context->index = 0;
+   root_context->count = 0;
+   root_context->parent = NULL;
+   if (root) {
+      tdestroy(root, free);
+   }
+   root = NULL;
+   current = *(call_stack_t **)tsearch(root_context, &root, compare_nodes);
+}
 
 void profiler_parse_opt(int key, char *arg, struct argp_state *state) {
    switch (key) {
@@ -47,10 +90,8 @@ void profiler_parse_opt(int key, char *arg, struct argp_state *state) {
          char *bucket = strtok(NULL, ",");
          if (!strcasecmp(type, "instr")) {
             profile_type = TYPE_INSTR;
-         } else if (!strcasecmp(type, "call") || !strcasecmp(type, "callinc") || !strcasecmp(type, "call_inc")) {
-            profile_type = TYPE_CALL_INC;
-         } else if (!strcasecmp(type, "callexc") || !strcasecmp(type, "call_exc")) {
-            profile_type = TYPE_CALL_EXC;
+         } else if (!strcasecmp(type, "call")) {
+            profile_type = TYPE_CALL;
          } else {
             argp_error(state, "unknown profiler type %s", type);
          }
@@ -71,6 +112,7 @@ void profiler_parse_opt(int key, char *arg, struct argp_state *state) {
 void profiler_init() {
    profile_enabled = 1;
    memset((void *)profile_counts, 0, sizeof(profile_counts));
+   profiler_init_call_graph();
 }
 
 void profiler_profile_instruction(int pc, int opcode, int op1, int op2, int num_cycles) {
@@ -81,7 +123,7 @@ void profiler_profile_instruction(int pc, int opcode, int op1, int op2, int num_
       // =======================================
       // Instruction based profiling
       // =======================================
-      int bucket = ROOT_CONTEXT;
+      int bucket = OTHER_CONTEXT;
       if (pc >= profile_min && pc <= profile_max) {
          if (profile_bucket < 2) {
             bucket = pc & 0xffff;
@@ -96,77 +138,115 @@ void profiler_profile_instruction(int pc, int opcode, int op1, int op2, int num_
       // =======================================
       if (opcode == 0x20) {
          // TODO: What about interrupts
-         if (call_stack_index < CALL_STACK_SIZE) {
+         if (current->index < CALL_STACK_SIZE) {
             int addr = (op2 << 8 | op1) & 0xffff;
 #if DEBUG
-            printf("*** pushing %04x to %d\n", addr, call_stack_index);
+            printf("*** pushing %04x to %d\n", addr, current->index);
 #endif
-            call_stack[call_stack_index++] = addr;
+            // Create a new child node, in case it's not already in the tree
+            call_stack_t *child = (call_stack_t *) malloc(sizeof(call_stack_t));
+            memcpy((void*) child, (void *)current, sizeof(call_stack_t));
+            child->stack[child->index] = addr;
+            child->index++;
+            child->parent = current;
+            child->count = 0;
+            current = *(call_stack_t **)tsearch(child, &root, compare_nodes);
+            // If the child already existed, then free the just created node
+            if (current != child) {
+               free(child);
+            }
          } else {
             printf("warning: call stack overflowed, disabling further profiling\n");
-            for (int i = 0; i < call_stack_index; i++) {
-               printf("warning: stack[%3d] = %04x\n", i, call_stack[i]);
+            for (int i = 0; i < current->index; i++) {
+               printf("warning: stack[%3d] = %04x\n", i, current->stack[i]);
             }
             profile_enabled = 0;
          }
       }
-      if (profile_type == TYPE_CALL_INC) {
-         for (int i = 0; i < call_stack_index; i++) {
-            profile_counts[call_stack[i]] += num_cycles;
-         }
-      } else {
-         profile_counts[call_stack[call_stack_index - 1]] += num_cycles;
-      }
+      current->count += num_cycles;
       if (opcode == 0x60) {
-         if (call_stack_index > 1) {
-            call_stack_index--;
+         if (current->parent) {
 #if DEBUG
-            printf("*** popping %d\n", call_stack_index);
+            printf("*** popping %d\n", current->index);
 #endif
+            current = current->parent;
          } else {
-#if DROP_UNDERFLOW
-            uint64_t dropped = 0;
-            for (int i = 0; i <= ROOT_CONTEXT; i++) {
-               dropped += profile_counts[i];
-            }
-            memset((void *)profile_counts, 0, sizeof(profile_counts));
-            printf("warning: call stack underflowed, dropping %ld cycles\n", dropped);
-#else
-            printf("warning: call stack underflowed\n");
-#endif
+            printf("warning: call stack underflowed, re-initialize call graph\n");
+            profiler_init_call_graph();
          }
       }
    }
 }
 
-void profiler_done() {
+// ==========================================================
+// Outputter for hierarchical call profiling
+// ==========================================================
+
+static uint64_t total_cycles;
+static double total_percent;
+
+static void print_node(const call_stack_t *node) {
+   int first = 1;
+   double percent = 100.0 * (double) node->count / (double) total_cycles;
+   total_percent += percent;
+   printf("%8ld (%10.6f%%): ", node->count, percent);
+   for (int i = 0; i < node->index; i++) {
+      if (!first) {
+         printf("->");
+      }
+      first = 0;
+      printf("%04X", node->stack[i]);
+   }
+   printf("\n");
+}
+
+static void profiler_count_call_walker(const void *nodep, const VISIT which, const int depth) {
+   if (which == postorder || which == leaf) {
+      total_cycles += (*(call_stack_t **)nodep)->count;
+   }
+}
+
+static void profiler_dump_call_walker(const void *nodep, const VISIT which, const int depth) {
+   if (which == postorder || which == leaf) {
+      print_node(*(call_stack_t **)nodep);
+   }
+}
+
+static void profiler_dump_call() {
+   total_cycles = 0;
+   twalk(root, profiler_count_call_walker);
+   total_percent = 0;
+   twalk(root, profiler_dump_call_walker);
+   printf("%8ld (%10.6f%%)\n", total_cycles, total_percent);
+}
+
+// ==========================================================
+// Outputter for flat instruction profiling
+// ==========================================================
+
+static void profiler_dump_instr() {
    uint32_t      *cycles;
    uint32_t   max_cycles = 0;
    uint64_t total_cycles = 0;
    double  total_percent = 0.0;
    double      bar_scale;
 
-   if (profile_type == TYPE_CALL_INC) {
-      max_cycles = profile_counts[ROOT_CONTEXT];
-      total_cycles = profile_counts[ROOT_CONTEXT];
-   } else {
-      cycles = profile_counts;
-      for (int addr = 0; addr <= ROOT_CONTEXT; addr++) {
-         if (*cycles > max_cycles) {
-            max_cycles = *cycles;
-         }
-         total_cycles += *cycles++;
+   cycles = profile_counts;
+   for (int addr = 0; addr <= OTHER_CONTEXT; addr++) {
+      if (*cycles > max_cycles) {
+         max_cycles = *cycles;
       }
+      total_cycles += *cycles++;
    }
 
    bar_scale = (double) BAR_WIDTH / (double) max_cycles;
 
    cycles = profile_counts;
-   for (int addr = 0; addr <= ROOT_CONTEXT; addr++) {
+   for (int addr = 0; addr <= OTHER_CONTEXT; addr++) {
       if (*cycles) {
          double percent = 100.0 * (*cycles) / (double) total_cycles;
          total_percent += percent;
-         if (addr == ROOT_CONTEXT) {
+         if (addr == OTHER_CONTEXT) {
             printf("****");
          } else {
             printf("%04x", addr);
@@ -179,7 +259,13 @@ void profiler_done() {
       }
       cycles++;
    }
-   if (profile_type != TYPE_CALL_INC) {
-      printf("     : %8ld (%10.6f%%)\n", total_cycles, total_percent);
+   printf("     : %8ld (%10.6f%%)\n", total_cycles, total_percent);
+}
+
+void profiler_done() {
+   if (profile_type == TYPE_INSTR) {
+      profiler_dump_instr();
+   } else {
+      profiler_dump_call();
    }
 }
