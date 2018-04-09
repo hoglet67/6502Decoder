@@ -99,7 +99,7 @@ static struct argp_option options[] = {
    { "state",        's',        0,                   0, "Show register/flag state."},
    { "cycles",       'y',        0,                   0, "Show number of bus cycles."},
    { "profile",      'p', "PARAMS", OPTION_ARG_OPTIONAL, "Profile code execution."},
-   { "trigger",      't',"ADDRESS",                  0, "Trigger on address."},
+   { "trigger",      't',"ADDRESS",                   0, "Trigger on address."},
 
    { 0 }
 };
@@ -128,6 +128,7 @@ struct arguments {
    int profile;
    int trigger_start;
    int trigger_stop;
+   int trigger_skipint;
    char *filename;
 } arguments;
 
@@ -241,11 +242,15 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       if (arg && strlen(arg) > 0) {
          char *start   = strtok(arg, ",");
          char *stop    = strtok(NULL, ",");
+         char *skipint = strtok(NULL, ",");
          if (start && strlen(start) > 0) {
             arguments->trigger_start = strtol(start, (char **)NULL, 16);
          }
          if (stop && strlen(stop) > 0) {
             arguments->trigger_stop = strtol(stop, (char **)NULL, 16);
+         }
+         if (skipint && strlen(skipint) > 0) {
+            arguments->trigger_skipint = atoi(skipint);
          }
       }
       break;
@@ -282,6 +287,7 @@ int pc = -1;
 
 static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulator, int intr_seen, int num_cycles, int rst_seen) {
 
+   static int interrupted_pc = -1;
    static int triggered = 0;
 
    int offset;
@@ -361,19 +367,30 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
       }
    }
 
-   if ((pc >= 0 && pc == arguments.trigger_start) || arguments.trigger_start < 0) {
+   if (arguments.trigger_start < 0 || (pc >= 0 && pc == arguments.trigger_start)) {
       triggered = 1;
    } else if (pc >= 0 && pc == arguments.trigger_stop) {
       triggered = 0;
    }
 
-   if (arguments.profile && triggered) {
+   // Exclude interrupts from profiling
+   if (arguments.trigger_skipint && pc >= 0) {
+      if (intr_seen && opcode != 0) {
+         if (interrupted_pc < 0) {
+            interrupted_pc = pc;
+         }
+      } else if (pc == interrupted_pc) {
+         interrupted_pc = -1;
+      }
+   }
+
+   if (arguments.profile && triggered && interrupted_pc < 0) {
       profiler_profile_instruction(pc, opcode, op1, op2, num_cycles);
    }
 
    int fail = em_get_and_clear_fail();
 
-   if ((fail | arguments.show_something) && triggered) {
+   if ((fail | arguments.show_something) && triggered && interrupted_pc < 0) {
       int numchars = 0;
       // Show address
       if (fail || arguments.show_address) {
@@ -1182,6 +1199,7 @@ int main(int argc, char *argv[]) {
    arguments.profile          = 0;
    arguments.trigger_start    = -1;
    arguments.trigger_stop     = -1;
+   arguments.trigger_skipint  = 0;
    arguments.filename         = NULL;
 
    argp_parse(&argp, argc, argv, 0, 0, &arguments);
