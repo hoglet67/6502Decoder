@@ -99,6 +99,7 @@ static struct argp_option options[] = {
    { "state",        's',        0,                   0, "Show register/flag state."},
    { "cycles",       'y',        0,                   0, "Show number of bus cycles."},
    { "profile",      'p', "PARAMS", OPTION_ARG_OPTIONAL, "Profile code execution."},
+   { "trigger",      't',"ADDRESS",                  0, "Trigger on address."},
 
    { 0 }
 };
@@ -125,6 +126,8 @@ struct arguments {
    int byte;
    int debug;
    int profile;
+   int trigger_start;
+   int trigger_stop;
    char *filename;
 } arguments;
 
@@ -234,6 +237,18 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
    case 'p':
       arguments->profile = 1;
       break;
+   case 't':
+      if (arg && strlen(arg) > 0) {
+         char *start   = strtok(arg, ",");
+         char *stop    = strtok(NULL, ",");
+         if (start && strlen(start) > 0) {
+            arguments->trigger_start = strtol(start, (char **)NULL, 16);
+         }
+         if (stop && strlen(stop) > 0) {
+            arguments->trigger_stop = strtol(stop, (char **)NULL, 16);
+         }
+      }
+      break;
    case 'u':
       if (arguments->c02) {
          argp_error(state, "undocumented and c02 flags mutually exclusive");
@@ -266,6 +281,8 @@ static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 int pc = -1;
 
 static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulator, int intr_seen, int num_cycles, int rst_seen) {
+
+   static int triggered = 0;
 
    int offset;
    char target[16];
@@ -344,13 +361,19 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
       }
    }
 
-   if (arguments.profile) {
+   if ((pc >= 0 && pc == arguments.trigger_start) || arguments.trigger_start < 0) {
+      triggered = 1;
+   } else if (pc >= 0 && pc == arguments.trigger_stop) {
+      triggered = 0;
+   }
+
+   if (arguments.profile && triggered) {
       profiler_profile_instruction(pc, opcode, op1, op2, num_cycles);
    }
 
    int fail = em_get_and_clear_fail();
 
-   if (fail | arguments.show_something) {
+   if ((fail | arguments.show_something) && triggered) {
       int numchars = 0;
       // Show address
       if (fail || arguments.show_address) {
@@ -1157,6 +1180,8 @@ int main(int argc, char *argv[]) {
    arguments.byte             = 0;
    arguments.debug            = 0;
    arguments.profile          = 0;
+   arguments.trigger_start    = -1;
+   arguments.trigger_stop     = -1;
    arguments.filename         = NULL;
 
    argp_parse(&argp, argc, argv, 0, 0, &arguments);
