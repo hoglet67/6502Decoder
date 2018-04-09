@@ -35,7 +35,8 @@ typedef struct call_stack {
    int stack[CALL_STACK_SIZE];
    struct call_stack *parent;
    int index;
-   uint64_t count;
+   uint64_t call_count;
+   uint64_t cycle_count;
 } call_stack_t;
 
 static void *root = NULL;
@@ -68,7 +69,8 @@ static int compare_nodes(const void *av, const void *bv) {
 static void profiler_init_call_graph() {
    call_stack_t *root_context = (call_stack_t *)malloc(sizeof(call_stack_t));
    root_context->index = 0;
-   root_context->count = 0;
+   root_context->cycle_count = 0;
+   root_context->call_count = 0;
    root_context->parent = NULL;
    if (root) {
       tdestroy(root, free);
@@ -149,12 +151,14 @@ void profiler_profile_instruction(int pc, int opcode, int op1, int op2, int num_
             child->stack[child->index] = addr;
             child->index++;
             child->parent = current;
-            child->count = 0;
+            child->cycle_count = 0;
+            child->call_count = 0;
             current = *(call_stack_t **)tsearch(child, &root, compare_nodes);
             // If the child already existed, then free the just created node
             if (current != child) {
                free(child);
             }
+            current->call_count++;
          } else {
             printf("warning: call stack overflowed, disabling further profiling\n");
             for (int i = 0; i < current->index; i++) {
@@ -163,7 +167,7 @@ void profiler_profile_instruction(int pc, int opcode, int op1, int op2, int num_
             profile_enabled = 0;
          }
       }
-      current->count += num_cycles;
+      current->cycle_count += num_cycles;
       if (opcode == 0x60) {
          if (current->parent) {
 #if DEBUG
@@ -187,9 +191,9 @@ static double total_percent;
 
 static void print_node(const call_stack_t *node) {
    int first = 1;
-   double percent = 100.0 * (double) node->count / (double) total_cycles;
+   double percent = 100.0 * (double) node->cycle_count / (double) total_cycles;
    total_percent += percent;
-   printf("%8ld (%10.6f%%): ", node->count, percent);
+   printf("%8ld cycles (%10.6f%%) %8ld calls: ", node->cycle_count, percent, node->call_count);
    for (int i = 0; i < node->index; i++) {
       if (!first) {
          printf("->");
@@ -202,7 +206,7 @@ static void print_node(const call_stack_t *node) {
 
 static void profiler_count_call_walker(const void *nodep, const VISIT which, const int depth) {
    if (which == postorder || which == leaf) {
-      total_cycles += (*(call_stack_t **)nodep)->count;
+      total_cycles += (*(call_stack_t **)nodep)->cycle_count;
    }
 }
 
