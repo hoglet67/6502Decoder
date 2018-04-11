@@ -287,7 +287,8 @@ int pc = -1;
 
 static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulator, int intr_seen, int num_cycles, int rst_seen) {
 
-   static int interrupted_pc = -1;
+   static int interrupt_depth = 0;
+   static int skipping_interrupted = 0;
    static int triggered = 0;
 
    int offset;
@@ -375,22 +376,24 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
 
    // Exclude interrupts from profiling
    if (arguments.trigger_skipint && pc >= 0) {
+      if (interrupt_depth == 0) {
+         skipping_interrupted = 0;
+      }
       if (intr_seen && opcode != 0) {
-         if (interrupted_pc < 0) {
-            interrupted_pc = pc;
-         }
-      } else if (pc == interrupted_pc) {
-         interrupted_pc = -1;
+         interrupt_depth++;
+         skipping_interrupted = 1;
+      } else if (interrupt_depth > 0 && opcode == 0x40) {
+         interrupt_depth--;         
       }
    }
 
-   if (arguments.profile && triggered && interrupted_pc < 0 && (!intr_seen || opcode == 0)) {
+   if (arguments.profile && triggered && !skipping_interrupted && (!intr_seen || opcode == 0)) {
       profiler_profile_instruction(pc, opcode, op1, op2, num_cycles);
    }
 
    int fail = em_get_and_clear_fail();
 
-   if ((fail | arguments.show_something) && triggered && interrupted_pc < 0) {
+   if ((fail | arguments.show_something) && triggered && !skipping_interrupted) {
       int numchars = 0;
       // Show address
       if (fail || arguments.show_address) {
