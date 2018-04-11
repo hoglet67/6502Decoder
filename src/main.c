@@ -384,7 +384,7 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
       }
    }
 
-   if (arguments.profile && triggered && interrupted_pc < 0) {
+   if (arguments.profile && triggered && interrupted_pc < 0 && (!intr_seen || opcode == 0)) {
       profiler_profile_instruction(pc, opcode, op1, op2, num_cycles);
    }
 
