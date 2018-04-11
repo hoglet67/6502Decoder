@@ -221,7 +221,7 @@ static void profiler_dump_call() {
    twalk(root, profiler_count_call_walker);
    total_percent = 0;
    twalk(root, profiler_dump_call_walker);
-   printf("%8ld (%10.6f%%)\n", total_cycles, total_percent);
+   printf("%8ld cycles (%10.6f%%)\n", total_cycles, total_percent);
 }
 
 // ==========================================================
