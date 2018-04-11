@@ -324,6 +324,29 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
       pc = -1;
    }
 
+   if (arguments.trigger_start < 0 || (pc >= 0 && pc == arguments.trigger_start)) {
+      triggered = 1;
+   } else if (pc >= 0 && pc == arguments.trigger_stop) {
+      triggered = 0;
+   }
+
+   // Exclude interrupts from profiling
+   if (arguments.trigger_skipint && pc >= 0) {
+      if (interrupt_depth == 0) {
+         skipping_interrupted = 0;
+      }
+      if (intr_seen && opcode != 0) {
+         interrupt_depth++;
+         skipping_interrupted = 1;
+      } else if (interrupt_depth > 0 && opcode == 0x40) {
+         interrupt_depth--;
+      }
+   }
+
+   if (arguments.profile && triggered && !skipping_interrupted && (!intr_seen || opcode == 0)) {
+      profiler_profile_instruction(pc, opcode, op1, op2, accumulator, num_cycles);
+   }
+
    if (rst_seen) {
       // Handlea reset
       if (do_emulate) {
@@ -366,29 +389,6 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
             instr->emulate(operand);
          }
       }
-   }
-
-   if (arguments.trigger_start < 0 || (pc >= 0 && pc == arguments.trigger_start)) {
-      triggered = 1;
-   } else if (pc >= 0 && pc == arguments.trigger_stop) {
-      triggered = 0;
-   }
-
-   // Exclude interrupts from profiling
-   if (arguments.trigger_skipint && pc >= 0) {
-      if (interrupt_depth == 0) {
-         skipping_interrupted = 0;
-      }
-      if (intr_seen && opcode != 0) {
-         interrupt_depth++;
-         skipping_interrupted = 1;
-      } else if (interrupt_depth > 0 && opcode == 0x40) {
-         interrupt_depth--;         
-      }
-   }
-
-   if (arguments.profile && triggered && !skipping_interrupted && (!intr_seen || opcode == 0)) {
-      profiler_profile_instruction(pc, opcode, op1, op2, num_cycles);
    }
 
    int fail = em_get_and_clear_fail();
@@ -1220,7 +1220,7 @@ int main(int argc, char *argv[]) {
       arguments.idx_rst  = -1;
    }
 
-   if (arguments.emulate || arguments.show_state || arguments.idx_sync < 0 || arguments.idx_rnw < 0) {
+   if (arguments.emulate || arguments.show_state || arguments.idx_sync < 0 || arguments.idx_rnw < 0 || arguments.profile) {
       do_emulate = 1;
    }
 

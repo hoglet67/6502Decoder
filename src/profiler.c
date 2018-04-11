@@ -4,6 +4,8 @@
 #include <inttypes.h>
 #include <search.h>
 
+#include "em_6502.h"
+
 #include "profiler.h"
 
 #define DEBUG           0
@@ -35,6 +37,8 @@ typedef struct call_stack {
    int stack[CALL_STACK_SIZE];
    struct call_stack *parent;
    int index;
+   int sp;
+   int retn;
    uint64_t call_count;
    uint64_t cycle_count;
 } call_stack_t;
@@ -71,6 +75,8 @@ static void profiler_init_call_graph() {
    root_context->index = 0;
    root_context->cycle_count = 0;
    root_context->call_count = 0;
+   root_context->sp = -1;
+   root_context->retn = -1;
    root_context->parent = NULL;
    if (root) {
       tdestroy(root, free);
@@ -117,7 +123,7 @@ void profiler_init() {
    profiler_init_call_graph();
 }
 
-void profiler_profile_instruction(int pc, int opcode, int op1, int op2, int num_cycles) {
+void profiler_profile_instruction(int pc, int opcode, int op1, int op2, uint64_t accumulator, int num_cycles) {
    if (!profile_enabled) {
       return;
    }
@@ -142,8 +148,10 @@ void profiler_profile_instruction(int pc, int opcode, int op1, int op2, int num_
          // TODO: What about interrupts
          if (current->index < CALL_STACK_SIZE) {
             int addr = (op2 << 8 | op1) & 0xffff;
+            int retn = pc + 3;
+            int sp = em_get_S() - 2;
 #if DEBUG
-            printf("*** pushing %04x to %d\n", addr, current->index);
+            printf("*** pushing %04x with retn %04x to %d\n", addr, retn, current->index);
 #endif
             // Create a new child node, in case it's not already in the tree
             call_stack_t *child = (call_stack_t *) malloc(sizeof(call_stack_t));
@@ -159,6 +167,8 @@ void profiler_profile_instruction(int pc, int opcode, int op1, int op2, int num_
                free(child);
             }
             current->call_count++;
+            current->sp = sp;
+            current->retn = retn;
          } else {
             printf("warning: call stack overflowed, disabling further profiling\n");
             for (int i = 0; i < current->index; i++) {
@@ -169,11 +179,31 @@ void profiler_profile_instruction(int pc, int opcode, int op1, int op2, int num_
       }
       current->cycle_count += num_cycles;
       if (opcode == 0x60) {
-         if (current->parent) {
+         // Using RTS to implement a jump table
+         if (em_get_S() == current->sp - 2) {
 #if DEBUG
-            printf("*** popping %d\n", current->index);
+            printf("*** jump table use of RTS\n");
 #endif
-            current = current->parent;
+         } else if (current->parent) {
+            int retn = ((((accumulator & 0xff0000) >> 16) | (accumulator & 0xff00)) + 1) & 0xffff;
+            // Search up call stack for matching return address
+            while (current->retn != retn && current->parent) {
+#if DEBUG
+               printf("*** popping additional %04x with retn = %04x from %d\n", current->stack[current->index - 1], current->retn, current->index - 1);
+#endif
+               current = current->parent;
+            }
+
+            if (retn == current->retn) {
+#if DEBUG
+               printf("*** popping %04x with retn = %04x from %d\n", current->stack[current->index - 1], current->retn, current->index - 1);
+#endif
+               current = current->parent;
+            } else {
+#if DEBUG
+               printf("*** failed to find matching JSR with retn address %04x\n", retn);
+#endif
+            }
          } else {
             printf("warning: call stack underflowed, re-initialize call graph\n");
             profiler_init_call_graph();
