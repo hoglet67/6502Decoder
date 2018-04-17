@@ -3,6 +3,7 @@
 #include "profiler.h"
 
 extern profiler_t *profiler_instr_create(char *arg);
+extern profiler_t *profiler_block_create(char *arg);
 extern profiler_t *profiler_call_create(char *arg);
 
 #define MAX_PROFILERS 10
@@ -20,6 +21,8 @@ static int active_count = 0;
          profiler_t *instance = NULL;
          if (strcasecmp(type, "instr") == 0) {
             instance = profiler_instr_create(rest);
+         } else if (strcasecmp(type, "block") == 0) {
+            instance = profiler_block_create(rest);
          } else if (strcasecmp(type, "call") == 0) {
             instance = profiler_call_create(rest);
          }
@@ -54,9 +57,66 @@ void profiler_done() {
    profiler_t **pp = active_list;
    while (*pp) {
    printf("==============================================================================\n");
-   printf("Profiler: %s; Args: %s\n", (*pp)->name, (*pp)->arg);   
-   printf("==============================================================================\n");   
+   printf("Profiler: %s; Args: %s\n", (*pp)->name, (*pp)->arg);
+   printf("==============================================================================\n");
       (*pp)->done(*pp);
       pp++;
    }
+}
+
+void profiler_output_helper(address_t *profile_counts, int show_bars, int show_other) {
+   address_t      *ptr;
+
+   uint32_t   max_cycles = 0;
+   uint64_t total_cycles = 0;
+   uint64_t  total_instr = 0;
+   double  total_percent = 0.0;
+   double      bar_scale;
+
+   ptr = profile_counts;
+
+   for (int addr = 0; addr <= OTHER_CONTEXT; addr++) {
+      if (ptr->cycles > max_cycles) {
+         max_cycles = ptr->cycles;
+      }
+      total_cycles += ptr->cycles;
+      total_instr += ptr->instructions;
+      ptr++;
+   }
+
+   bar_scale = (double) BAR_WIDTH / (double) max_cycles;
+
+   ptr = profile_counts;
+   for (int addr = 0; addr <= OTHER_CONTEXT; addr++) {
+      if (ptr->cycles) {
+         double percent = 100.0 * (ptr->cycles) / (double) total_cycles;
+         total_percent += percent;
+         if (addr == OTHER_CONTEXT) {
+            printf("****");
+         } else {
+            printf("%04x", addr);
+         }
+         printf(" : %8d cycles (%10.6f%%) %8d ins (%4.2f cpi)", ptr->cycles, percent, ptr->instructions, (double) ptr->cycles / (double) ptr->instructions);
+         if (show_other) {
+            printf(" %8d calls", ptr->calls);
+            printf(" (");
+            printf(ptr->flags & FLAG_JSR           ? "J" : " ");
+            printf(ptr->flags & FLAG_JMP           ? "j" : " ");
+            printf(ptr->flags & FLAG_BB_TAKEN      ? "B" : " ");
+            printf(ptr->flags & FLAG_FB_TAKEN      ? "F" : " ");
+            printf(ptr->flags & FLAG_BB_NOT_TAKEN  ? "b" : " ");
+            printf(ptr->flags & FLAG_FB_NOT_TAKEN  ? "f" : " ");
+            printf(")");
+         }
+         if (show_bars) {
+            printf(" ");
+            for (int i = 0; i < (int) (bar_scale * ptr->cycles); i++) {
+               printf("*");
+            }
+         }
+         printf("\n");
+      }
+      ptr++;
+   }
+   printf("     : %8ld cycles (%10.6f%%) %8ld ins (%4.2f cpi)\n", total_cycles, total_percent, total_instr, (double) total_cycles / (double) total_instr);
 }

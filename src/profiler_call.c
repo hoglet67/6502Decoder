@@ -76,6 +76,7 @@ static void p_profile_instruction(void *ptr, int pc, int opcode, int op1, int op
    if (!instance->profile_enabled) {
       return;
    }
+   instance->current->cycle_count += num_cycles;
    if (opcode == 0x20) {
       // TODO: What about interrupts
       if (instance->current->index < CALL_STACK_SIZE) {
@@ -105,7 +106,6 @@ static void p_profile_instruction(void *ptr, int pc, int opcode, int op1, int op
          instance->profile_enabled = 0;
       }
    }
-   instance->current->cycle_count += num_cycles;
    if (opcode == 0x60) {
       if (instance->current->parent) {
 #if DEBUG
@@ -159,7 +159,7 @@ void *profiler_call_create(char *arg) {
    profiler_call_t *instance = (profiler_call_t *)calloc(1, sizeof(profiler_call_t));
 
    instance->profiler.name                = "call";
-   instance->profiler.arg                 = strdup(arg);
+   instance->profiler.arg                 = arg ? strdup(arg) : "";
    instance->profiler.init                = p_init;
    instance->profiler.profile_instruction = p_profile_instruction;
    instance->profiler.done                = p_done;
