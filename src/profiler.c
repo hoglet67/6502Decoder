@@ -106,6 +106,8 @@ void profiler_output_helper(address_t *profile_counts, int show_bars, int show_o
             printf(ptr->flags & FLAG_FB_TAKEN      ? "F" : " ");
             printf(ptr->flags & FLAG_BB_NOT_TAKEN  ? "b" : " ");
             printf(ptr->flags & FLAG_FB_NOT_TAKEN  ? "f" : " ");
+            printf(ptr->flags & FLAG_JMP_IND       ? "i" : " ");
+            printf(ptr->flags & FLAG_JMP_INDX      ? "x" : " ");
             printf(")");
          }
          if (show_bars) {

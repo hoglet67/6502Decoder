@@ -20,6 +20,8 @@
 #define FLAG_FB_TAKEN     16
 #define FLAG_BB_NOT_TAKEN 32
 #define FLAG_FB_NOT_TAKEN 64
+#define FLAG_JMP_IND     128
+#define FLAG_JMP_INDX    256
 
 // A common data type, useful for several of the profilers
 typedef struct {
