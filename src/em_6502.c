@@ -64,9 +64,12 @@ static int memory[0x10000];
 
 static void memory_read(int data, int ea) {
    // TODO: allow memory bounds to be passed in as a command line parameter
-   if (ea >= 0 && ea < 0x8000 && memory[ea] >=0 && memory[ea] != data) {
-      printf("memory modelling failed at %04x: expected %02x, actual %02x\n", ea, memory[ea], data);
-      failflag |= 1;
+   if (ea >= 0 && ea < 0x8000) {
+      if (memory[ea] >=0 && memory[ea] != data) {
+         printf("memory modelling failed at %04x: expected %02x, actual %02x\n", ea, memory[ea], data);
+         failflag |= 1;
+      }
+      memory[ea] = data;
    }
 }
 
