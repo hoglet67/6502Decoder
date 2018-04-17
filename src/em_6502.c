@@ -56,9 +56,31 @@ static int C = -1;
 static int failflag = 0;
 
 
-static void op_STA(int operand);
-static void op_STX(int operand);
-static void op_STY(int operand);
+static void op_STA(int operand, int ea);
+static void op_STX(int operand, int ea);
+static void op_STY(int operand, int ea);
+
+static int memory[0x10000];
+
+static void memory_read(int data, int ea) {
+   // TODO: allow memory bounds to be passed in as a command line parameter
+   if (ea >= 0 && ea < 0x8000 && memory[ea] >=0 && memory[ea] != data) {
+      printf("memory modelling failed at %04x: expected %02x, actual %02x\n", ea, memory[ea], data);
+      failflag |= 1;
+   }
+}
+
+static void memory_write(int data, int ea) {
+   if (ea >= 0) {
+      if (data < 0 || data > 255) {
+         printf("memory modelling failed at %04x: illegal write of %02x\n", ea, data);
+         failflag |= 1;
+      } else {
+         // printf("memory write: %04x = %02x\n", ea, data);
+         memory[ea] = data;
+      }
+   }
+}
 
 int compare_NVDIZC(int operand) {
    if (N >= 0) {
@@ -130,12 +152,20 @@ static void set_NZ(int value) {
    Z = value == 0;
 }
 
-void em_interrupt(int operand) {
+void em_interrupt(int flags, int pc) {
    if (S >= 0) {
-      S = (S - 3) & 255;
+      // Push PCH
+      memory_write((pc >> 8) & 255, 0x100 + S);
+      S = (S - 1) & 255;
+      // Push PCL
+      memory_write(pc & 255, 0x100 + S);
+      S = (S - 1) & 255;
+      // Push P
+      memory_write(flags, 0x100 + S);
+      S = (S - 1) & 255;
    }
-   check_NVDIZC(operand);
-   set_NVDIZC(operand);
+   check_NVDIZC(flags);
+   set_NVDIZC(flags);
    I = 1;
    if (c02) {
       D = 0;
@@ -248,7 +278,8 @@ int em_get_and_clear_fail() {
    return ret;
 }
 
-static void op_ADC(int operand) {
+static void op_ADC(int operand, int ea) {
+   memory_read(operand, ea);
    if (A >= 0 && C >= 0) {
       if (D == 1) {
          // Decimal mode ADC
@@ -297,7 +328,8 @@ static void op_ADC(int operand) {
    }
 }
 
-static void op_AND(int operand) {
+static void op_AND(int operand, int ea) {
+   memory_read(operand, ea);
    if (A >= 0) {
       A = A & operand;
       set_NZ(A);
@@ -306,7 +338,7 @@ static void op_AND(int operand) {
    }
 }
 
-static void op_ASLA(int operand) {
+static void op_ASLA(int operand, int ea) {
    if (A >= 0) {
       C = (A >> 7) & 1;
       A = (A << 1) & 255;
@@ -316,13 +348,15 @@ static void op_ASLA(int operand) {
    }
 }
 
-static void op_ASL(int operand) {
+static void op_ASL(int operand, int ea) {
+   memory_read(operand, ea);
    C = (operand >> 7) & 1;
    int tmp = (operand << 1) & 255;
    set_NZ(tmp);
+   memory_write(tmp, ea);
 }
 
-static void op_BCC(int branch_taken) {
+static void op_BCC(int branch_taken, int ea) {
    if (C >= 0) {
       if (C == branch_taken) {
          failflag = 1;
@@ -332,7 +366,7 @@ static void op_BCC(int branch_taken) {
    }
 }
 
-static void op_BCS(int branch_taken) {
+static void op_BCS(int branch_taken, int ea) {
    if (C >= 0) {
       if (C != branch_taken) {
          failflag = 1;
@@ -342,7 +376,7 @@ static void op_BCS(int branch_taken) {
    }
 }
 
-static void op_BNE(int branch_taken) {
+static void op_BNE(int branch_taken, int ea) {
    if (Z >= 0) {
       if (Z == branch_taken) {
          failflag = 1;
@@ -352,7 +386,7 @@ static void op_BNE(int branch_taken) {
    }
 }
 
-static void op_BEQ(int branch_taken) {
+static void op_BEQ(int branch_taken, int ea) {
    if (Z >= 0) {
       if (Z != branch_taken) {
          failflag = 1;
@@ -362,7 +396,7 @@ static void op_BEQ(int branch_taken) {
    }
 }
 
-static void op_BPL(int branch_taken) {
+static void op_BPL(int branch_taken, int ea) {
    if (N >= 0) {
       if (N == branch_taken) {
          failflag = 1;
@@ -372,7 +406,7 @@ static void op_BPL(int branch_taken) {
    }
 }
 
-static void op_BMI(int branch_taken) {
+static void op_BMI(int branch_taken, int ea) {
    if (N >= 0) {
       if (N != branch_taken) {
          failflag = 1;
@@ -382,7 +416,7 @@ static void op_BMI(int branch_taken) {
    }
 }
 
-static void op_BVC(int branch_taken) {
+static void op_BVC(int branch_taken, int ea) {
    if (V >= 0) {
       if (V == branch_taken) {
          failflag = 1;
@@ -392,7 +426,7 @@ static void op_BVC(int branch_taken) {
    }
 }
 
-static void op_BVS(int branch_taken) {
+static void op_BVS(int branch_taken, int ea) {
    if (V >= 0) {
       if (V != branch_taken) {
          failflag = 1;
@@ -402,11 +436,14 @@ static void op_BVS(int branch_taken) {
    }
 }
 
-static void op_BRK(int operand) {
-   em_interrupt(operand);
+static void op_BRK(int operand, int ea) {
+   // BRK: the operand is the data pushed to the stack (PCH, PCL, P)
+   int flags = operand & 0xff;
+   int pc = (operand >> 8) & 0xffff;
+   em_interrupt(flags, pc);
 }
 
-static void op_BIT_IMM(int operand) {
+static void op_BIT_IMM(int operand, int ea) {
    if (A >= 0) {
       Z = (A & operand) == 0;
    } else {
@@ -414,7 +451,8 @@ static void op_BIT_IMM(int operand) {
    }
 }
 
-static void op_BIT(int operand) {
+static void op_BIT(int operand, int ea) {
+   memory_read(operand, ea);
    N = (operand >> 7) & 1;
    V = (operand >> 6) & 1;
    if (A >= 0) {
@@ -424,23 +462,24 @@ static void op_BIT(int operand) {
    }
 }
 
-static void op_CLC(int operand) {
+static void op_CLC(int operand, int ea) {
    C = 0;
 }
 
-static void op_CLD(int operand) {
+static void op_CLD(int operand, int ea) {
    D = 0;
 }
 
-static void op_CLI(int operand) {
+static void op_CLI(int operand, int ea) {
    I = 0;
 }
 
-static void op_CLV(int operand) {
+static void op_CLV(int operand, int ea) {
    V = 0;
 }
 
-static void op_CMP(int operand) {
+static void op_CMP(int operand, int ea) {
+   memory_read(operand, ea);
    if (A >= 0) {
       int tmp = A - operand;
       C = tmp >= 0;
@@ -450,7 +489,8 @@ static void op_CMP(int operand) {
    }
 }
 
-static void op_CPX(int operand) {
+static void op_CPX(int operand, int ea) {
+   memory_read(operand, ea);
    if (X >= 0) {
       int tmp = X - operand;
       C = tmp >= 0;
@@ -460,7 +500,8 @@ static void op_CPX(int operand) {
    }
 }
 
-static void op_CPY(int operand) {
+static void op_CPY(int operand, int ea) {
+   memory_read(operand, ea);
    if (Y >= 0) {
       int tmp = Y - operand;
       C = tmp >= 0;
@@ -470,7 +511,7 @@ static void op_CPY(int operand) {
    }
 }
 
-static void op_DECA(int operand) {
+static void op_DECA(int operand, int ea) {
    if (A >= 0) {
       A = (A - 1) & 255;
       set_NZ(A);
@@ -479,12 +520,14 @@ static void op_DECA(int operand) {
    }
 }
 
-static void op_DEC(int operand) {
+static void op_DEC(int operand, int ea) {
+   memory_read(operand, ea);
    int tmp = (operand - 1) & 255;
    set_NZ(tmp);
+   memory_write(tmp, ea);
 }
 
-static void op_DEX(int operand) {
+static void op_DEX(int operand, int ea) {
    if (X >= 0) {
       X = (X - 1) & 255;
       set_NZ(X);
@@ -493,7 +536,7 @@ static void op_DEX(int operand) {
    }
 }
 
-static void op_DEY(int operand) {
+static void op_DEY(int operand, int ea) {
    if (Y >= 0) {
       Y = (Y - 1) & 255;
       set_NZ(Y);
@@ -502,7 +545,8 @@ static void op_DEY(int operand) {
    }
 }
 
-static void op_EOR(int operand) {
+static void op_EOR(int operand, int ea) {
+   memory_read(operand, ea);
    if (A >= 0) {
       A = A ^ operand;
       set_NZ(A);
@@ -511,7 +555,7 @@ static void op_EOR(int operand) {
    }
 }
 
-static void op_INCA(int operand) {
+static void op_INCA(int operand, int ea) {
    if (A >= 0) {
       A = (A + 1) & 255;
       set_NZ(A);
@@ -520,12 +564,14 @@ static void op_INCA(int operand) {
    }
 }
 
-static void op_INC(int operand) {
+static void op_INC(int operand, int ea) {
+   memory_read(operand, ea);
    int tmp = (operand + 1) & 255;
    set_NZ(tmp);
+   memory_write(tmp, ea);
 }
 
-static void op_INX(int operand) {
+static void op_INX(int operand, int ea) {
    if (X >= 0) {
       X = (X + 1) & 255;
       set_NZ(X);
@@ -534,7 +580,7 @@ static void op_INX(int operand) {
    }
 }
 
-static void op_INY(int operand) {
+static void op_INY(int operand, int ea) {
    if (Y >= 0) {
       Y = (Y + 1) & 255;
       set_NZ(Y);
@@ -543,28 +589,35 @@ static void op_INY(int operand) {
    }
 }
 
-static void op_JSR(int operand) {
+static void op_JSR(int operand, int ea) {
+   // JSR: the operand is the data pushed to the stack (PCH, PCL)
    if (S >= 0) {
-      S = (S - 2) & 255;
+      memory_write((operand >> 8) & 255, 0x100 + S);
+      S = (S - 1) & 255;
+      memory_write(operand & 255, 0x100 + S);
+      S = (S - 1) & 255;
    }
 }
 
-static void op_LDA(int operand) {
+static void op_LDA(int operand, int ea) {
+   memory_read(operand, ea);
    A = operand;
    set_NZ(A);
 }
 
-static void op_LDX(int operand) {
+static void op_LDX(int operand, int ea) {
+   memory_read(operand, ea);
    X = operand;
    set_NZ(X);
 }
 
-static void op_LDY(int operand) {
+static void op_LDY(int operand, int ea) {
+   memory_read(operand, ea);
    Y = operand;
    set_NZ(Y);
 }
 
-static void op_LSRA(int operand) {
+static void op_LSRA(int operand, int ea) {
    if (A >= 0) {
       C = A & 1;
       A = A >> 1;
@@ -574,13 +627,16 @@ static void op_LSRA(int operand) {
    }
 }
 
-static void op_LSR(int operand) {
+static void op_LSR(int operand, int ea) {
+   memory_read(operand, ea);
    C = operand & 1;
    int tmp = operand >> 1;
    set_NZ(tmp);
+   memory_write(tmp, ea);
 }
 
-static void op_ORA(int operand) {
+static void op_ORA(int operand, int ea) {
+   memory_read(operand, ea);
    if (A >= 0) {
       A = A | operand;
       set_NZ(A);
@@ -589,67 +645,75 @@ static void op_ORA(int operand) {
    }
 }
 
-static void op_PHA(int operand) {
+static void op_PHA(int operand, int ea) {
    if (S >= 0) {
+      memory_write(operand, 0x100 + S);
       S = (S - 1) & 255;
    }
-   op_STA(operand);
+   op_STA(operand, -1);
 }
 
-static void op_PHP(int operand) {
+static void op_PHP(int operand, int ea) {
    if (S >= 0) {
+      memory_write(operand, 0x100 + S);
       S = (S - 1) & 255;
    }
    check_NVDIZC(operand);
    set_NVDIZC(operand);
 }
 
-static void op_PHX(int operand) {
+static void op_PHX(int operand, int ea) {
    if (S >= 0) {
+      memory_write(operand, 0x100 + S);
       S = (S - 1) & 255;
    }
-   op_STX(operand);
+   op_STX(operand, -1);
 }
 
-static void op_PHY(int operand) {
+static void op_PHY(int operand, int ea) {
    if (S >= 0) {
+      memory[0x100 + S] = operand;
       S = (S - 1) & 255;
    }
-   op_STY(operand);
+   op_STY(operand, -1);
 }
 
-static void op_PLA(int operand) {
+static void op_PLA(int operand, int ea) {
    A = operand;
    set_NZ(A);
    if (S >= 0) {
       S = (S + 1) & 255;
+      memory_read(operand, 0x100 + S);
    }
 }
 
-static void op_PLP(int operand) {
+static void op_PLP(int operand, int ea) {
    set_NVDIZC(operand);
    if (S >= 0) {
       S = (S + 1) & 255;
+      memory_read(operand, 0x100 + S);
    }
 }
 
-static void op_PLX(int operand) {
+static void op_PLX(int operand, int ea) {
    X = operand;
    set_NZ(X);
    if (S >= 0) {
       S = (S + 1) & 255;
+      memory_read(operand, 0x100 + S);
    }
 }
 
-static void op_PLY(int operand) {
+static void op_PLY(int operand, int ea) {
    Y = operand;
    set_NZ(Y);
    if (S >= 0) {
       S = (S + 1) & 255;
+      memory_read(operand, 0x100 + S);
    }
 }
 
-static void op_ROLA(int operand) {
+static void op_ROLA(int operand, int ea) {
    if (A >= 0 && C >= 0) {
       int tmp = (A << 1) + C;
       C = (tmp >> 8) & 1;
@@ -661,18 +725,19 @@ static void op_ROLA(int operand) {
    }
 }
 
-static void op_ROL(int operand) {
+static void op_ROL(int operand, int ea) {
    if (C >= 0) {
       int tmp = (operand << 1) + C;
       C = (tmp >> 8) & 1;
       tmp = tmp & 255;
       set_NZ(tmp);
+      memory_write(tmp, ea);
    } else {
       set_NZC_unknown();
    }
 }
 
-static void op_RORA(int operand) {
+static void op_RORA(int operand, int ea) {
    if (A >= 0 && C >= 0) {
       int tmp = (A >> 1) + (C << 7);
       C = A & 1;
@@ -684,30 +749,42 @@ static void op_RORA(int operand) {
    }
 }
 
-static void op_ROR(int operand) {
+static void op_ROR(int operand, int ea) {
    if (C >= 0) {
       int tmp = (operand >> 1) + (C << 7);
       C = operand & 1;
       set_NZ(tmp);
+      memory_write(tmp, ea);
    } else {
       set_NZC_unknown();
    }
 }
 
-static void op_RTS(int operand) {
+static void op_RTS(int operand, int ea) {
+   // RTS: the operand is the data pulled from the stack (PCL, PCH)
    if (S >= 0) {
-      S = (S + 2) & 255;
+      S = (S + 1) & 255;
+      memory_read((operand >> 8) & 255, 0x100 + S);
+      S = (S + 1) & 255;
+      memory_read(operand & 255, 0x100 + S);
    }
 }
 
-static void op_RTI(int operand) {
-   set_NVDIZC(operand);
+static void op_RTI(int operand, int ea) {
+   // RTI: the operand is the data pulled from the stack (P, PCL, PCH)
+   set_NVDIZC((operand >> 16) & 255);
    if (S >= 0) {
-      S = (S + 3) & 255;
+      S = (S + 1) & 255;
+      memory_read((operand >> 16) & 255, 0x100 + S);
+      S = (S + 1) & 255;
+      memory_read((operand >> 8) & 255, 0x100 + S);
+      S = (S + 1) & 255;
+      memory_read(operand & 255, 0x100 + S);
    }
 }
 
-static void op_SBC(int operand) {
+static void op_SBC(int operand, int ea) {
+   memory_read(operand, ea);
    if (A >= 0 && C >= 0) {
       if (D == 1) {
          // Decimal mode SBC
@@ -772,19 +849,20 @@ static void op_SBC(int operand) {
    }
 }
 
-static void op_SEC(int operand) {
+static void op_SEC(int operand, int ea) {
    C = 1;
 }
 
-static void op_SED(int operand) {
+static void op_SED(int operand, int ea) {
    D = 1;
 }
 
-static void op_SEI(int operand) {
+static void op_SEI(int operand, int ea) {
    I = 1;
 }
 
-static void op_STA(int operand) {
+static void op_STA(int operand, int ea) {
+   memory_write(operand, ea);
    if (A >= 0) {
       if (operand != A) {
          failflag = 1;
@@ -793,7 +871,8 @@ static void op_STA(int operand) {
    A = operand;
 }
 
-static void op_STX(int operand) {
+static void op_STX(int operand, int ea) {
+   memory_write(operand, ea);
    if (X >= 0) {
       if (operand != X) {
          failflag = 1;
@@ -802,7 +881,8 @@ static void op_STX(int operand) {
    X = operand;
 }
 
-static void op_STY(int operand) {
+static void op_STY(int operand, int ea) {
+   memory_write(operand, ea);
    if (Y >= 0) {
       if (operand != Y) {
          failflag = 1;
@@ -811,7 +891,14 @@ static void op_STY(int operand) {
    Y = operand;
 }
 
-static void op_TAX(int operand) {
+static void op_STZ(int operand, int ea) {
+   memory_write(0, ea);
+   if (operand != 0) {
+      failflag = 1;
+   }
+}
+
+static void op_TAX(int operand, int ea) {
    if (A >= 0) {
       X = A;
       set_NZ(X);
@@ -821,7 +908,7 @@ static void op_TAX(int operand) {
    }
 }
 
-static void op_TAY(int operand) {
+static void op_TAY(int operand, int ea) {
    if (A >= 0) {
       Y = A;
       set_NZ(Y);
@@ -831,15 +918,28 @@ static void op_TAY(int operand) {
    }
 }
 
-static void op_TSB_TRB(int operand) {
+static void op_TSB(int operand, int ea) {
    if (A >= 0) {
       Z = (A & operand) == 0;
+      if (ea >= 0 && memory[ea] >= 0) {
+         memory_write(memory[ea] | A, ea);
+      }
+   } else {
+      Z = -1;
+   }
+}
+static void op_TRB(int operand, int ea) {
+   if (A >= 0) {
+      Z = (A & operand) == 0;
+      if (ea >= 0 && memory[ea] >= 0) {
+         memory_write(memory[ea] & ~A, ea);
+      }
    } else {
       Z = -1;
    }
 }
 
-static void op_TSX(int operand) {
+static void op_TSX(int operand, int ea) {
    if (S >= 0) {
       X = S;
       set_NZ(X);
@@ -849,7 +949,7 @@ static void op_TSX(int operand) {
    }
 }
 
-static void op_TXA(int operand) {
+static void op_TXA(int operand, int ea) {
    if (X >= 0) {
       A = X;
       set_NZ(A);
@@ -859,7 +959,7 @@ static void op_TXA(int operand) {
    }
 }
 
-static void op_TXS(int operand) {
+static void op_TXS(int operand, int ea) {
    if (X >= 0) {
       S = X;
    } else {
@@ -867,7 +967,7 @@ static void op_TXS(int operand) {
    }
 }
 
-static void op_TYA(int operand) {
+static void op_TYA(int operand, int ea) {
    if (Y >= 0) {
       A = Y;
       set_NZ(A);
@@ -877,6 +977,15 @@ static void op_TYA(int operand) {
    }
 }
 
+static void op_RMB(int operand, int ea) {
+   memory_write(operand, ea);
+}
+
+static void op_SMB(int operand, int ea) {
+   memory_write(operand, ea);
+}
+
+
 InstrType *instr_table;
 
 static InstrType instr_table_65c02[] = {
@@ -884,15 +993,15 @@ static InstrType instr_table_65c02[] = {
    /* 01 */   { "ORA",  0, INDX  , 6, 0, READOP,   op_ORA},
    /* 02 */   { "NOP",  0, IMM   , 2, 0, READOP,   0},
    /* 03 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 04 */   { "TSB",  0, ZP    , 5, 0, TSBTRBOP, op_TSB_TRB},
+   /* 04 */   { "TSB",  0, ZP    , 5, 0, TSBTRBOP, op_TSB},
    /* 05 */   { "ORA",  0, ZP    , 3, 0, READOP,   op_ORA},
    /* 06 */   { "ASL",  0, ZP    , 5, 0, RMWOP,    op_ASL},
-   /* 07 */   { "RMB0", 0, ZP    , 5, 0, READOP,   0},
+   /* 07 */   { "RMB0", 0, ZP    , 5, 0, READOP,   op_RMB},
    /* 08 */   { "PHP",  0, IMP   , 3, 0, WRITEOP,  op_PHP},
    /* 09 */   { "ORA",  0, IMM   , 2, 0, READOP,   op_ORA},
    /* 0A */   { "ASL",  0, IMPA  , 2, 0, READOP,   op_ASLA},
    /* 0B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 0C */   { "TSB",  0, ABS   , 6, 0, TSBTRBOP, op_TSB_TRB},
+   /* 0C */   { "TSB",  0, ABS   , 6, 0, TSBTRBOP, op_TSB},
    /* 0D */   { "ORA",  0, ABS   , 4, 0, READOP,   op_ORA},
    /* 0E */   { "ASL",  0, ABS   , 6, 0, RMWOP,    op_ASL},
    /* 0F */   { "BBR0", 0, ZPR   , 5, 0, READOP,   0},
@@ -900,15 +1009,15 @@ static InstrType instr_table_65c02[] = {
    /* 11 */   { "ORA",  0, INDY  , 5, 0, READOP,   op_ORA},
    /* 12 */   { "ORA",  0, IND   , 5, 0, READOP,   op_ORA},
    /* 13 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 14 */   { "TRB",  0, ZP    , 5, 0, TSBTRBOP, op_TSB_TRB},
+   /* 14 */   { "TRB",  0, ZP    , 5, 0, TSBTRBOP, op_TRB},
    /* 15 */   { "ORA",  0, ZPX   , 4, 0, READOP,   op_ORA},
    /* 16 */   { "ASL",  0, ZPX   , 6, 0, RMWOP,    op_ASL},
-   /* 17 */   { "RMB1", 0, ZP    , 5, 0, READOP,   0},
+   /* 17 */   { "RMB1", 0, ZP    , 5, 0, READOP,   op_RMB},
    /* 18 */   { "CLC",  0, IMP   , 2, 0, READOP,   op_CLC},
    /* 19 */   { "ORA",  0, ABSY  , 4, 0, READOP,   op_ORA},
    /* 1A */   { "INC",  0, IMPA  , 2, 0, READOP,   op_INCA},
    /* 1B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 1C */   { "TRB",  0, ABS   , 6, 0, TSBTRBOP, op_TSB_TRB},
+   /* 1C */   { "TRB",  0, ABS   , 6, 0, TSBTRBOP, op_TRB},
    /* 1D */   { "ORA",  0, ABSX  , 4, 0, READOP,   op_ORA},
    /* 1E */   { "ASL",  0, ABSX  , 6, 0, RMWOP,    op_ASL},
    /* 1F */   { "BBR1", 0, ZPR   , 5, 0, READOP,   0},
@@ -919,7 +1028,7 @@ static InstrType instr_table_65c02[] = {
    /* 24 */   { "BIT",  0, ZP    , 3, 0, READOP,   op_BIT},
    /* 25 */   { "AND",  0, ZP    , 3, 0, READOP,   op_AND},
    /* 26 */   { "ROL",  0, ZP    , 5, 0, RMWOP,    op_ROL},
-   /* 27 */   { "RMB2", 0, ZP    , 5, 0, READOP,   0},
+   /* 27 */   { "RMB2", 0, ZP    , 5, 0, READOP,   op_RMB},
    /* 28 */   { "PLP",  0, IMP   , 4, 0, READOP,   op_PLP},
    /* 29 */   { "AND",  0, IMM   , 2, 0, READOP,   op_AND},
    /* 2A */   { "ROL",  0, IMPA  , 2, 0, READOP,   op_ROLA},
@@ -935,7 +1044,7 @@ static InstrType instr_table_65c02[] = {
    /* 34 */   { "BIT",  0, ZPX   , 4, 0, READOP,   op_BIT},
    /* 35 */   { "AND",  0, ZPX   , 4, 0, READOP,   op_AND},
    /* 36 */   { "ROL",  0, ZPX   , 6, 0, RMWOP,    op_ROL},
-   /* 37 */   { "RMB3", 0, ZP    , 5, 0, READOP,   0},
+   /* 37 */   { "RMB3", 0, ZP    , 5, 0, READOP,   op_RMB},
    /* 38 */   { "SEC",  0, IMP   , 2, 0, READOP,   op_SEC},
    /* 39 */   { "AND",  0, ABSY  , 4, 0, READOP,   op_AND},
    /* 3A */   { "DEC",  0, IMPA  , 2, 0, READOP,   op_DECA},
@@ -951,7 +1060,7 @@ static InstrType instr_table_65c02[] = {
    /* 44 */   { "NOP",  0, ZP    , 3, 0, READOP,   0},
    /* 45 */   { "EOR",  0, ZP    , 3, 0, READOP,   op_EOR},
    /* 46 */   { "LSR",  0, ZP    , 5, 0, RMWOP,    op_LSR},
-   /* 47 */   { "RMB4", 0, ZP    , 5, 0, READOP,   0},
+   /* 47 */   { "RMB4", 0, ZP    , 5, 0, READOP,   op_RMB},
    /* 48 */   { "PHA",  0, IMP   , 3, 0, WRITEOP,  op_PHA},
    /* 49 */   { "EOR",  0, IMM   , 2, 0, READOP,   op_EOR},
    /* 4A */   { "LSR",  0, IMPA  , 2, 0, READOP,   op_LSRA},
@@ -967,7 +1076,7 @@ static InstrType instr_table_65c02[] = {
    /* 54 */   { "NOP",  0, ZPX   , 4, 0, READOP,   0},
    /* 55 */   { "EOR",  0, ZPX   , 4, 0, READOP,   op_EOR},
    /* 56 */   { "LSR",  0, ZPX   , 6, 0, RMWOP,    op_LSR},
-   /* 57 */   { "RMB5", 0, ZP    , 5, 0, READOP,   0},
+   /* 57 */   { "RMB5", 0, ZP    , 5, 0, READOP,   op_RMB},
    /* 58 */   { "CLI",  0, IMP   , 2, 0, READOP,   op_CLI},
    /* 59 */   { "EOR",  0, ABSY  , 4, 0, READOP,   op_EOR},
    /* 5A */   { "PHY",  0, IMP   , 3, 0, WRITEOP,  op_PHY},
@@ -980,10 +1089,10 @@ static InstrType instr_table_65c02[] = {
    /* 61 */   { "ADC",  0, INDX  , 6, 1, READOP,   op_ADC},
    /* 62 */   { "NOP",  0, IMM   , 2, 0, READOP,   0},
    /* 63 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 64 */   { "STZ",  0, ZP    , 3, 0, WRITEOP,  0},
+   /* 64 */   { "STZ",  0, ZP    , 3, 0, WRITEOP,  op_STZ},
    /* 65 */   { "ADC",  0, ZP    , 3, 1, READOP,   op_ADC},
    /* 66 */   { "ROR",  0, ZP    , 5, 0, RMWOP,    op_ROR},
-   /* 67 */   { "RMB6", 0, ZP    , 5, 0, READOP,   0},
+   /* 67 */   { "RMB6", 0, ZP    , 5, 0, READOP,   op_RMB},
    /* 68 */   { "PLA",  0, IMP   , 4, 0, READOP,   op_PLA},
    /* 69 */   { "ADC",  0, IMM   , 2, 1, READOP,   op_ADC},
    /* 6A */   { "ROR",  0, IMPA  , 2, 0, READOP,   op_RORA},
@@ -996,10 +1105,10 @@ static InstrType instr_table_65c02[] = {
    /* 71 */   { "ADC",  0, INDY  , 5, 1, READOP,   op_ADC},
    /* 72 */   { "ADC",  0, IND   , 5, 1, READOP,   op_ADC},
    /* 73 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 74 */   { "STZ",  0, ZPX   , 4, 0, WRITEOP,  0},
+   /* 74 */   { "STZ",  0, ZPX   , 4, 0, WRITEOP,  op_STZ},
    /* 75 */   { "ADC",  0, ZPX   , 4, 1, READOP,   op_ADC},
    /* 76 */   { "ROR",  0, ZPX   , 6, 0, RMWOP,    op_ROR},
-   /* 77 */   { "RMB7", 0, ZP    , 5, 0, READOP,   0},
+   /* 77 */   { "RMB7", 0, ZP    , 5, 0, READOP,   op_RMB},
    /* 78 */   { "SEI",  0, IMP   , 2, 0, READOP,   op_SEI},
    /* 79 */   { "ADC",  0, ABSY  , 4, 1, READOP,   op_ADC},
    /* 7A */   { "PLY",  0, IMP   , 4, 0, READOP,   op_PLY},
@@ -1015,7 +1124,7 @@ static InstrType instr_table_65c02[] = {
    /* 84 */   { "STY",  0, ZP    , 3, 0, WRITEOP,  op_STY},
    /* 85 */   { "STA",  0, ZP    , 3, 0, WRITEOP,  op_STA},
    /* 86 */   { "STX",  0, ZP    , 3, 0, WRITEOP,  op_STX},
-   /* 87 */   { "SMB0", 0, ZP    , 5, 0, READOP,   0},
+   /* 87 */   { "SMB0", 0, ZP    , 5, 0, READOP,   op_SMB},
    /* 88 */   { "DEY",  0, IMP   , 2, 0, READOP,   op_DEY},
    /* 89 */   { "BIT",  0, IMM   , 2, 0, READOP,   op_BIT_IMM},
    /* 8A */   { "TXA",  0, IMP   , 2, 0, READOP,   op_TXA},
@@ -1031,14 +1140,14 @@ static InstrType instr_table_65c02[] = {
    /* 94 */   { "STY",  0, ZPX   , 4, 0, WRITEOP,  op_STY},
    /* 95 */   { "STA",  0, ZPX   , 4, 0, WRITEOP,  op_STA},
    /* 96 */   { "STX",  0, ZPY   , 4, 0, WRITEOP,  op_STX},
-   /* 97 */   { "SMB1", 0, ZP    , 5, 0, READOP,   0},
+   /* 97 */   { "SMB1", 0, ZP    , 5, 0, READOP,   op_SMB},
    /* 98 */   { "TYA",  0, IMP   , 2, 0, READOP,   op_TYA},
    /* 99 */   { "STA",  0, ABSY  , 5, 0, WRITEOP,  op_STA},
    /* 9A */   { "TXS",  0, IMP   , 2, 0, READOP,   op_TXS},
    /* 9B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 9C */   { "STZ",  0, ABS   , 4, 0, WRITEOP,  0},
+   /* 9C */   { "STZ",  0, ABS   , 4, 0, WRITEOP,  op_STZ},
    /* 9D */   { "STA",  0, ABSX  , 5, 0, WRITEOP,  op_STA},
-   /* 9E */   { "STZ",  0, ABSX  , 5, 0, WRITEOP,  0},
+   /* 9E */   { "STZ",  0, ABSX  , 5, 0, WRITEOP,  op_STZ},
    /* 9F */   { "BBS1", 0, ZPR   , 5, 0, READOP,   0},
    /* A0 */   { "LDY",  0, IMM   , 2, 0, READOP,   op_LDY},
    /* A1 */   { "LDA",  0, INDX  , 6, 0, READOP,   op_LDA},
@@ -1047,7 +1156,7 @@ static InstrType instr_table_65c02[] = {
    /* A4 */   { "LDY",  0, ZP    , 3, 0, READOP,   op_LDY},
    /* A5 */   { "LDA",  0, ZP    , 3, 0, READOP,   op_LDA},
    /* A6 */   { "LDX",  0, ZP    , 3, 0, READOP,   op_LDX},
-   /* A7 */   { "SMB2", 0, ZP    , 5, 0, READOP,   0},
+   /* A7 */   { "SMB2", 0, ZP    , 5, 0, READOP,   op_SMB},
    /* A8 */   { "TAY",  0, IMP   , 2, 0, READOP,   op_TAY},
    /* A9 */   { "LDA",  0, IMM   , 2, 0, READOP,   op_LDA},
    /* AA */   { "TAX",  0, IMP   , 2, 0, READOP,   op_TAX},
@@ -1063,7 +1172,7 @@ static InstrType instr_table_65c02[] = {
    /* B4 */   { "LDY",  0, ZPX   , 4, 0, READOP,   op_LDY},
    /* B5 */   { "LDA",  0, ZPX   , 4, 0, READOP,   op_LDA},
    /* B6 */   { "LDX",  0, ZPY   , 4, 0, READOP,   op_LDX},
-   /* B7 */   { "SMB3", 0, ZP    , 5, 0, READOP,   0},
+   /* B7 */   { "SMB3", 0, ZP    , 5, 0, READOP,   op_SMB},
    /* B8 */   { "CLV",  0, IMP   , 2, 0, READOP,   op_CLV},
    /* B9 */   { "LDA",  0, ABSY  , 4, 0, READOP,   op_LDA},
    /* BA */   { "TSX",  0, IMP   , 2, 0, READOP,   op_TSX},
@@ -1079,7 +1188,7 @@ static InstrType instr_table_65c02[] = {
    /* C4 */   { "CPY",  0, ZP    , 3, 0, READOP,   op_CPY},
    /* C5 */   { "CMP",  0, ZP    , 3, 0, READOP,   op_CMP},
    /* C6 */   { "DEC",  0, ZP    , 5, 0, RMWOP,    op_DEC},
-   /* C7 */   { "SMB4", 0, ZP    , 5, 0, READOP,   0},
+   /* C7 */   { "SMB4", 0, ZP    , 5, 0, READOP,   op_SMB},
    /* C8 */   { "INY",  0, IMP   , 2, 0, READOP,   op_INY},
    /* C9 */   { "CMP",  0, IMM   , 2, 0, READOP,   op_CMP},
    /* CA */   { "DEX",  0, IMP   , 2, 0, READOP,   op_DEX},
@@ -1095,7 +1204,7 @@ static InstrType instr_table_65c02[] = {
    /* D4 */   { "NOP",  0, ZPX   , 4, 0, READOP,   0},
    /* D5 */   { "CMP",  0, ZPX   , 4, 0, READOP,   op_CMP},
    /* D6 */   { "DEC",  0, ZPX   , 6, 0, RMWOP,    op_DEC},
-   /* D7 */   { "SMB5", 0, ZP    , 5, 0, READOP,   0},
+   /* D7 */   { "SMB5", 0, ZP    , 5, 0, READOP,   op_SMB},
    /* D8 */   { "CLD",  0, IMP   , 2, 0, READOP,   op_CLD},
    /* D9 */   { "CMP",  0, ABSY  , 4, 0, READOP,   op_CMP},
    /* DA */   { "PHX",  0, IMP   , 3, 0, WRITEOP,  op_PHX},
@@ -1111,7 +1220,7 @@ static InstrType instr_table_65c02[] = {
    /* E4 */   { "CPX",  0, ZP    , 3, 0, READOP,   op_CPX},
    /* E5 */   { "SBC",  0, ZP    , 3, 1, READOP,   op_SBC},
    /* E6 */   { "INC",  0, ZP    , 5, 0, RMWOP,    op_INC},
-   /* E7 */   { "SMB6", 0, ZP    , 5, 0, READOP,   0},
+   /* E7 */   { "SMB6", 0, ZP    , 5, 0, READOP,   op_SMB},
    /* E8 */   { "INX",  0, IMP   , 2, 0, READOP,   op_INX},
    /* E9 */   { "SBC",  0, IMM   , 2, 1, READOP,   op_SBC},
    /* EA */   { "NOP",  0, IMP   , 2, 0, READOP,   0},
@@ -1127,7 +1236,7 @@ static InstrType instr_table_65c02[] = {
    /* F4 */   { "NOP",  0, ZPX   , 4, 0, READOP,   0},
    /* F5 */   { "SBC",  0, ZPX   , 4, 1, READOP,   op_SBC},
    /* F6 */   { "INC",  0, ZPX   , 6, 0, RMWOP,    op_INC},
-   /* F7 */   { "SMB7", 0, ZP    , 5, 0, READOP,   0},
+   /* F7 */   { "SMB7", 0, ZP    , 5, 0, READOP,   op_SMB},
    /* F8 */   { "SED",  0, IMP   , 2, 0, READOP,   op_SED},
    /* F9 */   { "SBC",  0, ABSY  , 4, 1, READOP,   op_SBC},
    /* FA */   { "PLX",  0, IMP   , 4, 0, READOP,   op_PLX},
@@ -1427,5 +1536,8 @@ void em_init(int support_c02, int support_rockwell, int support_undocumented) {
       instr->len = addr_mode_table[instr->mode].len;
       instr->fmt = addr_mode_table[instr->mode].fmt;
       instr++;
+   }
+   for (i = 0; i < 0xffff; i++) {
+      memory[i] = -1;
    }
 }

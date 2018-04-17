@@ -5,7 +5,7 @@ void em_init(int support_c02, int support_rockwell, int support_undocumented);
 
 void em_reset();
 
-void em_interrupt(int operand);
+void em_interrupt(int flags, int pc);
 
 int compare_NVDIZC(int operand);
 
@@ -72,7 +72,7 @@ typedef struct {
    int cycles;
    int decimalcorrect;
    OpType optype;
-   void (*emulate)(int);
+   void (*emulate)(int, int);
    int len;
    const char *fmt;
 } InstrType;

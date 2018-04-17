@@ -332,7 +332,7 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
    } else if (intr_seen && opcode != 0) {
       // Handle an interrupt
       if (do_emulate) {
-         em_interrupt((accumulator >> 16) & 0xff);
+         em_interrupt((accumulator >> 16) & 0xff, pc);
       }
    } else {
       // Handle a normal instruction
@@ -347,9 +347,22 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
             } else if (instr->optype == BRANCHOP) {
                // the operand is true if branch taken
                operand = (num_cycles != 2);
+            } else if (opcode == 0x00) {
+               // BRK: the operand is the data pushed to the stack (PCH, PCL, P)
+               // <opcode> <op1> <write pch> <write pcl> <write p> <read rst> <read rsth>
+               operand = (accumulator >> 16) & 0xffffff;
+            } else if (opcode == 0x20) {
+               // JSR: the operand is the data pushed to the stack (PCH, PCL)
+               // <opcode> <op1> <read dummy> <write pch> <write pcl> <op2>
+               operand = (accumulator >> 8) & 0xffff;
             } else if (opcode == 0x40) {
-               // RTI: the operand (flags) is the first read cycle of three
-               operand = (accumulator >> 16) & 0xff;
+               // RTI: the operand is the data pulled from the stack (P, PCL, PCH)
+               // <opcode> <op1> <read dummy> <read p> <read pcl> <read pch>
+               operand = accumulator & 0xffffff;
+            } else if (opcode == 0x60) {
+               // RTS: the operand is the data pulled from the stack (PCL, PCH)
+               // <opcode> <op1> <read dummy> <read pcl> <read pch>
+               operand = (accumulator >> 8) & 0xffff;
             } else if (instr->mode == IMM) {
                // Immediate addressing mode: the operand is the 2nd byte of the instruction
                operand = op1;
@@ -363,7 +376,56 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
                // default to using the last bus cycle as the operand
                operand = accumulator & 0xff;
             }
-            instr->emulate(operand);
+
+            // For instructions that read or write memory, we need to work out the effective address
+            // Note: not needed for stack operations, as S is used directly
+            int ea = -1;
+            int index;
+            switch (instr->mode) {
+            case ZP:
+               ea = op1;
+               break;
+            case ZPX:
+            case ZPY:
+               index = instr->mode == ZPX ? em_get_X() : em_get_Y();
+               if (index >= 0) {
+                  ea = (op1 + index) & 0xff;
+               }
+               break;
+            case INDY:
+               // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
+               index = em_get_Y();
+               if (index >= 0) {
+                  ea = accumulator >> (8 * (num_cycles - 4));
+                  ea = ((ea & 0xFF00) >> 8) | ((ea & 0x00FF) << 8);
+                  ea = (ea + index) & 0xffff;
+               }
+               break;
+            case INDX:
+               // <opcpde> <op1> <dummy> <addrlo> <addrhi> <operand> [ <extra cycle in dec mode> ]
+               ea = accumulator >> (8 * (num_cycles - 5));
+               ea = ((ea & 0xFF00) >> 8) | ((ea & 0x00FF) << 8);
+               break;
+            case IND:
+               // <opcpde> <op1> <addrlo> <addrhi> <operand> [ <extra cycle in dec mode> ]
+               ea = accumulator >> (8 * (num_cycles - 4));
+               ea = ((ea & 0xFF00) >> 8) | ((ea & 0x00FF) << 8);
+               break;
+            case ABS:
+               ea = op2 << 8 | op1;
+               break;
+            case ABSX:
+            case ABSY:
+               index = instr->mode == ABSX ? em_get_X() : em_get_Y();
+               if (index >= 0) {
+                  ea = ((op2 << 8 | op1) + index) & 0xffff;
+               }
+               break;
+            default:
+               break;
+            }
+
+            instr->emulate(operand, ea);
          }
       }
    }
@@ -383,7 +445,7 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
          interrupt_depth++;
          skipping_interrupted = 1;
       } else if (interrupt_depth > 0 && opcode == 0x40) {
-         interrupt_depth--;         
+         interrupt_depth--;
       }
    }
 
