@@ -2,15 +2,8 @@
 
 #include "profiler.h"
 
-extern profiler_t profiler_instr;
-
-extern profiler_t profiler_call;
-
-static profiler_t *profiler_list[] = {
-   &profiler_instr,
-   &profiler_call,
-   NULL
-};
+extern profiler_t *profiler_instr_create(char *arg);
+extern profiler_t *profiler_call_create(char *arg);
 
 #define MAX_PROFILERS 10
 
@@ -24,16 +17,14 @@ static int active_count = 0;
          char *type   = strtok(arg, ",");
          char *rest   = strtok(NULL, "");
          // Act as a factory method for profilers
-         profiler_t **pp = profiler_list;
-         while (*pp) {
-            if (strcasecmp(type, (*pp)->profiler_name) == 0) {
-               break;
-            }
-            pp++;
+         profiler_t *instance = NULL;
+         if (strcasecmp(type, "instr") == 0) {
+            instance = profiler_instr_create(rest);
+         } else if (strcasecmp(type, "call") == 0) {
+            instance = profiler_call_create(rest);
          }
-         if (*pp) {
-            (*pp)->parse_opt(rest);
-            active_list[active_count++] = *pp;
+         if (instance) {
+            active_list[active_count++] = instance;
             active_list[active_count] = NULL;
          } else {
             argp_error(state, "unknown profiler type %s", type);
@@ -46,20 +37,26 @@ static int active_count = 0;
 void profiler_init() {
    profiler_t **pp = active_list;
    while (*pp) {
-      (*pp++)->init();
+      (*pp)->init(*pp);
+      pp++;
    }
 }
 
 void profiler_profile_instruction(int pc, int opcode, int op1, int op2, int num_cycles) {
    profiler_t **pp = active_list;
    while (*pp) {
-      (*pp++)->profile_instruction(pc, opcode, op1, op2, num_cycles);
+      (*pp)->profile_instruction(*pp, pc, opcode, op1, op2, num_cycles);
+      pp++;
    }
 }
 
 void profiler_done() {
    profiler_t **pp = active_list;
    while (*pp) {
-      (*pp++)->done();
+   printf("==============================================================================\n");
+   printf("Profiler: %s; Args: %s\n", (*pp)->name, (*pp)->arg);   
+   printf("==============================================================================\n");   
+      (*pp)->done(*pp);
+      pp++;
    }
 }

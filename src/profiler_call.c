@@ -20,15 +20,18 @@ typedef struct call_stack {
    uint64_t cycle_count;
 } call_stack_t;
 
-static void *root = NULL;
 
-static call_stack_t *current;
+typedef struct {
+   profiler_t profiler;
+   void *root;
+   call_stack_t *current;
+   int profile_enabled;
+} profiler_call_t;
 
+
+// One copy of these means profile_done is not thread safe, not concerned about this
 static uint64_t total_cycles;
-
 static double total_percent;
-
-static int profile_enabled;
 
 static int compare_nodes(const void *av, const void *bv) {
    const call_stack_t *a = (call_stack_t *) av;
@@ -53,66 +56,65 @@ static int compare_nodes(const void *av, const void *bv) {
    return ret;
 }
 
-static void p_parse_opt(char *arg) {
-}
-
-static void p_init() {
+static void p_init(void *ptr) {
+   profiler_call_t *instance = (profiler_call_t *)ptr;
    call_stack_t *root_context = (call_stack_t *)malloc(sizeof(call_stack_t));
    root_context->index = 0;
    root_context->cycle_count = 0;
    root_context->call_count = 0;
    root_context->parent = NULL;
-   if (root) {
-      tdestroy(root, free);
+   if (instance->root) {
+      tdestroy(instance->root, free);
    }
-   root = NULL;
-   current = *(call_stack_t **)tsearch(root_context, &root, compare_nodes);
-   profile_enabled = 1;
+   instance->root = NULL;
+   instance->current = *(call_stack_t **)tsearch(root_context, &instance->root, compare_nodes);
+   instance->profile_enabled = 1;
 }
 
-void p_profile_instruction(int pc, int opcode, int op1, int op2, int num_cycles) {
-   if (!profile_enabled) {
+static void p_profile_instruction(void *ptr, int pc, int opcode, int op1, int op2, int num_cycles) {
+   profiler_call_t *instance = (profiler_call_t *)ptr;
+   if (!instance->profile_enabled) {
       return;
    }
    if (opcode == 0x20) {
       // TODO: What about interrupts
-      if (current->index < CALL_STACK_SIZE) {
+      if (instance->current->index < CALL_STACK_SIZE) {
          int addr = (op2 << 8 | op1) & 0xffff;
 #if DEBUG
          printf("*** pushing %04x to %d\n", addr, current->index);
 #endif
          // Create a new child node, in case it's not already in the tree
          call_stack_t *child = (call_stack_t *) malloc(sizeof(call_stack_t));
-         memcpy((void*) child, (void *)current, sizeof(call_stack_t));
+         memcpy((void*) child, (void *)(instance->current), sizeof(call_stack_t));
          child->stack[child->index] = addr;
          child->index++;
-         child->parent = current;
+         child->parent = instance->current;
          child->cycle_count = 0;
          child->call_count = 0;
-         current = *(call_stack_t **)tsearch(child, &root, compare_nodes);
+         instance->current = *(call_stack_t **)tsearch(child, &instance->root, compare_nodes);
          // If the child already existed, then free the just created node
-         if (current != child) {
+         if (instance->current != child) {
             free(child);
          }
-         current->call_count++;
+         instance->current->call_count++;
       } else {
          printf("warning: call stack overflowed, disabling further profiling\n");
-         for (int i = 0; i < current->index; i++) {
-            printf("warning: stack[%3d] = %04x\n", i, current->stack[i]);
+         for (int i = 0; i < instance->current->index; i++) {
+            printf("warning: stack[%3d] = %04x\n", i, instance->current->stack[i]);
          }
-         profile_enabled = 0;
+         instance->profile_enabled = 0;
       }
    }
-   current->cycle_count += num_cycles;
+   instance->current->cycle_count += num_cycles;
    if (opcode == 0x60) {
-      if (current->parent) {
+      if (instance->current->parent) {
 #if DEBUG
          printf("*** popping %d\n", current->index);
 #endif
-         current = current->parent;
+         instance->current = instance->current->parent;
       } else {
          printf("warning: call stack underflowed, re-initialize call graph\n");
-         profiler_init();
+         p_init(ptr);
       }
    }
 }
@@ -144,18 +146,23 @@ static void dump_call_walker(const void *nodep, const VISIT which, const int dep
    }
 }
 
-static void p_done() {
+static void p_done(void *ptr) {
+   profiler_call_t *instance = (profiler_call_t *)ptr;
    total_cycles = 0;
-   twalk(root, count_call_walker);
+   twalk(instance->root, count_call_walker);
    total_percent = 0;
-   twalk(root, dump_call_walker);
+   twalk(instance->root, dump_call_walker);
    printf("%8ld cycles (%10.6f%%)\n", total_cycles, total_percent);
 }
 
-profiler_t profiler_call = {
-   .profiler_name       = "call",
-   .parse_opt           = p_parse_opt,
-   .init                = p_init,
-   .profile_instruction = p_profile_instruction,
-   .done                = p_done
-};
+void *profiler_call_create(char *arg) {
+   profiler_call_t *instance = (profiler_call_t *)calloc(1, sizeof(profiler_call_t));
+
+   instance->profiler.name                = "call";
+   instance->profiler.arg                 = strdup(arg);
+   instance->profiler.init                = p_init;
+   instance->profiler.profile_instruction = p_profile_instruction;
+   instance->profiler.done                = p_done;
+
+   return instance;
+}
