@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
+#include <math.h>
 #include "em_6502.h"
 
 static int c02;
@@ -37,6 +38,16 @@ const char default_state[] = "A=?? X=?? Y=?? SP=?? N=? V=? D=? I=? Z=? C=?";
 #define OFFSET_Z  39
 #define OFFSET_C  43
 #define OFFSET_FF 44
+
+// escaping is to avoid unwanted trigraphs
+const char default_fwa[] = "\?\?-\?\?:\?\?\?\?\?\?\?\?:\?\?:\?\? = \?\?\?\?\?\?\?\?\?\?\?\?\?\?\?";
+
+#define OFFSET_SIGN      0
+#define OFFSET_EXP       3
+#define OFFSET_MANTISSA  6
+#define OFFSET_ROUND    15
+#define OFFSET_OVERFLOW 18
+#define OFFSET_VALUE    23
 
 static char buffer[80];
 
@@ -240,6 +251,10 @@ int em_get_S() {
    return S;
 }
 
+int em_read_memory(int address) {
+   return memory[address];
+}
+
 char *em_get_state() {
    strcpy(buffer, default_state);
    if (A >= 0) {
@@ -271,6 +286,72 @@ char *em_get_state() {
    }
    if (C >= 0) {
       buffer[OFFSET_C] = '0' + C;
+   }
+   return buffer;
+}
+
+char *em_get_fwa(int a_sign, int a_exp, int a_mantissa, int a_round, int a_overflow) {
+   strcpy(buffer, default_fwa);
+   int sign     = em_read_memory(a_sign);
+   int exp      = em_read_memory(a_exp);
+   int man1     = em_read_memory(a_mantissa);
+   int man2     = em_read_memory(a_mantissa + 1);
+   int man3     = em_read_memory(a_mantissa + 2);
+   int man4     = em_read_memory(a_mantissa + 3);
+   int round    = em_read_memory(a_round);
+   int overflow = a_overflow >= 0 ? em_read_memory(a_overflow) : -1;
+   if (sign >= 0) {
+      write_hex2(buffer + OFFSET_SIGN, sign);
+   }
+   if (exp >= 0) {
+      write_hex2(buffer + OFFSET_EXP, exp);
+   }
+   if (man1 >= 0) {
+      write_hex2(buffer + OFFSET_MANTISSA + 0, man1);
+   }
+   if (man2 >= 0) {
+      write_hex2(buffer + OFFSET_MANTISSA + 2, man2);
+   }
+   if (man3 >= 0) {
+      write_hex2(buffer + OFFSET_MANTISSA + 4, man3);
+   }
+   if (man4 >= 0) {
+      write_hex2(buffer + OFFSET_MANTISSA + 6, man4);
+   }
+   if (round >= 0) {
+      write_hex2(buffer + OFFSET_ROUND, round);
+   }
+   if (overflow >= 0) {
+      write_hex2(buffer + OFFSET_OVERFLOW, overflow);
+   }
+   if (sign >= 0 && exp >= 0 && man1 >= 0 && man2 >= 0 && man3 >= 0 && man4 >= 0 && round >= 0) {
+
+      // Real numbers are held in binary floating point format. In the
+      // default (40-bit) mode the mantissa is held as a 4 byte binary
+      // fraction in sign and magnitude format. Bit 7 of the MSB of
+      // the mantissa is the sign bit. When working out the value of
+      // the mantissa, this bit is assumed to be 1 (a decimal value of
+      // 0.5). The exponent is held as a single byte in 'excess 127'
+      // format. In other words, if the actual exponent is zero, the
+      // value stored in the exponent byte is 127.
+
+      // Build up a 32 bit mantissa
+      uint64_t mantissa = man1;
+      mantissa = (mantissa << 8) + man2;
+      mantissa = (mantissa << 8) + man3;
+      mantissa = (mantissa << 8) + man4;
+
+      // Extend this to 40 bits with the rounding byte
+      mantissa = (mantissa << 8) + round;
+
+      // Combine with the exponent
+      double value = ((double) mantissa) * pow(2.0, exp - 128 - 40);
+      // Take account of the sign
+      if (sign & 128) {
+         value = -value;
+      }
+      // Print it to the buffer
+      sprintf(buffer + OFFSET_VALUE, "%-+15.8E", value);
    }
    return buffer;
 }

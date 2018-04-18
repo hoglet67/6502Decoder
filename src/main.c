@@ -100,6 +100,7 @@ static struct argp_option options[] = {
    { "cycles",       'y',        0,                   0, "Show number of bus cycles."},
    { "profile",      'p', "PARAMS", OPTION_ARG_OPTIONAL, "Profile code execution."},
    { "trigger",      't',"ADDRESS",                   0, "Trigger on address."},
+   { "bbcfwa",       'f',        0,                   0, "Show BBC floating poing work areas."},
 
    { 0 }
 };
@@ -117,6 +118,7 @@ struct arguments {
    int show_hex;
    int show_instruction;
    int show_state;
+   int show_bbcfwa;
    int show_cycles;
    int show_something;
    int emulate;
@@ -215,6 +217,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       arguments->show_hex = 0;
       arguments->show_instruction = 0;
       arguments->show_state = 0;
+      arguments->show_bbcfwa = 0;
       arguments->show_cycles = 0;
       break;
    case 'a':
@@ -228,6 +231,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       break;
    case 's':
       arguments->show_state = 1;
+      break;
+   case 'f':
+      arguments->show_bbcfwa = 1;
       break;
    case 'y':
       arguments->show_cycles = 1;
@@ -543,7 +549,7 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
          }
       }
       // Pad if there is more to come
-      if (fail || arguments.show_cycles || arguments.show_state) {
+      if (fail || arguments.show_cycles || arguments.show_state || arguments.show_bbcfwa) {
          // Pad opcode to 14 characters, to match python
          while (numchars++ < 14) {
             printf(" ");
@@ -556,6 +562,11 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
       // Show register state
       if (fail || arguments.show_state) {
          printf(" : %s", em_get_state());
+      }
+      // Show BBC floating point work area FWA, FWB
+      if (arguments.show_bbcfwa) {
+         printf(" : FWA %s", em_get_fwa(0x2e, 0x30, 0x31, 0x35, 0x2f));
+         printf(" : FWB %s", em_get_fwa(0x3b, 0x3c, 0x3d, 0x41,   -1));
       }
       // Show any errors
       if (fail) {
@@ -1253,6 +1264,7 @@ int main(int argc, char *argv[]) {
    arguments.show_hex         = 0;
    arguments.show_instruction = 1;
    arguments.show_state       = 0;
+   arguments.show_bbcfwa      = 0;
    arguments.show_cycles      = 0;
 
    arguments.emulate          = 0;
@@ -1269,7 +1281,7 @@ int main(int argc, char *argv[]) {
 
    argp_parse(&argp, argc, argv, 0, 0, &arguments);
 
-   arguments.show_something = arguments.show_address | arguments.show_hex | arguments.show_instruction | arguments.show_state | arguments.show_cycles;
+   arguments.show_something = arguments.show_address | arguments.show_hex | arguments.show_instruction | arguments.show_state | arguments.show_bbcfwa | arguments.show_cycles;
 
    // Normally the data file should be 16 bit samples. In byte mode
    // the data file is 8 bit samples, and all the control signals are
@@ -1282,7 +1294,7 @@ int main(int argc, char *argv[]) {
       arguments.idx_rst  = -1;
    }
 
-   if (arguments.emulate || arguments.show_state || arguments.idx_sync < 0 || arguments.idx_rnw < 0) {
+   if (arguments.emulate || arguments.show_state || arguments.show_bbcfwa || arguments.idx_sync < 0 || arguments.idx_rnw < 0) {
       do_emulate = 1;
    }
 

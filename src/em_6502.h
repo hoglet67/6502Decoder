@@ -29,7 +29,11 @@ int em_get_Y();
 
 int em_get_S();
 
+int em_read_memory(int address);
+
 char *em_get_state();
+
+char *em_get_fwa(int a_sign, int a_exp, int a_mantissa, int a_round, int a_overflow);
 
 int em_get_and_clear_fail();
 
