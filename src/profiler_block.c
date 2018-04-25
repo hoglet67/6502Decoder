@@ -46,7 +46,7 @@ static void p_profile_instruction(void *ptr, int pc, int opcode, int op1, int op
       instance->profile_counts[addr].flags |= FLAG_JMP;
    } else if (pc >= 0 && (((opcode & 0x1f) == 0x10) || (opcode == 0x80))) {
       // Note the destination of Bxx <rel>
-      addr = (pc + 2) + ((int8_t)(op1));
+      addr = ((pc + 2) + ((int8_t)(op1))) & 0xffff;
       instance->profile_counts[addr  ].flags |= addr < pc ? FLAG_BB_TAKEN : FLAG_FB_TAKEN;
       instance->profile_counts[pc + 2].flags |= addr < pc ? FLAG_BB_NOT_TAKEN : FLAG_FB_NOT_TAKEN;
    }
