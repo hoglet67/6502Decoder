@@ -101,6 +101,7 @@ static struct argp_option options[] = {
    { "profile",      'p', "PARAMS", OPTION_ARG_OPTIONAL, "Profile code execution."},
    { "trigger",      't',"ADDRESS",                   0, "Trigger on address."},
    { "bbcfwa",       'f',        0,                   0, "Show BBC floating poing work areas."},
+   { "bbctube",       8,         0,                   0, "Decode BBC tube protocol"},
 
    { 0 }
 };
@@ -121,6 +122,7 @@ struct arguments {
    int show_bbcfwa;
    int show_cycles;
    int show_something;
+   int bbctube;
    int emulate;
    int c02;
    int rockwell;
@@ -185,6 +187,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       } else {
          arguments->vec_rst = -1;
       }
+      break;
+   case   8:
+      arguments->bbctube = 1;
       break;
    case 'c':
       if (arguments->undocumented) {
@@ -1267,6 +1272,7 @@ int main(int argc, char *argv[]) {
    arguments.show_bbcfwa      = 0;
    arguments.show_cycles      = 0;
 
+   arguments.bbctube          = 0;
    arguments.emulate          = 0;
    arguments.c02              = 0;
    arguments.rockwell         = 0;
@@ -1294,7 +1300,7 @@ int main(int argc, char *argv[]) {
       arguments.idx_rst  = -1;
    }
 
-   if (arguments.emulate || arguments.show_state || arguments.show_bbcfwa || arguments.idx_sync < 0 || arguments.idx_rnw < 0) {
+   if (arguments.emulate || arguments.bbctube || arguments.show_state || arguments.show_bbcfwa || arguments.idx_sync < 0 || arguments.idx_rnw < 0) {
       do_emulate = 1;
    }
 
@@ -1312,7 +1318,7 @@ int main(int argc, char *argv[]) {
          return 2;
       }
    }
-   em_init(arguments.c02, arguments.rockwell, arguments.undocumented);
+   em_init(arguments.c02, arguments.rockwell, arguments.undocumented, arguments.bbctube);
    decode(stream);
    fclose(stream);
 

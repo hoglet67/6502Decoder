@@ -2,9 +2,11 @@
 #include <string.h>
 #include <inttypes.h>
 #include <math.h>
+#include "tube_decode.h"
 #include "em_6502.h"
 
 static int c02;
+static int bbctube;
 
 AddrModeType addr_mode_table[] = {
    {1,    "%1$s"},                  // IMP
@@ -82,6 +84,9 @@ static void memory_read(int data, int ea) {
       }
       memory[ea] = data;
    }
+   if (bbctube && ea >= 0xfee0 && ea <= 0xfee7) {
+      tube_read(ea & 7, data);
+   }
 }
 
 static void memory_write(int data, int ea) {
@@ -93,6 +98,9 @@ static void memory_write(int data, int ea) {
          // printf("memory write: %04x = %02x\n", ea, data);
          memory[ea] = data;
       }
+   }
+   if (bbctube && ea >= 0xfee0 && ea <= 0xfee7) {
+      tube_write(ea & 7, data);
    }
 }
 
@@ -1592,10 +1600,11 @@ static InstrType instr_table_6502[] = {
 
 static char ILLEGAL[] = "???";
 
-void em_init(int support_c02, int support_rockwell, int support_undocumented) {
+void em_init(int support_c02, int support_rockwell, int support_undocumented, int decode_bbctube) {
    int i;
    c02 = support_c02;
    instr_table = support_c02 ? instr_table_65c02 : instr_table_6502;
+   bbctube = decode_bbctube;
    // If not supporting the Rockwell C02 extensions, tweak the cycle countes
    if (support_c02 && !support_rockwell) {
       // x7 (RMB/SMB): 5 cycles -> 1 cycles
