@@ -44,13 +44,15 @@ enum R2_enum {
    R2_OSARGS_3,
    R2_OSBGET_0,
    R2_OSBPUT_0,
+   R2_OSBPUT_1,
    R2_OSFIND_0,
    R2_OSFIND_1,
    R2_OSFIND_2,
    R2_OSFILE_0,
    R2_OSFILE_1,
    R2_OSFILE_2,
-   R2_OSGBPB_0
+   R2_OSGBPB_0,
+   R2_OSGBPB_1
 };
 
 enum R4_enum {
@@ -65,11 +67,52 @@ enum R4_enum {
    R4_XFER_6
 };
 
-static int in_error = -1;
+enum RESP_enum {
+   RESP_IDLE,
+   RESP_OSRDCH_0,
+   RESP_OSRDCH_1,
+   RESP_OSCLI_0,
+   RESP_OSBYTELO_0,
+   RESP_OSBYTEHI_0,
+   RESP_OSBYTEHI_1,
+   RESP_OSBYTEHI_2,
+   RESP_OSWORD_0,
+   RESP_OSWORD0_0,
+   RESP_OSWORD0_1,
+   RESP_OSARGS_0,
+   RESP_OSARGS_1,
+   RESP_OSBGET_0,
+   RESP_OSBGET_1,
+   RESP_OSBPUT_0,
+   RESP_OSFIND_0,
+   RESP_OSFILE_0,
+   RESP_OSFILE_1,
+   RESP_OSGBPB_0,
+   RESP_OSGBPB_1,
+   RESP_OSGBPB_2,
+   RESP_RESET_0,
+   RESP_ERROR_0,
+   RESP_ERROR_1,
+   RESP_ERROR_2
+};
 
-static void print_call(char *call, int a, int x, int y, uint8_t *name, uint8_t *block, int block_len) {
+static int resp_state = RESP_IDLE;
+static int resp_length = 0;
+
+static void expect_response(int state, int length) {
+   if (resp_state != RESP_IDLE) {
+      printf("Warning response state conflict: current=%d next=%d\n", resp_state, state);
+   }
+   resp_state = state;
+   resp_length = length;
+}
+
+static void print_call(char *call, int cy, int a, int x, int y, uint8_t *name, uint8_t *block, int block_len) {
    int i;
    printf("%s: ", call);
+   if (cy >= 0) {
+      printf("Cy=%02x ", cy);
+   }
    if (a >= 0) {
       printf("A=%02x ", a);
    }
@@ -127,20 +170,150 @@ void r1_h2p_state_machine(uint8_t data) {
 }
 
 void r2_h2p_state_machine(uint8_t data) {
-   static uint8_t error[512];
+   static int a = -1;
+   static int x = -1;
+   static int y = -1;
+   static int cy = -1;
+   static int errno = -1;
+   static uint8_t buffer[512];
+   static int index = 0;
 #ifdef DEBUG
    printf("tube write: R2 = %02x\n", data);
 #endif
-   if (in_error >= 0) {
-      // Error    R4: &FF R2: &00 err string &00
-      error[in_error] = data;
-      if (data == 0 && in_error > 0) {
-         printf("R4/R2: Error num=%d message=%s\n", error[1], error + 2);
-         in_error = -1;
-      } else {
-         in_error++;
+
+   buffer[index] = data;
+   if (index < sizeof(buffer) - 1) {
+      index++;
+   } else {
+      printf("Response buffer overflow!, state = %d\n", resp_state);
+   }
+
+   switch (resp_state) {
+   case RESP_IDLE:
+      printf("Unexpected data recived in IDLE response state: %02x\n", data);
+      break;
+   case RESP_OSRDCH_0:
+      cy = data;
+      resp_state = RESP_OSRDCH_1;
+      break;
+   case RESP_OSRDCH_1:
+      a = data;
+      print_call("R2: OSRDCH response", cy, a, -1, -1, NULL, NULL, -1);
+      resp_state = RESP_IDLE;
+      break;
+   case RESP_OSCLI_0:
+      printf("R2: OSCLI response: %02x\n",  data);
+      resp_state = RESP_IDLE;
+      break;
+   case RESP_OSBYTELO_0:
+      x = data;
+      print_call("R2: OSBYTE response", -1, -1, x, -1, NULL, NULL, -1);
+      resp_state = RESP_IDLE;
+      break;
+   case RESP_OSBYTEHI_0:
+      cy = data;
+      resp_state = RESP_OSBYTEHI_1;
+      break;
+   case RESP_OSBYTEHI_1:
+      y = data;
+      resp_state = RESP_OSBYTEHI_2;
+      break;
+   case RESP_OSBYTEHI_2:
+      x = data;
+      print_call("R2: OSBYTE response", cy, -1, x, y, NULL, NULL, -1);
+      resp_state = RESP_IDLE;
+      break;
+   case RESP_OSWORD_0:
+      if (index == resp_length) {
+         print_call("R2: OSWORD response", -1, -1, -1, -1, NULL, buffer, resp_length);
+         resp_state = RESP_IDLE;
       }
-      return;
+      break;
+   case RESP_OSWORD0_0:
+      if (data & 0x80) {
+         printf("R2: OSWORD0 response: %02x (escape)\n", data);
+         resp_state = RESP_IDLE;
+      } else {
+         resp_state = RESP_IDLE;
+      }
+      break;
+   case RESP_OSWORD0_1:
+      if (data == 0x0d) {
+         buffer[index - 1] = 0;
+         print_call("R2: OSWORD0 response", -1, -1, -1, -1, buffer + 1, NULL, -1);
+         resp_state = RESP_IDLE;
+      }
+      break;
+   case RESP_OSARGS_0:
+      a = data;
+      resp_state = RESP_OSARGS_1;
+      break;
+   case RESP_OSARGS_1:
+      if (index == resp_length + 1) {
+         print_call("R2: OSARGS response", -1, -1, -1, -1, NULL, buffer + 1, resp_length);
+         resp_state = RESP_IDLE;
+      }
+      break;
+   case RESP_OSBGET_0:
+      cy = data;
+      resp_state = RESP_OSBGET_1;
+      break;
+   case RESP_OSBGET_1:
+      a = data;
+      print_call("R2: OSSBGET response",  cy, a, -1, -1, NULL, NULL, -1);
+      resp_state = RESP_IDLE;
+      break;
+   case RESP_OSBPUT_0:
+      printf("R2: OSBPUT response: %02x\n",  data);
+      resp_state = RESP_IDLE;
+      break;
+   case RESP_OSFIND_0:
+      printf("R2: OSFIND response: %02x\n",  data);
+      resp_state = RESP_IDLE;
+      break;
+   case RESP_OSFILE_0:
+      a = data;
+      resp_state = RESP_OSFILE_1;
+      break;
+   case RESP_OSFILE_1:
+      if (index == resp_length + 1) {
+         print_call("R2: OSFILE response", -1,  a, -1, -1, NULL, buffer + 1, resp_length);
+         resp_state = RESP_IDLE;
+      }
+      break;
+   case RESP_OSGBPB_0:
+      if (index == resp_length) {
+         resp_state = RESP_OSGBPB_1;
+      }
+      break;
+   case RESP_OSGBPB_1:
+      cy = data;
+      resp_state = RESP_OSGBPB_1;
+      break;
+   case RESP_OSGBPB_2:
+      a = data;
+      print_call("R2: OSGBPB response", cy, a, -1, -1, NULL, buffer + 1, resp_length);
+      resp_state = RESP_IDLE;
+      break;
+   case RESP_RESET_0:
+      // TODO
+      break;
+   case RESP_ERROR_0:
+      resp_state = RESP_ERROR_1;
+      break;
+   case RESP_ERROR_1:
+      errno = data;
+      resp_state = RESP_ERROR_1;
+      break;
+   case RESP_ERROR_2:
+      if (data == 0x00) {
+         printf("R2: Error response: errno=%d message=%s\n", errno, buffer + 2);
+         resp_state = RESP_IDLE;
+      }
+      break;
+   }
+   if (resp_state == RESP_IDLE) {
+      index = 0;
    }
 }
 
@@ -158,7 +331,8 @@ void r4_h2p_state_machine(uint8_t data) {
    switch (state) {
    case R4_IDLE:
       if (data == 0xff) {
-         in_error = 0;
+         // Expect an response to the error in R2
+         expect_response(RESP_ERROR_0, -1);
       } else if (data < 0x08) {
          action = data;
          state = R4_XFER_0;
@@ -218,22 +392,23 @@ void r2_p2h_state_machine(uint8_t data) {
 
    // There seems to be a spurious read of R2 by the host
    // during error handling, which we supress here.
-   if (in_error == 0) {
-      return;
-   }
+   //if (in_error) {
+   //   return;
+   //}
 
    // Save the data
    buffer[index] = data;
    if (index < sizeof(buffer) - 1) {
       index++;
    } else {
-      printf("Buffer overflow!, state = %d\n", state);
+      printf("Request buffer overflow!, state = %d\n", state);
    }
    switch (state) {
    case R2_IDLE:
       switch (data) {
       case 0x00:
-         print_call("R2: OSRDCH", -1, -1, -1, NULL, NULL, -1);
+         print_call("R2: OSRDCH", -1,  -1, -1, -1, NULL, NULL, -1);
+         expect_response(RESP_OSRDCH_0, 2);
          break;
       case 0x02:
          state = R2_OSCLI_0;
@@ -277,8 +452,9 @@ void r2_p2h_state_machine(uint8_t data) {
    case R2_OSCLI_0:
       if (data == 0x0D) {
          buffer[index - 1] = 0;
-         print_call("R2: OSCLI", -1, -1, -1, buffer + 1, NULL, -1);
+         print_call("R2: OSCLI", -1, -1, -1, -1, buffer + 1, NULL, -1);
          state = R2_IDLE;
+         expect_response(RESP_OSCLI_0, 1);
       }
       break;
 
@@ -288,8 +464,9 @@ void r2_p2h_state_machine(uint8_t data) {
       break;
    case R2_OSBYTELO_1:
       a = data;
-      print_call("R2: OSBYTE", a, x, -1, NULL, NULL, -1);
+      print_call("R2: OSBYTE", -1, a, x, -1, NULL, NULL, -1);
       state = R2_IDLE;
+      expect_response(RESP_OSBYTELO_0, 1);
       break;
 
    case R2_OSBYTEHI_0:
@@ -302,7 +479,8 @@ void r2_p2h_state_machine(uint8_t data) {
       break;
    case R2_OSBYTEHI_2:
       a = data;
-      print_call("R2: OSBYTE", a, x, y, NULL, NULL, -1);
+      print_call("R2: OSBYTE", -1, a, x, y, NULL, NULL, -1);
+      expect_response(RESP_OSBYTEHI_0, 3);
       state = R2_IDLE;
       break;
 
@@ -338,8 +516,10 @@ void r2_p2h_state_machine(uint8_t data) {
       }
       break;
    case R2_OSWORD_3:
-      // ignore outlen for now
-      print_call("R2: OSWORD", a, -1, -1, NULL, buffer + 3, in_length);
+      print_call("R2: OSWORD", -1, a, -1, -1, NULL, buffer + 3, in_length);
+      if (data > 0) {
+         expect_response(RESP_OSWORD_0, data);
+      }
       state = R2_IDLE;
       break;
 
@@ -357,7 +537,8 @@ void r2_p2h_state_machine(uint8_t data) {
       state = R2_OSWORD0_4;
       break;
    case R2_OSWORD0_4:
-      print_call("R2: OSWORD0", -1, -1, -1, NULL, buffer + 1, 5);
+      print_call("R2: OSWORD0", -1, -1, -1, -1, NULL, buffer + 1, 5);
+      expect_response(RESP_OSWORD0_0, -1);
       state = R2_IDLE;
       break;
 
@@ -385,11 +566,11 @@ void r2_p2h_state_machine(uint8_t data) {
          break;
       case 3:
          // 3 indicates claim tube
-         printf("OSWORD: A=fb: tube claim\n");
+         printf("R2: OSWORD: A=fb: tube claim\n");
          break;
       case 4:
          // 4 indicates release tube
-         printf("OSWORD: A=fb: tube release\n");
+         printf("R2: OSWORD: A=fb: tube release\n");
          break;
       default:
          // anything else indicates &FExx write
@@ -403,7 +584,7 @@ void r2_p2h_state_machine(uint8_t data) {
 
    case R2_OSWORD_FB_FDC:
       if (index == 9) {
-         printf("OSWORD: A=fb: fdc disk command: ");
+         printf("R2: OSWORD: A=fb: fdc disk command: ");
          for (i = 8; i >= 0; i--) {
             printf("%02x ", buffer[i]);
          }
@@ -455,15 +636,15 @@ void r2_p2h_state_machine(uint8_t data) {
 
    case R2_OSWORD_FB_IO:
       if (x == 0x24) {
-         printf("OSWORD: A=fb: fdc disk control %02x\n", data);
+         printf("R2: OSWORD: A=fb: fdc disk control %02x\n", data);
       } else if (x == 0x29) {
-         printf("OSWORD: A=fb: fdc set track %d\n", data);
+         printf("R2: OSWORD: A=fb: fdc set track %d\n", data);
       } else if (x == 0x2a) {
-         printf("OSWORD: A=fb: fdc set sector %d\n", data);
+         printf("R2: OSWORD: A=fb: fdc set sector %d\n", data);
       } else if (x == 0x2b) {
-         printf("OSWORD: A=fb: fdc set data %d\n", data);
+         printf("R2: OSWORD: A=fb: fdc set data %d\n", data);
       } else {
-         printf("OSWORD: A=fb: io write FE%02X=%02X\n", x, data);
+         printf("R2: OSWORD: A=fb: io write FE%02X=%02X\n", x, data);
       }
       state = R2_OSWORD_FB_1;
       break;
@@ -498,7 +679,7 @@ void r2_p2h_state_machine(uint8_t data) {
       if (data == 0x00) {
          state = R2_OSWORD_FF_3;
       } else if (data == 0xFF) {
-         print_call("R2: OSWORD", a, -1, -1, NULL, buffer + 3, index - 3);
+         print_call("R2: OSWORD", -1,  a, -1, -1, NULL, buffer + 3, index - 3);
          index = 3;
          state = R2_OSWORD_FF_1;
       } else {
@@ -508,7 +689,7 @@ void r2_p2h_state_machine(uint8_t data) {
       break;
 
    case R2_OSWORD_FF_5:
-      print_call("R2: OSWORD", a, -1, -1, NULL, buffer + 3, 3);
+      print_call("R2: OSWORD", -1, a, -1, -1, NULL, buffer + 3, 3);
       state = R2_IDLE;
       break;
 
@@ -525,17 +706,26 @@ void r2_p2h_state_machine(uint8_t data) {
    case R2_OSARGS_2:
       a = data;
       state = R2_IDLE;
-      print_call("R2: OSARGS", a, -1, y, NULL, buffer + 2, 5);
+      print_call("R2: OSARGS", -1, a, -1, y, NULL, buffer + 2, 5);
+      expect_response(RESP_OSARGS_0, 4);
       break;
-
 
    case R2_OSBGET_0:
-      printf("R2: OSBGET not yet implemented\n");
+      y = data;
+      print_call("R2: OSBGET", -1, -1, -1, y, NULL, NULL, -1);
       state = R2_IDLE;
+      expect_response(RESP_OSBGET_0, 2);
       break;
+
    case R2_OSBPUT_0:
-      printf("R2: OSBPUT not yet implemented\n");
+      y = data;
+      state = R2_OSBPUT_1;
+      break;
+   case R2_OSBPUT_1:
+      a = data;
+      print_call("R2: OSBPUT", a, -1, -1, y, NULL, NULL, -1);
       state = R2_IDLE;
+      expect_response(RESP_OSBPUT_0, 1);
       break;
 
 
@@ -551,14 +741,16 @@ void r2_p2h_state_machine(uint8_t data) {
       break;
    case R2_OSFIND_1:
       y = data;
-      print_call("R2: OSFIND", a, -1, y, NULL, NULL, -1);
+      print_call("R2: OSFIND", -1,  a, -1, y, NULL, NULL, -1);
       state = R2_IDLE;
+      expect_response(RESP_OSFIND_0, 1);
       break;
    case R2_OSFIND_2:
       if (data == 0x0d) {
          buffer[index - 1] = 0;
-         print_call("R2: OSFIND", a, -1, -1, buffer + 2, NULL, -1);
+         print_call("R2: OSFIND", -1, a, -1, -1, buffer + 2, NULL, -1);
          state = R2_IDLE;
+         expect_response(RESP_OSFIND_0, 1);
       }
       break;
 
@@ -576,13 +768,19 @@ void r2_p2h_state_machine(uint8_t data) {
       break;
    case R2_OSFILE_2:
       a = data;
-      print_call("R2: OSFILE", a, -1, -1, buffer + 16, buffer + 1, 16);
+      print_call("R2: OSFILE", -1, a, -1, -1, buffer + 16, buffer + 1, 16);
+      expect_response(RESP_OSFIND_0, 16);
       state = R2_IDLE;
       break;
 
 
    case R2_OSGBPB_0:
+      if (index == 17) {
+         state = R2_OSGBPB_1;
+      }
+      break;
       printf("R2: OSGBPB not yet implemented\n");
+      expect_response(RESP_OSGBPB_0, 16);
       state = R2_IDLE;
       break;
 
@@ -598,7 +796,7 @@ void r2_p2h_state_machine(uint8_t data) {
 // Parasite Initiated Requests
 void tube_read(int reg, uint8_t data) {
    if (reg == 1) {
-      printf("OSWRCH: %c <%02x>\n", (data >= 32 && data < 127) ? data : '.', data);
+      printf("R1: OSWRCH: %c <%02x>\n", (data >= 32 && data < 127) ? data : '.', data);
    }
    if (reg == 3) {
       r2_p2h_state_machine(data);
