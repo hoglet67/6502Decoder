@@ -516,7 +516,7 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
                      sprintf(target,"pc+%d", offset);
                   }
                } else {
-                  sprintf(target, "%04X", pc + 2 + offset);
+                  sprintf(target, "%04X", (pc + 2 + offset) & 0xffff);
                }
                numchars = printf(fmt, mnemonic, target);
                break;
@@ -530,7 +530,7 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
                      sprintf(target,"pc+%d", offset);
                   }
                } else {
-                  sprintf(target, "%04X", pc + 3 + offset);
+                  sprintf(target, "%04X", (pc + 3 + offset) & 0xffff);
                }
                numchars = printf(fmt, mnemonic, op1, target);
                break;
@@ -1043,7 +1043,7 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
          bus_cycle         = 0;
          opcode            = bus_data;
          opcount           = instr_table[opcode].len - 1;
-         intr_state       = 0;
+         intr_state        = 0;
          accumulator       = 0;
 
       } else {
@@ -1061,19 +1061,24 @@ void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst
          accumulator = (accumulator <<  8) | bus_data;
       }
 
-      if (arguments.debug >= 1) {
-         printf("%d %02x %d", bus_cycle, bus_data, pin_sync);
-         if (arguments.idx_rnw >= 0) {
-            printf(" %d", pin_rnw);
-         }
-         if (arguments.idx_rst >= 0) {
-            printf(" %d", pin_rst);
-         }
-         printf("\n");
-      }
-
-      bus_cycle++;
+   } else {
+      // In reset we reset the opcode back to -1. This prevents a spurious
+      // instrunction being emitted at the start of the 7-cycle reset sequence.
+      opcode = -1;
    }
+
+   if (arguments.debug >= 1) {
+      printf("%d %02x %d", bus_cycle, bus_data, pin_sync);
+      if (arguments.idx_rnw >= 0) {
+         printf(" %d", pin_rnw);
+      }
+      if (arguments.idx_rst >= 0) {
+         printf(" %d", pin_rst);
+      }
+      printf("\n");
+   }
+
+   bus_cycle++;
 
    // Increment the cycle number (used only to detect taken branches)
    cyclenum++;
