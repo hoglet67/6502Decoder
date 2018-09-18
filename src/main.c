@@ -466,11 +466,9 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
       // Show address
       if (fail || arguments.show_address) {
          if (pc < 0) {
-            printf("  ???? : ");
-         } else if (pc>=0x8000 && pc<=0xBFFF) {
-            printf("%01X:%04X : ", em_read_memory(0xF4) & 0x0F, pc);
+            printf("???? : ");
          } else {
-            printf("  %04X : ", pc);
+            printf("%04X : ", pc);
          }
       }
       // Show hex bytes
