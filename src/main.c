@@ -686,7 +686,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       // Account for extra cycle in a page crossing in (indirect), Y
       if (bus_cycle == 4) {
          // Applies to INDY, but need to exclude stores
-         if ((instr->mode == INDY) && (instr->optype == READOP)) {
+         if ((instr->mode == INDY) && (instr->optype != WRITEOP)) {
             int index = em_get_Y();
             if (index >= 0) {
                int base = ((accumulator & 0xFF00) >> 8) | ((accumulator & 0x00FF) << 8);
@@ -700,7 +700,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
       // Account for extra cycle in a page crossing in absolute indexed
       if (bus_cycle == 2) {
          // Applies to ABSX and ABSY, but need to exclude stores
-         if (((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype == READOP)) {
+         if (((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype != WRITEOP)) {
             // 6502:  Need to exclude ASL/ROL/LSR/ROR/DEC/INC, which are 7 cycles regardless
             // 65C02: Need to exclude DEC/INC, which are 7 cycles regardless
             if ((opcode != 0xDE) && (opcode != 0xFE) && (arguments.c02 || ((opcode != 0x1E) && (opcode != 0x3E) && (opcode != 0x5E) && (opcode != 0x7E)))) {
