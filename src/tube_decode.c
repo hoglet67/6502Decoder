@@ -487,6 +487,7 @@ void r2_p2h_state_machine(uint8_t data) {
 
    case R2_OSWORD_0:
       a = data;
+#ifdef I80X86
       if (a == 0xfb) {
          state = R2_OSWORD_FB_0;
       } else if (a == 0xff) {
@@ -494,6 +495,9 @@ void r2_p2h_state_machine(uint8_t data) {
       } else {
          state = R2_OSWORD_1;
       }
+#else
+      state = R2_OSWORD_1;
+#endif
       break;
    case R2_OSWORD_1:
       if (a == 0xfc) {
@@ -508,15 +512,20 @@ void r2_p2h_state_machine(uint8_t data) {
       } else {
          in_length = data;
       }
-      state = R2_OSWORD_2;
+      if (in_length == 0) {
+         state = R2_OSWORD_3;
+         print_call("R2: OSWORD", -1, a, -1, -1, NULL, buffer + 3, in_length);
+      } else {
+         state = R2_OSWORD_2;
+      }
       break;
    case R2_OSWORD_2:
       if (index == in_length + 3) {
+         print_call("R2: OSWORD", -1, a, -1, -1, NULL, buffer + 3, in_length);
          state = R2_OSWORD_3;
       }
       break;
    case R2_OSWORD_3:
-      print_call("R2: OSWORD", -1, a, -1, -1, NULL, buffer + 3, in_length);
       if (data > 0) {
          expect_response(RESP_OSWORD_0, data);
       }
@@ -801,15 +810,24 @@ void tube_read(int reg, uint8_t data) {
    if (reg == 3) {
       r2_p2h_state_machine(data);
    }
+   if (reg == 5) {
+      printf("R3: P2H: %c <%02x>\n", (data >= 32 && data < 127) ? data : '.', data);
+   }
 }
 
 // Host Initiated Requests
 void tube_write(int reg, uint8_t data) {
+   if (reg == 0) {
+      printf("Ctrl: <%02x>\n", data);
+   }
    if (reg == 1) {
       r1_h2p_state_machine(data);
    }
    if (reg == 3) {
       r2_h2p_state_machine(data);
+   }
+   if (reg == 5) {
+      printf("R3: H2P: %c <%02x>\n", (data >= 32 && data < 127) ? data : '.', data);
    }
    if (reg == 7) {
       r4_h2p_state_machine(data);
