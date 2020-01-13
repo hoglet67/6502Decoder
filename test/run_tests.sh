@@ -115,6 +115,12 @@ else
     echo "Running basic tests:"
 fi
 
+if [[ `uname` = Darwin ]]; then
+  STATARGS=-f%z
+else
+  STATARGS=-c%s
+fi
+
 for data in "${data_names[@]}"
 do
     for machine in "${machine_names[@]}"
@@ -142,7 +148,7 @@ do
                 fi
                 fail_count=`grep fail ${log} | wc -l`
                 md5=`md5sum ${log} | cut -c1-8`
-                size=$(stat -c%s "${log}")
+                size=$(stat ${STATARGS} "${log}")
                 echo "  Trace MD5: ${md5}; Prediction fail count: ${fail_count}"
                 # Log some context around each failure (limit to 100 failures)
                 # Compare md5 of results with ref, rather than using diff, as diff can blow up

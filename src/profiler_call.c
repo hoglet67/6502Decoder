@@ -2,8 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include <search.h>
 
+#include "musl_tsearch.h"
 #include "profiler.h"
 
 #define DEBUG           0
@@ -64,10 +64,10 @@ static void p_init(void *ptr) {
    root_context->call_count = 0;
    root_context->parent = NULL;
    if (instance->root) {
-      tdestroy(instance->root, free);
+      ttdestroy(instance->root, free);
    }
    instance->root = NULL;
-   instance->current = *(call_stack_t **)tsearch(root_context, &instance->root, compare_nodes);
+   instance->current = *(call_stack_t **)ttsearch(root_context, &instance->root, compare_nodes);
    instance->profile_enabled = 1;
 }
 
@@ -92,7 +92,7 @@ static void p_profile_instruction(void *ptr, int pc, int opcode, int op1, int op
          child->parent = instance->current;
          child->cycle_count = 0;
          child->call_count = 0;
-         instance->current = *(call_stack_t **)tsearch(child, &instance->root, compare_nodes);
+         instance->current = *(call_stack_t **)ttsearch(child, &instance->root, compare_nodes);
          // If the child already existed, then free the just created node
          if (instance->current != child) {
             free(child);
@@ -123,7 +123,7 @@ static void print_node(const call_stack_t *node) {
    int first = 1;
    double percent = 100.0 * (double) node->cycle_count / (double) total_cycles;
    total_percent += percent;
-   printf("%8ld cycles (%10.6f%%) %8ld calls: ", node->cycle_count, percent, node->call_count);
+   printf("%8" PRIu64 " cycles (%10.6f%%) %8" PRIu64 " calls: ", node->cycle_count, percent, node->call_count);
    for (int i = 0; i < node->index; i++) {
       if (!first) {
          printf("->");
@@ -134,14 +134,14 @@ static void print_node(const call_stack_t *node) {
    printf("\n");
 }
 
-static void count_call_walker(const void *nodep, const VISIT which, const int depth) {
-   if (which == postorder || which == leaf) {
+static void count_call_walker(const void *nodep, const TVISIT which, const int depth) {
+   if (which == tpostorder || which == tleaf) {
       total_cycles += (*(call_stack_t **)nodep)->cycle_count;
    }
 }
 
-static void dump_call_walker(const void *nodep, const VISIT which, const int depth) {
-   if (which == postorder || which == leaf) {
+static void dump_call_walker(const void *nodep, const TVISIT which, const int depth) {
+   if (which == tpostorder || which == tleaf) {
       print_node(*(call_stack_t **)nodep);
    }
 }
@@ -149,10 +149,10 @@ static void dump_call_walker(const void *nodep, const VISIT which, const int dep
 static void p_done(void *ptr) {
    profiler_call_t *instance = (profiler_call_t *)ptr;
    total_cycles = 0;
-   twalk(instance->root, count_call_walker);
+   ttwalk(instance->root, count_call_walker);
    total_percent = 0;
-   twalk(instance->root, dump_call_walker);
-   printf("%8ld cycles (%10.6f%%)\n", total_cycles, total_percent);
+   ttwalk(instance->root, dump_call_walker);
+   printf("%8" PRIu64 " cycles (%10.6f%%)\n", total_cycles, total_percent);
 }
 
 void *profiler_call_create(char *arg) {

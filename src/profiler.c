@@ -1,4 +1,5 @@
 #include <string.h>
+#include <inttypes.h>
 
 #include "profiler.h"
 
@@ -120,5 +121,5 @@ void profiler_output_helper(address_t *profile_counts, int show_bars, int show_o
       }
       ptr++;
    }
-   printf("     : %8ld cycles (%10.6f%%) %8ld ins (%4.2f cpi)\n", total_cycles, total_percent, total_instr, (double) total_cycles / (double) total_instr);
+   printf("     : %8" PRIu64 " cycles (%10.6f%%) %8" PRIu64 " ins (%4.2f cpi)\n", total_cycles, total_percent, total_instr, (double) total_cycles / (double) total_instr);
 }
