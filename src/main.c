@@ -17,9 +17,6 @@ uint8_t buffer8[BUFSIZE];
 
 uint16_t buffer[BUFSIZE];
 
-// Whether to emulate each decoded instruction, to track additional state (registers and flags)
-int do_emulate = 0;
-
 #define MACHINE_DEFAULT 0
 #define MACHINE_MASTER  1
 #define MACHINE_ELK  2
@@ -96,7 +93,6 @@ static struct argp_option options[] = {
    { "rst",            6, "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for rst, blank if unconnected"},
    { "vecrst",         7,    "HEX", OPTION_ARG_OPTIONAL, "The reset vector, black if not known"},
    { "machine",      'm', "MACHINE",                  0, "Enable machine specific behaviour"},
-   { "emulate",      'e',        0,                   0, "Enable emulation, for error checking."},
    { "c02",          'c',        0,                   0, "Enable 65C02 mode."},
    { "rockwell",     'r',        0,                   0, "Enable additional rockwell instructions."},
    { "undocumented", 'u',        0,                   0, "Enable undocumented 6502 opcodes (currently incomplete)"},
@@ -134,7 +130,6 @@ struct arguments {
    int show_cycles;
    int show_something;
    int bbctube;
-   int emulate;
    int c02;
    int rockwell;
    int undocumented;
@@ -253,9 +248,6 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       break;
    case 'y':
       arguments->show_cycles = 1;
-      break;
-   case 'e':
-      arguments->emulate = 1;
       break;
    case 'p':
       arguments->profile = 1;
@@ -1142,7 +1134,6 @@ int main(int argc, char *argv[]) {
    arguments.show_cycles      = 0;
 
    arguments.bbctube          = 0;
-   arguments.emulate          = 0;
    arguments.c02              = 0;
    arguments.rockwell         = 0;
    arguments.undocumented     = 0;
@@ -1167,10 +1158,6 @@ int main(int argc, char *argv[]) {
       arguments.idx_rdy  = -1;
       arguments.idx_phi2 = -1;
       arguments.idx_rst  = -1;
-   }
-
-   if (arguments.emulate || arguments.bbctube || arguments.show_state || arguments.show_bbcfwa || arguments.idx_sync < 0 || arguments.idx_rnw < 0) {
-      do_emulate = 1;
    }
 
    if (arguments.profile) {
