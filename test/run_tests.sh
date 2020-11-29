@@ -10,8 +10,8 @@ MAXDIFFSIZE=500000000
 common_options="--phi2="
 
 machine_names=(
-    master
     beeb
+    master
     elk
     beebr65c02
 )
