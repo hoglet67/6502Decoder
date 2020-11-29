@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <argp.h>
 #include <string.h>
+#include <math.h>
 
 #include "defs.h"
 #include "em_6502.h"
@@ -29,6 +30,19 @@ const char *machine_names[] = {
    "elk",
    0
 };
+
+// escaping is to avoid unwanted trigraphs
+const char default_fwa[] = "\?\?-\?\?:\?\?\?\?\?\?\?\?:\?\?:\?\? = \?\?\?\?\?\?\?\?\?\?\?\?\?\?\?";
+
+#define OFFSET_SIGN      0
+#define OFFSET_EXP       3
+#define OFFSET_MANTISSA  6
+#define OFFSET_ROUND    15
+#define OFFSET_OVERFLOW 18
+#define OFFSET_VALUE    23
+
+static char fwabuf[80];
+
 
 // ====================================================================
 // Argp processing
@@ -324,22 +338,98 @@ static void dump_samples(sample_t *sample_q, int n) {
 
 }
 
+void write_hex1(char *buffer, int value) {
+   *buffer = value + (value < 10 ? '0' : 'A' - 10);
+}
+
+void write_hex2(char *buffer, int value) {
+   write_hex1(buffer++, (value >> 4) & 15);
+   write_hex1(buffer++, (value >> 0) & 15);
+}
+
+static char *get_fwa(int a_sign, int a_exp, int a_mantissa, int a_round, int a_overflow) {
+   strcpy(fwabuf, default_fwa);
+   int sign     = em_read_memory(a_sign);
+   int exp      = em_read_memory(a_exp);
+   int man1     = em_read_memory(a_mantissa);
+   int man2     = em_read_memory(a_mantissa + 1);
+   int man3     = em_read_memory(a_mantissa + 2);
+   int man4     = em_read_memory(a_mantissa + 3);
+   int round    = em_read_memory(a_round);
+   int overflow = a_overflow >= 0 ? em_read_memory(a_overflow) : -1;
+   if (sign >= 0) {
+      write_hex2(fwabuf + OFFSET_SIGN, sign);
+   }
+   if (exp >= 0) {
+      write_hex2(fwabuf + OFFSET_EXP, exp);
+   }
+   if (man1 >= 0) {
+      write_hex2(fwabuf + OFFSET_MANTISSA + 0, man1);
+   }
+   if (man2 >= 0) {
+      write_hex2(fwabuf + OFFSET_MANTISSA + 2, man2);
+   }
+   if (man3 >= 0) {
+      write_hex2(fwabuf + OFFSET_MANTISSA + 4, man3);
+   }
+   if (man4 >= 0) {
+      write_hex2(fwabuf + OFFSET_MANTISSA + 6, man4);
+   }
+   if (round >= 0) {
+      write_hex2(fwabuf + OFFSET_ROUND, round);
+   }
+   if (overflow >= 0) {
+      write_hex2(fwabuf + OFFSET_OVERFLOW, overflow);
+   }
+   if (sign >= 0 && exp >= 0 && man1 >= 0 && man2 >= 0 && man3 >= 0 && man4 >= 0 && round >= 0) {
+
+      // Real numbers are held in binary floating point format. In the
+      // default (40-bit) mode the mantissa is held as a 4 byte binary
+      // fraction in sign and magnitude format. Bit 7 of the MSB of
+      // the mantissa is the sign bit. When working out the value of
+      // the mantissa, this bit is assumed to be 1 (a decimal value of
+      // 0.5). The exponent is held as a single byte in 'excess 127'
+      // format. In other words, if the actual exponent is zero, the
+      // value stored in the exponent byte is 127.
+
+      // Build up a 32 bit mantissa
+      uint64_t mantissa = man1;
+      mantissa = (mantissa << 8) + man2;
+      mantissa = (mantissa << 8) + man3;
+      mantissa = (mantissa << 8) + man4;
+
+      // Extend this to 40 bits with the rounding byte
+      mantissa = (mantissa << 8) + round;
+
+      // Combine with the exponent
+      double value = ((double) mantissa) * pow(2.0, exp - 128 - 40);
+      // Take account of the sign
+      if (sign & 128) {
+         value = -value;
+      }
+      // Print it to the fwabuf
+      sprintf(fwabuf + OFFSET_VALUE, "%-+15.8E", value);
+   }
+   return fwabuf;
+}
+
+
 static int analyze_instruction(sample_t *sample_q, int rst_seen) {
 
    static int interrupt_depth = 0;
    static int skipping_interrupted = 0;
    static int triggered = 0;
 
-   int num_cycles = em_count_cycles(sample_q);
-
-   if (arguments.debug >= 1) {
-      dump_samples(sample_q, num_cycles);
-   }
-
    int intr_seen = em_match_interrupt(sample_q);
 
    if (rst_seen < 0) {
       rst_seen = em_match_reset(sample_q, arguments.vec_rst);
+   }
+
+   int num_cycles = em_count_cycles(sample_q, rst_seen, intr_seen);
+
+   if (arguments.debug >= 1) {
+      dump_samples(sample_q, num_cycles);
    }
 
    instruction_t instruction;
@@ -448,8 +538,8 @@ static int analyze_instruction(sample_t *sample_q, int rst_seen) {
       }
       // Show BBC floating point work area FWA, FWB
       if (arguments.show_bbcfwa) {
-         printf(" : FWA %s", em_get_fwa(0x2e, 0x30, 0x31, 0x35, 0x2f));
-         printf(" : FWB %s", em_get_fwa(0x3b, 0x3c, 0x3d, 0x41,   -1));
+         printf(" : FWA %s", get_fwa(0x2e, 0x30, 0x31, 0x35, 0x2f));
+         printf(" : FWB %s", get_fwa(0x3b, 0x3c, 0x3d, 0x41,   -1));
       }
       // Show any errors
       if (fail) {

@@ -1,13 +1,58 @@
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
-#include <math.h>
 #include "tube_decode.h"
 #include "em_6502.h"
 
 static int c02;
 static int rockwell;
 static int bbctube;
+
+typedef enum {
+   IMP,
+   IMPA,
+   BRA,
+   IMM,
+   ZP,
+   ZPX,
+   ZPY,
+   INDX,
+   INDY,
+   IND,
+   ABS,
+   ABSX,
+   ABSY,
+   IND16,
+   IND1X,
+   ZPR
+} AddrMode ;
+
+typedef enum {
+   READOP,
+   WRITEOP,
+   RMWOP,
+   TSBTRBOP,
+   BRANCHOP
+} OpType;
+
+typedef struct {
+   int len;
+   const char *fmt;
+} AddrModeType;
+
+typedef struct {
+   const char *mnemonic;
+   int undocumented;
+   AddrMode mode;
+   int cycles;
+   int decimalcorrect;
+   OpType optype;
+   void (*emulate)(int, int);
+   int len;
+   const char *fmt;
+} InstrType;
+
+static InstrType *instr_table;
 
 AddrModeType addr_mode_table[] = {
    {1,    "%1$s"},                  // IMP
@@ -42,15 +87,6 @@ const char default_state[] = "A=?? X=?? Y=?? SP=?? N=? V=? D=? I=? Z=? C=?";
 #define OFFSET_C  43
 #define OFFSET_FF 44
 
-// escaping is to avoid unwanted trigraphs
-const char default_fwa[] = "\?\?-\?\?:\?\?\?\?\?\?\?\?:\?\?:\?\? = \?\?\?\?\?\?\?\?\?\?\?\?\?\?\?";
-
-#define OFFSET_SIGN      0
-#define OFFSET_EXP       3
-#define OFFSET_MANTISSA  6
-#define OFFSET_ROUND    15
-#define OFFSET_OVERFLOW 18
-#define OFFSET_VALUE    23
 
 static char buffer[80];
 
@@ -203,7 +239,94 @@ int em_get_PC() {
    return PC;
 }
 
-int em_count_cycles(sample_t *sample_q) {
+//int em_get_N() {
+//   return N;
+//}
+//
+//int em_get_V() {
+//   return V;
+//}
+//
+//int em_get_D() {
+//   return D;
+//}
+//
+//int em_get_I() {
+//   return I;
+//}
+//
+//int em_get_Z() {
+//   return Z;
+//}
+//
+//int em_get_C() {
+//   return C;
+//}
+//
+//int em_get_A() {
+//   return A;
+//}
+//
+//int em_get_X() {
+//   return X;
+//}
+//
+//int em_get_Y() {
+//   return Y;
+//}
+//
+//int em_get_S() {
+//   return S;
+//}
+
+int em_read_memory(int address) {
+   return memory[address];
+}
+
+char *em_get_state() {
+   strcpy(buffer, default_state);
+   if (A >= 0) {
+      write_hex2(buffer + OFFSET_A, A);
+   }
+   if (X >= 0) {
+      write_hex2(buffer + OFFSET_X, X);
+   }
+   if (Y >= 0) {
+      write_hex2(buffer + OFFSET_Y, Y);
+   }
+   if (S >= 0) {
+      write_hex2(buffer + OFFSET_S, S);
+   }
+   if (N >= 0) {
+      buffer[OFFSET_N] = '0' + N;
+   }
+   if (V >= 0) {
+      buffer[OFFSET_V] = '0' + V;
+   }
+   if (D >= 0) {
+      buffer[OFFSET_D] = '0' + D;
+   }
+   if (I >= 0) {
+      buffer[OFFSET_I] = '0' + I;
+   }
+   if (Z >= 0) {
+      buffer[OFFSET_Z] = '0' + Z;
+   }
+   if (C >= 0) {
+      buffer[OFFSET_C] = '0' + C;
+   }
+   return buffer;
+}
+
+
+int em_get_and_clear_fail() {
+   int ret = failflag;
+   failflag = 0;
+   return ret;
+}
+
+
+int em_count_cycles(sample_t *sample_q, int rst_seen, int intr_seen) {
    if (sample_q[0].type == OPCODE) {
       for (int i = 1; i < DEPTH; i++) {
          if (sample_q[i].type == OPCODE) {
@@ -229,8 +352,6 @@ int em_match_reset(sample_t *sample_q, int vec_rst) {
 
 
 int em_match_interrupt(sample_t *sample_q) {
-   int pc = em_get_PC();
-
    // An interupt will write PCH, PCL, PSW in bus cycles 2,3,4
    if (sample_q[0].rnw >= 0) {
       // If we have the RNW pin connected, then just look for these three writes in succession
@@ -244,7 +365,7 @@ int em_match_interrupt(sample_t *sample_q) {
    } else {
       // If not, then we use a heuristic, based on what we expect to see on the data
       // bus in cycles 2, 3 and 4, i.e. PCH, PCL, PSW
-      if (sample_q[2].data == ((pc >> 8) & 0xff) && sample_q[3].data == (pc & 0xff)) {
+      if (sample_q[2].data == ((PC >> 8) & 0xff) && sample_q[3].data == (PC & 0xff)) {
          // Now test unused flag is 1, B is 0
          if ((sample_q[4].data & 0x30) == 0x20) {
             // Finally test all other known flags match
@@ -346,7 +467,7 @@ void em_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) 
       } else if (instr->mode == IMM) {
          // Immediate addressing mode: the operand is the 2nd byte of the instruction
          operand = op1;
-      } else if (instr->decimalcorrect && (em_get_D() == 1)) {
+      } else if (instr->decimalcorrect && (D == 1)) {
          // read operations on the C02 that have an extra cycle added
          operand = sample_q[num_cycles - 2].data;
       } else if (instr->optype == TSBTRBOP) {
@@ -367,14 +488,14 @@ void em_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) 
          break;
       case ZPX:
       case ZPY:
-         index = instr->mode == ZPX ? em_get_X() : em_get_Y();
+         index = instr->mode == ZPX ? X : Y;
          if (index >= 0) {
             ea = (op1 + index) & 0xff;
          }
          break;
       case INDY:
          // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
-         index = em_get_Y();
+         index = Y;
          if (index >= 0) {
             ea = (sample_q[3].data << 8) + sample_q[2].data;
             ea = (ea + index) & 0xffff;
@@ -393,7 +514,7 @@ void em_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) 
          break;
       case ABSX:
       case ABSY:
-         index = instr->mode == ABSX ? em_get_X() : em_get_Y();
+         index = instr->mode == ABSX ? X : Y;
          if (index >= 0) {
             ea = ((op2 << 8 | op1) + index) & 0xffff;
          }
@@ -516,168 +637,6 @@ int em_disassemble(instruction_t *instruction) {
    return numchars;
 }
 
-
-
-
-static void write_hex1(char *buffer, int value) {
-   *buffer = value + (value < 10 ? '0' : 'A' - 10);
-}
-
-static void write_hex2(char *buffer, int value) {
-   write_hex1(buffer++, (value >> 4) & 15);
-   write_hex1(buffer++, (value >> 0) & 15);
-}
-
-int em_get_N() {
-   return N;
-}
-
-int em_get_V() {
-   return V;
-}
-
-int em_get_D() {
-   return D;
-}
-
-int em_get_I() {
-   return I;
-}
-
-int em_get_Z() {
-   return Z;
-}
-
-int em_get_C() {
-   return C;
-}
-
-int em_get_A() {
-   return A;
-}
-
-int em_get_X() {
-   return X;
-}
-
-int em_get_Y() {
-   return Y;
-}
-
-int em_get_S() {
-   return S;
-}
-
-int em_read_memory(int address) {
-   return memory[address];
-}
-
-char *em_get_state() {
-   strcpy(buffer, default_state);
-   if (A >= 0) {
-      write_hex2(buffer + OFFSET_A, A);
-   }
-   if (X >= 0) {
-      write_hex2(buffer + OFFSET_X, X);
-   }
-   if (Y >= 0) {
-      write_hex2(buffer + OFFSET_Y, Y);
-   }
-   if (S >= 0) {
-      write_hex2(buffer + OFFSET_S, S);
-   }
-   if (N >= 0) {
-      buffer[OFFSET_N] = '0' + N;
-   }
-   if (V >= 0) {
-      buffer[OFFSET_V] = '0' + V;
-   }
-   if (D >= 0) {
-      buffer[OFFSET_D] = '0' + D;
-   }
-   if (I >= 0) {
-      buffer[OFFSET_I] = '0' + I;
-   }
-   if (Z >= 0) {
-      buffer[OFFSET_Z] = '0' + Z;
-   }
-   if (C >= 0) {
-      buffer[OFFSET_C] = '0' + C;
-   }
-   return buffer;
-}
-
-char *em_get_fwa(int a_sign, int a_exp, int a_mantissa, int a_round, int a_overflow) {
-   strcpy(buffer, default_fwa);
-   int sign     = em_read_memory(a_sign);
-   int exp      = em_read_memory(a_exp);
-   int man1     = em_read_memory(a_mantissa);
-   int man2     = em_read_memory(a_mantissa + 1);
-   int man3     = em_read_memory(a_mantissa + 2);
-   int man4     = em_read_memory(a_mantissa + 3);
-   int round    = em_read_memory(a_round);
-   int overflow = a_overflow >= 0 ? em_read_memory(a_overflow) : -1;
-   if (sign >= 0) {
-      write_hex2(buffer + OFFSET_SIGN, sign);
-   }
-   if (exp >= 0) {
-      write_hex2(buffer + OFFSET_EXP, exp);
-   }
-   if (man1 >= 0) {
-      write_hex2(buffer + OFFSET_MANTISSA + 0, man1);
-   }
-   if (man2 >= 0) {
-      write_hex2(buffer + OFFSET_MANTISSA + 2, man2);
-   }
-   if (man3 >= 0) {
-      write_hex2(buffer + OFFSET_MANTISSA + 4, man3);
-   }
-   if (man4 >= 0) {
-      write_hex2(buffer + OFFSET_MANTISSA + 6, man4);
-   }
-   if (round >= 0) {
-      write_hex2(buffer + OFFSET_ROUND, round);
-   }
-   if (overflow >= 0) {
-      write_hex2(buffer + OFFSET_OVERFLOW, overflow);
-   }
-   if (sign >= 0 && exp >= 0 && man1 >= 0 && man2 >= 0 && man3 >= 0 && man4 >= 0 && round >= 0) {
-
-      // Real numbers are held in binary floating point format. In the
-      // default (40-bit) mode the mantissa is held as a 4 byte binary
-      // fraction in sign and magnitude format. Bit 7 of the MSB of
-      // the mantissa is the sign bit. When working out the value of
-      // the mantissa, this bit is assumed to be 1 (a decimal value of
-      // 0.5). The exponent is held as a single byte in 'excess 127'
-      // format. In other words, if the actual exponent is zero, the
-      // value stored in the exponent byte is 127.
-
-      // Build up a 32 bit mantissa
-      uint64_t mantissa = man1;
-      mantissa = (mantissa << 8) + man2;
-      mantissa = (mantissa << 8) + man3;
-      mantissa = (mantissa << 8) + man4;
-
-      // Extend this to 40 bits with the rounding byte
-      mantissa = (mantissa << 8) + round;
-
-      // Combine with the exponent
-      double value = ((double) mantissa) * pow(2.0, exp - 128 - 40);
-      // Take account of the sign
-      if (sign & 128) {
-         value = -value;
-      }
-      // Print it to the buffer
-      sprintf(buffer + OFFSET_VALUE, "%-+15.8E", value);
-   }
-   return buffer;
-}
-
-int em_get_and_clear_fail() {
-   int ret = failflag;
-   failflag = 0;
-   return ret;
-}
 
 static void op_ADC(int operand, int ea) {
    memory_read(operand, ea);
@@ -1386,9 +1345,6 @@ static void op_RMB(int operand, int ea) {
 static void op_SMB(int operand, int ea) {
    memory_write(operand, ea);
 }
-
-
-InstrType *instr_table;
 
 static InstrType instr_table_65c02[] = {
    /* 00 */   { "BRK",  0, IMM   , 7, 0, WRITEOP,  op_BRK},

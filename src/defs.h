@@ -34,4 +34,7 @@ typedef struct {
    uint8_t       opcount;
 } instruction_t;
 
+void write_hex1(char *buffer, int value);
+void write_hex2(char *buffer, int value);
+
 #endif
