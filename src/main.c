@@ -8,9 +8,6 @@
 #include "em_6502.h"
 #include "profiler.h"
 
-// Sample Queue Depth - needs to fit the longest instruction
-#define DEPTH 10
-
 int sample_count = 0;
 
 #define BUFSIZE 8192
@@ -293,67 +290,6 @@ static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 // Analyze a complete instruction
 // ====================================================================
 
-// TODO: all the pc prediction stuff could be pushed down into the emulation
-
-// Predicted PC value
-int pc = -1;
-
-static int get_pc() {
-   return pc;
-}
-
-static int count_cycles(sample_t *sample_q) {
-   if (sample_q[0].type == OPCODE) {
-      for (int i = 1; i < DEPTH; i++) {
-         if (sample_q[i].type == OPCODE) {
-            return i;
-         }
-      }
-   }
-   // TODO: handle syncless case by calling into the emulator
-   return 1;
-}
-
-static int match_reset(sample_t *sample_q) {
-   // We use a heuristic, based on what we expect to see on the data
-   // bus in cycles 5, 6 and 7, i.e. RSTVECL, RSTVECH, RSTOPCODE
-   if ((sample_q[5].data == (arguments.vec_rst & 0xff)) &&
-       (sample_q[6].data == ((arguments.vec_rst >> 8) & 0xff)) &&
-       (sample_q[7].data == ((arguments.vec_rst >> 16) & 0xff) || (((arguments.vec_rst >> 16) & 0xff) == 0))) {
-      return 1;
-
-   }
-   return 0;
-}
-
-
-static int match_interrupt(sample_t *sample_q) {
-
-   int pc = get_pc();
-
-   // An interupt will write PCH, PCL, PSW in bus cycles 2,3,4
-   if (sample_q[0].rnw >= 0) {
-      // If we have the RNW pin connected, then just look for these three writes in succession
-      if (sample_q[2].rnw == 0 && sample_q[3].rnw == 0 && sample_q[4].rnw == 0) {
-         return 1;
-      }
-   } else {
-      // If not, then we use a heuristic, based on what we expect to see on the data
-      // bus in cycles 2, 3 and 4, i.e. PCH, PCL, PSW
-      if (sample_q[2].data == ((pc >> 8) & 0xff) && sample_q[3].data == (pc & 0xff)) {
-         // Now test unused flag is 1, B is 0
-         if ((sample_q[4].data & 0x30) == 0x20) {
-            // Finally test all other known flags match
-            if (!compare_NVDIZC(sample_q[4].data)) {
-               // Matched PSW = NV-BDIZC
-               return 1;
-            }
-         }
-      }
-   }
-   return 0;
-}
-
 
 static void dump_samples(sample_t *sample_q, int n) {
       for (int i = 0; i < n; i++) {
@@ -394,171 +330,42 @@ static int analyze_instruction(sample_t *sample_q, int rst_seen) {
    static int skipping_interrupted = 0;
    static int triggered = 0;
 
-   int offset;
-   char target[16];
-
-   int opcode = sample_q[0].data;
-
-   // lookup the entry for the instruction
-   InstrType *instr = &instr_table[opcode];
-
-   int num_cycles = count_cycles(sample_q);
+   int num_cycles = em_count_cycles(sample_q);
 
    if (arguments.debug >= 1) {
       dump_samples(sample_q, num_cycles);
    }
 
-   int intr_seen = match_interrupt(sample_q);
+   int intr_seen = em_match_interrupt(sample_q);
 
    if (rst_seen < 0) {
-      rst_seen = match_reset(sample_q);
+      rst_seen = em_match_reset(sample_q, arguments.vec_rst);
    }
 
-   int opcount = instr->len - 1;
-   int op1 = (opcount < 1) ? 0 : sample_q[1].data;
+   instruction_t instruction;
 
-   int op2 =
-      (opcount < 2)             ? 0 :
-      (opcode == 0x20)          ? sample_q[5].data :
-      ((opcode & 0x0f) == 0x0f) ? sample_q[4].data : sample_q[2].data;
-
-   uint64_t accumulator = 0;
-
-   for (int i = opcount; i < num_cycles; i++) {
-      accumulator = (accumulator <<  8) | sample_q[i].data;
-   }
-
-
-   // For instructions that push the current address to the stack we
-   // can use the stacked address to determine the current PC
-   int newpc = -1;
-   if (rst_seen || (intr_seen && opcode != 0x00)) {
-      // IRQ/NMI/RST
-      newpc = (accumulator >> 24) & 0xffff;
-   } else if (opcode == 0x20) {
-      // JSR
-      newpc = ((accumulator >> 8) - 2) & 0xffff;
-   } else if (opcode == 0x00) {
-      // BRK
-      newpc = ((accumulator >> 24) - 2) & 0xffff;
-   }
-
-   // Sanity check the current pc prediction has not gone awry
-   if (newpc >= 0) {
-      if (pc >= 0 && pc != newpc) {
-         printf("pc: prediction failed at %04X old pc was %04X\n", newpc, pc);
-         pc = newpc;
-      }
-   }
-
-   // Force the pc to don't case fore the reset cycle (makes test log more consistent)
-   if (rst_seen) {
-      pc = -1;
-   }
+   int oldpc = em_get_PC();
 
    if (rst_seen) {
-      // Handlea reset
-      if (do_emulate) {
-         em_reset();
-      }
-   } else if (intr_seen && opcode != 0) {
+      // Handle a reset
+      em_reset(sample_q, &instruction);
+   } else if (intr_seen) {
       // Handle an interrupt
-      if (do_emulate) {
-         em_interrupt((accumulator >> 16) & 0xff, pc);
-      }
+      em_interrupt(sample_q, &instruction);
    } else {
       // Handle a normal instruction
-      // Emulate the instruction
-      if (do_emulate) {
-         if (instr->emulate) {
-            int operand;
-            if (instr->optype == RMWOP) {
-               // e.g. <opcode> <op1> <op2> <read> <write> <write>
-               // Want to pick off the read
-               operand = (accumulator >> 16) & 0xff;
-            } else if (instr->optype == BRANCHOP) {
-               // the operand is true if branch taken
-               operand = (num_cycles != 2);
-            } else if (opcode == 0x00) {
-               // BRK: the operand is the data pushed to the stack (PCH, PCL, P)
-               // <opcode> <op1> <write pch> <write pcl> <write p> <read rst> <read rsth>
-               operand = (accumulator >> 16) & 0xffffff;
-            } else if (opcode == 0x20) {
-               // JSR: the operand is the data pushed to the stack (PCH, PCL)
-               // <opcode> <op1> <read dummy> <write pch> <write pcl> <op2>
-               operand = (accumulator >> 8) & 0xffff;
-            } else if (opcode == 0x40) {
-               // RTI: the operand is the data pulled from the stack (P, PCL, PCH)
-               // <opcode> <op1> <read dummy> <read p> <read pcl> <read pch>
-               operand = accumulator & 0xffffff;
-            } else if (opcode == 0x60) {
-               // RTS: the operand is the data pulled from the stack (PCL, PCH)
-               // <opcode> <op1> <read dummy> <read pcl> <read pch>
-               operand = (accumulator >> 8) & 0xffff;
-            } else if (instr->mode == IMM) {
-               // Immediate addressing mode: the operand is the 2nd byte of the instruction
-               operand = op1;
-            } else if (instr->decimalcorrect && (em_get_D() == 1)) {
-               // read operations on the C02 that have an extra cycle added
-               operand = (accumulator >> 8) & 0xff;
-            } else if (instr->optype == TSBTRBOP) {
-               // For TSB/TRB, <opcode> <op1> <read> <dummy> <write> the operand is the <read>
-               operand = (accumulator >> 16) & 0xff;
-            } else {
-               // default to using the last bus cycle as the operand
-               operand = accumulator & 0xff;
-            }
+      em_emulate(sample_q, num_cycles, &instruction);
+   }
 
-            // For instructions that read or write memory, we need to work out the effective address
-            // Note: not needed for stack operations, as S is used directly
-            int ea = -1;
-            int index;
-            switch (instr->mode) {
-            case ZP:
-               ea = op1;
-               break;
-            case ZPX:
-            case ZPY:
-               index = instr->mode == ZPX ? em_get_X() : em_get_Y();
-               if (index >= 0) {
-                  ea = (op1 + index) & 0xff;
-               }
-               break;
-            case INDY:
-               // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
-               index = em_get_Y();
-               if (index >= 0) {
-                  ea = accumulator >> (8 * (num_cycles - 4));
-                  ea = ((ea & 0xFF00) >> 8) | ((ea & 0x00FF) << 8);
-                  ea = (ea + index) & 0xffff;
-               }
-               break;
-            case INDX:
-               // <opcpde> <op1> <dummy> <addrlo> <addrhi> <operand> [ <extra cycle in dec mode> ]
-               ea = accumulator >> (8 * (num_cycles - 5));
-               ea = ((ea & 0xFF00) >> 8) | ((ea & 0x00FF) << 8);
-               break;
-            case IND:
-               // <opcpde> <op1> <addrlo> <addrhi> <operand> [ <extra cycle in dec mode> ]
-               ea = accumulator >> (8 * (num_cycles - 4));
-               ea = ((ea & 0xFF00) >> 8) | ((ea & 0x00FF) << 8);
-               break;
-            case ABS:
-               ea = op2 << 8 | op1;
-               break;
-            case ABSX:
-            case ABSY:
-               index = instr->mode == ABSX ? em_get_X() : em_get_Y();
-               if (index >= 0) {
-                  ea = ((op2 << 8 | op1) + index) & 0xffff;
-               }
-               break;
-            default:
-               break;
-            }
 
-            instr->emulate(operand, ea);
-         }
+   // Sanity check the pc prediction has not gone awry
+   // (e.g. in JSR the emulation can use the stacked PC)
+
+   int opcode = instruction.opcode;
+   int pc = instruction.pc;
+   if (pc >= 0) {
+      if (oldpc >= 0 && oldpc != pc) {
+         printf("pc: prediction failed at %04X old pc was %04X\n", pc, oldpc);
       }
    }
 
@@ -573,7 +380,7 @@ static int analyze_instruction(sample_t *sample_q, int rst_seen) {
       if (interrupt_depth == 0) {
          skipping_interrupted = 0;
       }
-      if (intr_seen && opcode != 0) {
+      if (intr_seen) {
          interrupt_depth++;
          skipping_interrupted = 1;
       } else if (interrupt_depth > 0 && opcode == 0x40) {
@@ -581,8 +388,9 @@ static int analyze_instruction(sample_t *sample_q, int rst_seen) {
       }
    }
 
-   if (arguments.profile && triggered && !skipping_interrupted && (!intr_seen || opcode == 0)) {
-      profiler_profile_instruction(pc, opcode, op1, op2, num_cycles);
+   if (arguments.profile && triggered && !skipping_interrupted && !intr_seen) {
+      // TODO: refactor profiler to take instruction_t *
+      profiler_profile_instruction(instruction.pc, instruction.opcode, instruction.op1, instruction.op2, num_cycles);
    }
 
    int fail = em_get_and_clear_fail();
@@ -601,15 +409,15 @@ static int analyze_instruction(sample_t *sample_q, int rst_seen) {
       if (fail || arguments.show_hex) {
          if (rst_seen) {
             printf("         : ");
-         } else if (intr_seen && opcode != 0) {
+         } else if (intr_seen) {
             printf("         : ");
          } else {
-            if (instr->len == 1) {
+            if (instruction.opcount == 0) {
                printf("%02X       : ", opcode);
-            } else if (instr->len == 2) {
-               printf("%02X %02X    : ", opcode, op1);
+            } else if (instruction.opcount == 1) {
+               printf("%02X %02X    : ", opcode, instruction.op1);
             } else {
-               printf("%02X %02X %02X : ", opcode, op1, op2);
+               printf("%02X %02X %02X : ", opcode, instruction.op1, instruction.op2);
             }
          }
       }
@@ -617,61 +425,10 @@ static int analyze_instruction(sample_t *sample_q, int rst_seen) {
       if (fail || arguments.show_something) {
          if (rst_seen) {
             numchars = printf("RESET !!");
-         } else if (intr_seen && opcode != 0) {
+         } else if (intr_seen) {
             numchars = printf("INTERRUPT !!");
          } else {
-            const char *mnemonic = instr->mnemonic;
-            const char *fmt = instr->fmt;
-            switch (instr->mode) {
-            case IMP:
-            case IMPA:
-               numchars = printf(fmt, mnemonic);
-               break;
-            case BRA:
-               // Calculate branch target using op1 for normal branches
-               offset = (int8_t) op1;
-               if (pc < 0) {
-                  if (offset < 0) {
-                     sprintf(target, "pc-%d", -offset);
-                  } else {
-                     sprintf(target,"pc+%d", offset);
-                  }
-               } else {
-                  sprintf(target, "%04X", (pc + 2 + offset) & 0xffff);
-               }
-               numchars = printf(fmt, mnemonic, target);
-               break;
-            case ZPR:
-               // Calculate branch target using op2 for BBR/BBS
-               offset = (int8_t) op2;
-               if (pc < 0) {
-                  if (offset < 0) {
-                     sprintf(target, "pc-%d", -offset);
-                  } else {
-                     sprintf(target,"pc+%d", offset);
-                  }
-               } else {
-                  sprintf(target, "%04X", (pc + 3 + offset) & 0xffff);
-               }
-               numchars = printf(fmt, mnemonic, op1, target);
-               break;
-            case IMM:
-            case ZP:
-            case ZPX:
-            case ZPY:
-            case INDX:
-            case INDY:
-            case IND:
-               numchars = printf(fmt, mnemonic, op1);
-               break;
-            case ABS:
-            case ABSX:
-            case ABSY:
-            case IND16:
-            case IND1X:
-               numchars = printf(fmt, mnemonic, op1, op2);
-               break;
-            }
+            numchars = em_disassemble(&instruction);
          }
       }
       // Pad if there is more to come
@@ -700,37 +457,6 @@ static int analyze_instruction(sample_t *sample_q, int rst_seen) {
       }
       // End the line
       printf("\n");
-   }
-
-   // Look for control flow changes and update the PC
-   if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c || intr_seen || rst_seen) {
-      // RTI, BRK, INTR, JMP (ind), JMP (ind, X), IRQ/NMI/RST
-      pc = ((accumulator & 0xFF00) >> 8) | ((accumulator & 0x00FF) << 8);
-   } else if (opcode == 0x20 || opcode == 0x4c) {
-      // JSR abs, JMP abs
-      pc = op2 << 8 | op1;
-   } else if (opcode == 0x60) {
-      // RTS
-      pc = ((((accumulator & 0xff0000) >> 16) | (accumulator & 0xff00)) + 1) & 0xffff;
-   } else if (pc < 0) {
-      // PC value is not known yet, everything below this point is relative
-      pc = -1;
-   } else if (opcode == 0x80) {
-      // BRA
-      pc += ((int8_t)(op1)) + 2;
-      pc &= 0xffff;
-   } else if (arguments.c02 && arguments.rockwell && ((opcode & 0x0f) == 0x0f) && (num_cycles != 5)) {
-      // BBR/BBS: op2 if taken
-      pc += ((int8_t)(op2)) + 3;
-      pc &= 0xffff;
-   } else if ((opcode & 0x1f) == 0x10 && num_cycles != 2) {
-      // BXX: op1 if taken
-      pc += ((int8_t)(op1)) + 2;
-      pc &= 0xffff;
-   } else {
-      // Otherwise, increment pc by length of instuction
-      pc += instr->len;
-      pc &= 0xffff;
    }
 
 

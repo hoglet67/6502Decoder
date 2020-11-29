@@ -6,6 +6,7 @@
 #include "em_6502.h"
 
 static int c02;
+static int rockwell;
 static int bbctube;
 
 AddrModeType addr_mode_table[] = {
@@ -58,6 +59,8 @@ static int A = -1;
 static int X = -1;
 static int Y = -1;
 static int S = -1;
+static int PC = -1;
+
 // 6502 flags: -1 means unknown
 static int N = -1;
 static int V = -1;
@@ -174,13 +177,14 @@ static void set_NZ(int value) {
    Z = value == 0;
 }
 
-void em_interrupt(int flags, int pc) {
+
+static void interrupt(int pc, int flags, int vector) {
    if (S >= 0) {
       // Push PCH
-      memory_write((pc >> 8) & 255, 0x100 + S);
+      memory_write((pc >> 8) & 0xff, 0x100 + S);
       S = (S - 1) & 255;
       // Push PCL
-      memory_write(pc & 255, 0x100 + S);
+      memory_write(pc & 0xff, 0x100 + S);
       S = (S - 1) & 255;
       // Push P
       memory_write(flags, 0x100 + S);
@@ -192,9 +196,78 @@ void em_interrupt(int flags, int pc) {
    if (c02) {
       D = 0;
    }
+   PC = vector;
 }
 
-void em_reset() {
+int em_get_PC() {
+   return PC;
+}
+
+int em_count_cycles(sample_t *sample_q) {
+   if (sample_q[0].type == OPCODE) {
+      for (int i = 1; i < DEPTH; i++) {
+         if (sample_q[i].type == OPCODE) {
+            return i;
+         }
+      }
+   }
+   // TODO: handle syncless case by calling into the emulator
+   return 1;
+}
+
+int em_match_reset(sample_t *sample_q, int vec_rst) {
+   // We use a heuristic, based on what we expect to see on the data
+   // bus in cycles 5, 6 and 7, i.e. RSTVECL, RSTVECH, RSTOPCODE
+   if ((sample_q[5].data == (vec_rst & 0xff)) &&
+       (sample_q[6].data == ((vec_rst >> 8) & 0xff)) &&
+       (sample_q[7].data == ((vec_rst >> 16) & 0xff) || (((vec_rst >> 16) & 0xff) == 0))) {
+      return 1;
+
+   }
+   return 0;
+}
+
+
+int em_match_interrupt(sample_t *sample_q) {
+   int pc = em_get_PC();
+
+   // An interupt will write PCH, PCL, PSW in bus cycles 2,3,4
+   if (sample_q[0].rnw >= 0) {
+      // If we have the RNW pin connected, then just look for these three writes in succession
+      // Currently can't detect a BRK being interrupted
+      if (sample_q[0].data == 0x00) {
+         return 0;
+      }
+      if (sample_q[2].rnw == 0 && sample_q[3].rnw == 0 && sample_q[4].rnw == 0) {
+         return 1;
+      }
+   } else {
+      // If not, then we use a heuristic, based on what we expect to see on the data
+      // bus in cycles 2, 3 and 4, i.e. PCH, PCL, PSW
+      if (sample_q[2].data == ((pc >> 8) & 0xff) && sample_q[3].data == (pc & 0xff)) {
+         // Now test unused flag is 1, B is 0
+         if ((sample_q[4].data & 0x30) == 0x20) {
+            // Finally test all other known flags match
+            if (!compare_NVDIZC(sample_q[4].data)) {
+               // Matched PSW = NV-BDIZC
+               return 1;
+            }
+         }
+      }
+   }
+   return 0;
+}
+
+void em_interrupt(sample_t *sample_q, instruction_t *instruction) {
+   int pc   = (sample_q[2].data << 8) + sample_q[3].data;
+   int flags = sample_q[4].data;
+   int vector = (sample_q[5].data << 8) + sample_q[6].data;
+   instruction->pc = pc;
+   interrupt(pc, flags, vector);
+}
+
+void em_reset(sample_t *sample_q, instruction_t *instruction) {
+   instruction->pc = -1;
    A = -1;
    X = -1;
    Y = -1;
@@ -208,7 +281,243 @@ void em_reset() {
    if (c02) {
       D = 0;
    }
+   PC = (sample_q[6].data << 8) + sample_q[5].data;
 }
+
+void em_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
+
+   // Unpack the instruction bytes
+   int opcode = sample_q[0].data;
+
+   // lookup the entry for the instruction
+   InstrType *instr = &instr_table[opcode];
+
+   int opcount = instr->len - 1;
+
+   int op1 = (opcount < 1) ? 0 : sample_q[1].data;
+
+   int op2 =
+      (opcount < 2)             ? 0 :
+      (opcode == 0x20)          ? sample_q[5].data :
+      ((opcode & 0x0f) == 0x0f) ? sample_q[4].data : sample_q[2].data;
+
+
+   // Save the instruction state
+   instruction->opcode  = opcode;
+   instruction->op1     = op1;
+   instruction->op2     = op2;
+   instruction->opcount = opcount;
+
+   // Determine the current PC value
+   if (opcode == 0x00) {
+      instruction->pc = (((sample_q[3].data << 8) + sample_q[4].data) - 2) & 0xffff;
+   } else if (opcode == 0x20) {
+      instruction->pc = (((sample_q[3].data << 8) + sample_q[4].data) - 2) & 0xffff;
+   } else {
+      instruction->pc = PC;
+   }
+
+   if (instr->emulate) {
+
+      int operand;
+      if (instr->optype == RMWOP) {
+         // e.g. <opcode> <op1> <op2> <read> <write> <write>
+         // Want to pick off the read
+         operand = sample_q[3].data;
+      } else if (instr->optype == BRANCHOP) {
+         // the operand is true if branch taken
+         operand = (num_cycles != 2);
+      } else if (opcode == 0x00) {
+         // BRK: the operand is the data pushed to the stack (PCH, PCL, P)
+         // <opcode> <op1> <write pch> <write pcl> <write p> <read rst> <read rsth>
+         operand = (sample_q[2].data << 16) +  (sample_q[3].data << 8) + sample_q[4].data;
+      } else if (opcode == 0x20) {
+         // JSR: the operand is the data pushed to the stack (PCH, PCL)
+         // <opcode> <op1> <read dummy> <write pch> <write pcl> <op2>
+         operand = (sample_q[3].data << 8) + sample_q[4].data;
+      } else if (opcode == 0x40) {
+         // RTI: the operand is the data pulled from the stack (P, PCL, PCH)
+         // <opcode> <op1> <read dummy> <read p> <read pcl> <read pch>
+         operand = (sample_q[3].data << 16) +  (sample_q[4].data << 8) + sample_q[5].data;
+      } else if (opcode == 0x60) {
+         // RTS: the operand is the data pulled from the stack (PCL, PCH)
+         // <opcode> <op1> <read dummy> <read pcl> <read pch>
+         operand = (sample_q[3].data << 8) + sample_q[4].data;
+      } else if (instr->mode == IMM) {
+         // Immediate addressing mode: the operand is the 2nd byte of the instruction
+         operand = op1;
+      } else if (instr->decimalcorrect && (em_get_D() == 1)) {
+         // read operations on the C02 that have an extra cycle added
+         operand = sample_q[num_cycles - 2].data;
+      } else if (instr->optype == TSBTRBOP) {
+         // For TSB/TRB, <opcode> <op1> <read> <dummy> <write> the operand is the <read>
+         operand = sample_q[num_cycles - 3].data;
+      } else {
+         // default to using the last bus cycle as the operand
+         operand = sample_q[num_cycles - 1].data;
+      }
+
+      // For instructions that read or write memory, we need to work out the effective address
+      // Note: not needed for stack operations, as S is used directly
+      int ea = -1;
+      int index;
+      switch (instr->mode) {
+      case ZP:
+         ea = op1;
+         break;
+      case ZPX:
+      case ZPY:
+         index = instr->mode == ZPX ? em_get_X() : em_get_Y();
+         if (index >= 0) {
+            ea = (op1 + index) & 0xff;
+         }
+         break;
+      case INDY:
+         // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
+         index = em_get_Y();
+         if (index >= 0) {
+            ea = (sample_q[3].data << 8) + sample_q[2].data;
+            ea = (ea + index) & 0xffff;
+         }
+         break;
+      case INDX:
+         // <opcpde> <op1> <dummy> <addrlo> <addrhi> <operand> [ <extra cycle in dec mode> ]
+         ea = (sample_q[4].data << 8) + sample_q[3].data;
+         break;
+      case IND:
+         // <opcpde> <op1> <addrlo> <addrhi> <operand> [ <extra cycle in dec mode> ]
+         ea = (sample_q[3].data << 8) + sample_q[2].data;
+         break;
+      case ABS:
+         ea = op2 << 8 | op1;
+         break;
+      case ABSX:
+      case ABSY:
+         index = instr->mode == ABSX ? em_get_X() : em_get_Y();
+         if (index >= 0) {
+            ea = ((op2 << 8 | op1) + index) & 0xffff;
+         }
+         break;
+      default:
+         break;
+      }
+
+      if (opcode == 0x00) {
+         ea = (sample_q[6].data << 8) + sample_q[5].data;
+      }
+
+      instr->emulate(operand, ea);
+   }
+
+   // TODO: Push the PC updates into the emulation code
+
+   // Look for control flow changes and update the PC
+   if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c) {
+      // RTI, BRK, INTR, JMP (ind), JMP (ind, X), IRQ/NMI/RST
+      PC = (sample_q[num_cycles - 1].data << 8) | sample_q[num_cycles - 2].data;
+   } else if (opcode == 0x20 || opcode == 0x4c) {
+      // JSR abs, JMP abs
+      PC = op2 << 8 | op1;
+   } else if (opcode == 0x60) {
+      // RTS
+      PC = (((sample_q[num_cycles - 2].data << 8) | sample_q[num_cycles - 3].data) + 1) & 0xffff;
+   } else if (PC < 0) {
+      // PC value is not known yet, everything below this point is relative
+      PC = -1;
+   } else if (opcode == 0x80) {
+      // BRA
+      PC += ((int8_t)(op1)) + 2;
+      PC &= 0xffff;
+   } else if (c02 && rockwell && ((opcode & 0x0f) == 0x0f) && (num_cycles != 5)) {
+      // BBR/BBS: op2 if taken
+      PC += ((int8_t)(op2)) + 3;
+      PC &= 0xffff;
+   } else if ((opcode & 0x1f) == 0x10 && num_cycles != 2) {
+      // BXX: op1 if taken
+      PC += ((int8_t)(op1)) + 2;
+      PC &= 0xffff;
+   } else {
+      // Otherwise, increment pc by length of instuction
+      PC += instr->len;
+      PC &= 0xffff;
+   }
+}
+
+int em_disassemble(instruction_t *instruction) {
+
+   int numchars;
+   int offset;
+   char target[16];
+
+   // Unpack the instruction bytes
+   int opcode = instruction->opcode;
+   int op1    = instruction->op1;
+   int op2    = instruction->op2;
+   int pc     = instruction->pc;
+
+   // lookup the entry for the instruction
+   InstrType *instr = &instr_table[opcode];
+
+   const char *mnemonic = instr->mnemonic;
+   const char *fmt = instr->fmt;
+   switch (instr->mode) {
+   case IMP:
+   case IMPA:
+      numchars = printf(fmt, mnemonic);
+      break;
+   case BRA:
+      // Calculate branch target using op1 for normal branches
+      offset = (int8_t) op1;
+      if (pc < 0) {
+         if (offset < 0) {
+            sprintf(target, "pc-%d", -offset);
+         } else {
+            sprintf(target,"pc+%d", offset);
+         }
+      } else {
+         sprintf(target, "%04X", (pc + 2 + offset) & 0xffff);
+      }
+      numchars = printf(fmt, mnemonic, target);
+      break;
+   case ZPR:
+      // Calculate branch target using op2 for BBR/BBS
+      offset = (int8_t) op2;
+      if (pc < 0) {
+         if (offset < 0) {
+            sprintf(target, "pc-%d", -offset);
+         } else {
+            sprintf(target,"pc+%d", offset);
+         }
+      } else {
+         sprintf(target, "%04X", (pc + 3 + offset) & 0xffff);
+      }
+      numchars = printf(fmt, mnemonic, op1, target);
+      break;
+   case IMM:
+   case ZP:
+   case ZPX:
+   case ZPY:
+   case INDX:
+   case INDY:
+   case IND:
+      numchars = printf(fmt, mnemonic, op1);
+      break;
+   case ABS:
+   case ABSX:
+   case ABSY:
+   case IND16:
+   case IND1X:
+      numchars = printf(fmt, mnemonic, op1, op2);
+      break;
+   default:
+      numchars = 0;
+   }
+
+   return numchars;
+}
+
+
+
 
 static void write_hex1(char *buffer, int value) {
    *buffer = value + (value < 10 ? '0' : 'A' - 10);
@@ -532,7 +841,8 @@ static void op_BRK(int operand, int ea) {
    // BRK: the operand is the data pushed to the stack (PCH, PCL, P)
    int flags = operand & 0xff;
    int pc = (operand >> 8) & 0xffff;
-   em_interrupt(flags, pc);
+   int vector = ea;
+   interrupt(flags, pc, vector);
 }
 
 static void op_BIT_IMM(int operand, int ea) {
@@ -1603,6 +1913,7 @@ static char ILLEGAL[] = "???";
 void em_init(int support_c02, int support_rockwell, int support_undocumented, int decode_bbctube) {
    int i;
    c02 = support_c02;
+   rockwell = support_rockwell;
    instr_table = support_c02 ? instr_table_65c02 : instr_table_6502;
    bbctube = decode_bbctube;
    // If not supporting the Rockwell C02 extensions, tweak the cycle countes
