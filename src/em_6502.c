@@ -326,7 +326,154 @@ int em_get_and_clear_fail() {
 }
 
 
-int em_count_cycles(sample_t *sample_q, int rst_seen, int intr_seen) {
+static int count_cycles_without_sync(sample_t *sample_q, int rst_seen, int intr_seen) {
+
+   if (rst_seen) {
+      // return c02 ? 7 : 8;
+      return 7;
+   }
+
+   if (intr_seen) {
+      return 7;
+   }
+
+   int opcode = sample_q[0].data;
+   int op1    = sample_q[1].data;
+   int op2    = sample_q[((opcode & 0x0f) == 0x0f) ? 4 : 2].data;
+
+   InstrType *instr = &instr_table[opcode];
+
+   int cycle_count = instr->cycles;
+
+   // Account for extra cycle in ADC/SBC in decimal mode in C02
+   if (c02 && instr->decimalcorrect && D == 1) {
+      cycle_count++;
+   }
+
+   // Account for extra cycle in a page crossing in (indirect), Y (not stores)
+   // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
+   if ((instr->mode == INDY) && (instr->optype != WRITEOP) && Y >= 0) {
+      int base = (sample_q[3].data << 8) + sample_q[2].data;
+      if ((base & 0xff00) != ((base + Y) & 0xff00)) {
+         cycle_count++;
+      }
+   }
+
+   // Account for extra cycle in a page crossing in absolute indexed (not stores)
+   if (((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype != WRITEOP)) {
+      // 6502:  Need to exclude ASL/ROL/LSR/ROR/DEC/INC, which are 7 cycles regardless
+      // 65C02: Need to exclude DEC/INC, which are 7 cycles regardless
+      if ((opcode != 0xDE) && (opcode != 0xFE) && (c02 || ((opcode != 0x1E) && (opcode != 0x3E) && (opcode != 0x5E) && (opcode != 0x7E)))) {
+         int index = (instr->mode == ABSX) ? X : Y;
+         if (index >= 0) {
+            int base = op1 + (op2 << 8);
+            if ((base & 0xff00) != ((base + index) & 0xff00)) {
+               cycle_count++;
+            }
+         }
+      }
+   }
+
+   // Account for extra cycles in BBR/BBS
+   //
+   // Example: BBR0, $50, +6
+   // 0 8f 1 1 1 <opcode>
+   // 1 50 1 0 1 <op1> i.e. ZP address
+   // 2 01 1 0 1 <mem rd>
+   // 3 01 1 0 1 <mem rd>
+   // 4 06 1 0 1 <op2> i.e.
+   // 5 20 1 0 1 (<branch taken penalty>)
+   // 6          (<page crossed penalty>)
+   //
+
+   if (c02 && rockwell && (opcode & 0x0f) == 0x0f) {
+      int operand = sample_q[2].data;
+      // invert operand for BBR
+      if (opcode <= 0x80) {
+         operand ^= 0xff;
+      }
+      int bit = (opcode >> 4) & 7;
+      // Figure out if the branch was taken
+      if (operand & (1 << bit)) {
+         // A taken bbr/bbs branch is 6 cycles, not 5
+         cycle_count = 6;
+         // A taken bbr/bbs branch that crosses a page boundary is 7 cycles
+         if (PC >= 0) {
+            int target =  (PC + 3) + ((int8_t)(op2));
+            if ((target & 0xFF00) != ((PC + 3) & 0xff00)) {
+               cycle_count = 7;
+            }
+         }
+      }
+   }
+
+   // Account for extra cycles in a branch
+   if (((opcode & 0x1f) == 0x10) || (opcode == 0x80)) {
+      // Default to backards branches taken, forward not taken
+      int taken = ((int8_t)op1) < 0;
+      switch (opcode) {
+      case 0x10: // BPL
+         if (N >= 0) {
+            taken = !N;
+         }
+         break;
+      case 0x30: // BMI
+         if (N >= 0) {
+            taken = N;
+         }
+         break;
+      case 0x50: // BVC
+         if (V >= 0) {
+            taken = !V;
+         }
+         break;
+      case 0x70: // BVS
+         if (V >= 0) {
+            taken = V;
+         }
+         break;
+      case 0x80: // BRA
+         taken = 1;
+         break;
+      case 0x90: // BCC
+         if (C >= 0) {
+            taken = !C;
+         }
+         break;
+      case 0xB0: // BCS
+         if (C >= 0) {
+            taken = C;
+         }
+         break;
+      case 0xD0: // BNE
+         if (Z >= 0) {
+            taken = !Z;
+         }
+         break;
+      case 0xF0: // BEQ
+         if (Z >= 0) {
+            taken = Z;
+         }
+         break;
+      }
+      if (taken) {
+         // A taken branch is 3 cycles, not 2
+         cycle_count = 3;
+         // A taken branch that crosses a page boundary is 4 cycle
+         if (PC >= 0) {
+            int target =  (PC + 2) + ((int8_t)(op1));
+            if ((target & 0xFF00) != ((PC + 2) & 0xff00)) {
+               cycle_count = 4;
+            }
+         }
+      }
+   }
+
+   return cycle_count;
+}
+
+
+static int count_cycles_with_sync(sample_t *sample_q) {
    if (sample_q[0].type == OPCODE) {
       for (int i = 1; i < DEPTH; i++) {
          if (sample_q[i].type == OPCODE) {
@@ -334,8 +481,15 @@ int em_count_cycles(sample_t *sample_q, int rst_seen, int intr_seen) {
          }
       }
    }
-   // TODO: handle syncless case by calling into the emulator
    return 1;
+}
+
+int em_count_cycles(sample_t *sample_q, int rst_seen, int intr_seen) {
+   if (sample_q[0].type == UNKNOWN) {
+      return count_cycles_without_sync(sample_q, rst_seen, intr_seen);
+   } else {
+      return count_cycles_with_sync(sample_q);
+   }
 }
 
 int em_match_reset(sample_t *sample_q, int vec_rst) {

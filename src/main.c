@@ -439,7 +439,6 @@ static int analyze_instruction(sample_t *sample_q, int rst_seen) {
       em_emulate(sample_q, num_cycles, &instruction);
    }
 
-
    // Sanity check the pc prediction has not gone awry
    // (e.g. in JSR the emulation can use the stacked PC)
 
@@ -868,7 +867,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
 // Sync-based instruction decoder
 // ====================================================================
 
-int decode_instruction_with_sync(sample_t *sample_q) {
+int decode_instruction(sample_t *sample_q) {
    static int rst_seen = -1;
 
    // Skip any samples where RST is asserted (active low)
@@ -878,7 +877,7 @@ int decode_instruction_with_sync(sample_t *sample_q) {
    }
 
    // If the first sample is not an SYNC, then drop the sample
-   if (sample_q->type != OPCODE) {
+   if (sample_q->type != OPCODE && sample_q->type != UNKNOWN) {
       return 1;
    }
 
@@ -907,23 +906,12 @@ void queue_sample(sample_t *sample) {
 
    // If the queue is full, then pass on to the decoder
    if (index == DEPTH || sample->type == LAST) {
-      int consumed;
-      if (sample_q[0].type == UNKNOWN) {
-#if 0
-         consumed = decode_instruction_without_sync(sample_q);
-#endif
-         consumed = 1;
-      } else {
-         consumed = decode_instruction_with_sync(&sample_q[0]);
-      }
+      int consumed = decode_instruction(sample_q);
       for (int i = 0; i < DEPTH - consumed; i++) {
          sample_q[i] = sample_q[i + consumed];
       }
       index -= consumed;
    }
-
-
-
 }
 
 
