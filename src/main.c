@@ -4,12 +4,12 @@
 #include <argp.h>
 #include <string.h>
 
+#include "defs.h"
 #include "em_6502.h"
 #include "profiler.h"
 
-// Sync-less decoder queue depth (samples)
-// (min of 3 needed to reliably detect interrupts)
-#define DEPTH 3
+// Sample Queue Depth - needs to fit the longest instruction
+#define DEPTH 10
 
 int sample_count = 0;
 
@@ -287,6 +287,8 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
 
 static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 
+
+
 // ====================================================================
 // Analyze a complete instruction
 // ====================================================================
@@ -296,7 +298,97 @@ static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 // Predicted PC value
 int pc = -1;
 
-static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulator, int intr_seen, int num_cycles, int rst_seen) {
+static int get_pc() {
+   return pc;
+}
+
+static int count_cycles(sample_t *sample_q) {
+   if (sample_q[0].type == OPCODE) {
+      for (int i = 1; i < DEPTH; i++) {
+         if (sample_q[i].type == OPCODE) {
+            return i;
+         }
+      }
+   }
+   // TODO: handle syncless case by calling into the emulator
+   return 1;
+}
+
+static int match_reset(sample_t *sample_q) {
+   // We use a heuristic, based on what we expect to see on the data
+   // bus in cycles 5, 6 and 7, i.e. RSTVECL, RSTVECH, RSTOPCODE
+   if ((sample_q[5].data == (arguments.vec_rst & 0xff)) &&
+       (sample_q[6].data == ((arguments.vec_rst >> 8) & 0xff)) &&
+       (sample_q[7].data == ((arguments.vec_rst >> 16) & 0xff) || (((arguments.vec_rst >> 16) & 0xff) == 0))) {
+      return 1;
+
+   }
+   return 0;
+}
+
+
+static int match_interrupt(sample_t *sample_q) {
+
+   int pc = get_pc();
+
+   // An interupt will write PCH, PCL, PSW in bus cycles 2,3,4
+   if (sample_q[0].rnw >= 0) {
+      // If we have the RNW pin connected, then just look for these three writes in succession
+      if (sample_q[2].rnw == 0 && sample_q[3].rnw == 0 && sample_q[4].rnw == 0) {
+         return 1;
+      }
+   } else {
+      // If not, then we use a heuristic, based on what we expect to see on the data
+      // bus in cycles 2, 3 and 4, i.e. PCH, PCL, PSW
+      if (sample_q[2].data == ((pc >> 8) & 0xff) && sample_q[3].data == (pc & 0xff)) {
+         // Now test unused flag is 1, B is 0
+         if ((sample_q[4].data & 0x30) == 0x20) {
+            // Finally test all other known flags match
+            if (!compare_NVDIZC(sample_q[4].data)) {
+               // Matched PSW = NV-BDIZC
+               return 1;
+            }
+         }
+      }
+   }
+   return 0;
+}
+
+
+static void dump_samples(sample_t *sample_q, int n) {
+      for (int i = 0; i < n; i++) {
+         sample_t *sample = sample_q + i;
+         printf("%d %02x ", i, sample->data);
+         switch(sample->type) {
+         case INTERNAL:
+            putchar('I');
+            break;
+         case PROGRAM:
+            putchar('P');
+            break;
+         case DATA:
+            putchar('D');
+            break;
+         case OPCODE:
+            putchar('O');
+            break;
+         case LAST:
+            putchar('L');
+            break;
+         default:
+            putchar('?');
+            break;
+         }
+         putchar(' ');
+         putchar(sample->rnw >= 0 ? '0' + sample->rnw : '?');
+         putchar(' ');
+         putchar(sample->rst >= 0 ? '0' + sample->rst : '?');
+         putchar('\n');
+      }
+
+}
+
+static int analyze_instruction(sample_t *sample_q, int rst_seen) {
 
    static int interrupt_depth = 0;
    static int skipping_interrupted = 0;
@@ -305,8 +397,37 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
    int offset;
    char target[16];
 
+   int opcode = sample_q[0].data;
+
    // lookup the entry for the instruction
    InstrType *instr = &instr_table[opcode];
+
+   int num_cycles = count_cycles(sample_q);
+
+   if (arguments.debug >= 1) {
+      dump_samples(sample_q, num_cycles);
+   }
+
+   int intr_seen = match_interrupt(sample_q);
+
+   if (rst_seen < 0) {
+      rst_seen = match_reset(sample_q);
+   }
+
+   int opcount = instr->len - 1;
+   int op1 = (opcount < 1) ? 0 : sample_q[1].data;
+
+   int op2 =
+      (opcount < 2)             ? 0 :
+      (opcode == 0x20)          ? sample_q[5].data :
+      ((opcode & 0x0f) == 0x0f) ? sample_q[4].data : sample_q[2].data;
+
+   uint64_t accumulator = 0;
+
+   for (int i = opcount; i < num_cycles; i++) {
+      accumulator = (accumulator <<  8) | sample_q[i].data;
+   }
+
 
    // For instructions that push the current address to the stack we
    // can use the stacked address to determine the current PC
@@ -611,11 +732,16 @@ static void analyze_instruction(int opcode, int op1, int op2, uint64_t accumulat
       pc += instr->len;
       pc &= 0xffff;
    }
+
+
+   return num_cycles;
 }
 
 // ====================================================================
 // Sync-less bus cycle decoder
 // ====================================================================
+
+#if 0
 
 void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) {
 
@@ -927,165 +1053,71 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
    cyclenum++;
 }
 
-void lookahead_decode_cycle_without_sync(int bus_data, int pin_rnw, int pin_rst) {
-   static int bus_data_q[DEPTH];
-   static int pin_rnw_q[DEPTH];
-   static int pin_rst_q[DEPTH];
-   static int fill = 0;
 
-   bus_data_q[fill] = bus_data;
-   pin_rnw_q[fill] = pin_rnw;
-   pin_rst_q[fill] = pin_rst;
-   if (fill < DEPTH - 1) {
-      fill++;
-   } else {
-      decode_cycle_without_sync(bus_data_q, pin_rnw_q, pin_rst_q);
-      for (int i = 0; i < DEPTH - 1; i++) {
-         bus_data_q[i] = bus_data_q[i + 1];
-         pin_rnw_q[i] = pin_rnw_q[i + 1];
-         pin_rst_q[i] = pin_rst_q[i + 1];
-      }
-   }
-}
+#endif
 
 // ====================================================================
-// Sync-based bus cycle decoder
+// Sync-based instruction decoder
 // ====================================================================
 
-void decode_cycle_with_sync(int bus_data, int pin_rnw, int pin_sync, int pin_rst) {
+int decode_instruction_with_sync(sample_t *sample_q) {
+   static int rst_seen = -1;
 
-   // Count of the 6502 bus cycles
-   static int cyclenum             = 0;
-
-   // Cycle count of the last sync, so we know the instruction cycle count
-   static int last_cyclenum        = 0;
-
-   // State to decode the 6502 bus activity
-   static int opcode               = -1;
-   static int opcount              = 0;
-   static int op1                  = 0;
-   static int op2                  = 0;
-   static int bus_cycle            = 0;
-   static int rst_state            = 0;
-   static int intr_state           = 0;
-   static uint64_t accumulator     = 0;
-   static int last_pin_rst         = 1;
-
-   // TODO, sync based decoder probably should fall back to testing the
-   // reset vector if rst is not connected.
-
-   if (pin_rst == 1) {
-
-      if (arguments.idx_rst >= 0) {
-         // If we have the RST pin connected, we use it's value directly
-         if (last_pin_rst == 0) {
-            rst_state = 3;
-         }
-      } else {
-         // If not, then we use a heuristic, based on what we expect to see on the data
-         // bus in cycles 5, 6 and 7, i.e. RSTVECL, RSTVECH, RSTOPCODE
-         if ((bus_cycle == 5) && (bus_data == (arguments.vec_rst & 0xff))) {
-            // Matched RSTVECL
-            rst_state++;
-         }
-         if ((bus_cycle == 6) && (bus_data == ((arguments.vec_rst >> 8) & 0xff))) {
-            // Matched RSTVECH
-            rst_state++;
-         }
-         if ((bus_cycle == 7) && ((bus_data == ((arguments.vec_rst >> 16) & 0xff)) || (((arguments.vec_rst >> 16) & 0xff) == 0))) {
-            // Matched RSTOPCODE if none zerl
-            rst_state++;
-         }
-      }
-
-      // Write count is only used to determine if an interrupt has occurred
-      if (arguments.idx_rnw >= 0) {
-         // If we have the RNW pin connected, we use it's value directly
-         if (pin_rnw == 0) {
-            if (bus_cycle == 2 || bus_cycle == 3 || bus_cycle == 4) {
-               intr_state++;
-            }
-         }
-      } else {
-         // If not, then we use a heuristic, based on what we expect to see on the data
-         // bus in cycles 2, 3 and 4, i.e. PCH, PCL, PSW
-         // (It's unlikely sync would be connected but rnw not, but lets try to cope)
-         if ((bus_cycle == 2) && (bus_data == ((pc >> 8) & 0xff))) {
-            // Matched PCH
-            intr_state++;
-         }
-         if ((bus_cycle == 3) && (bus_data == (pc & 0xff))) {
-            // Matched PCL
-            intr_state++;
-         }
-         // Now test unused flag is 1, B is 0
-         if ((bus_cycle == 4) && ((bus_data & 0x30) == 0x20)) {
-            // Finally test all other known flags match
-            if (!compare_NVDIZC(bus_data)) {
-               // Matched PSW = NV-BDIZC
-               intr_state++;
-            }
-         }
-      }
-
-      if (pin_sync == 1) {
-
-         // Sync indicates the start of a new instruction, the following variables pertain to the previous instruction
-         // opcode, op1, op2, accumulator, intr_state, operand
-
-         // Analyze the  previous instrucution
-         if (opcode >= 0) {
-            analyze_instruction(opcode, op1, op2, accumulator, intr_state == 3, cyclenum - last_cyclenum, rst_state == 3);
-            rst_state = 0;
-         }
-         last_cyclenum  = cyclenum;
-
-         bus_cycle         = 0;
-         opcode            = bus_data;
-         opcount           = instr_table[opcode].len - 1;
-         intr_state        = 0;
-         accumulator       = 0;
-
-      } else {
-
-         if (bus_cycle == 1 && opcount >= 1) {
-            op1 = bus_data;
-         }
-
-         if (bus_cycle == ((opcode == 0x20) ? 5 : ((opcode & 0x0f) == 0x0f) ? 4 : 2) && opcount >= 2 && intr_state < 3) {
-            // JSR     is <opcode> <op1> <dummp stack rd> <stack wr> <stack wr> <op2>
-            // BBR/BBS is <opcode> <op1> <zp> <dummy> <op2> (<branch taken penalty>) (<page cross penatly)
-            op2 = bus_data;
-         }
-
-         accumulator = (accumulator <<  8) | bus_data;
-      }
-
-   } else {
-      // In reset we reset the opcode back to -1. This prevents a spurious
-      // instrunction being emitted at the start of the 7-cycle reset sequence.
-      opcode = -1;
+   // Skip any samples where RST is asserted (active low)
+   if (sample_q->rst == 0) {
+      rst_seen = 1;
+      return 1;
    }
 
-   if (arguments.debug >= 1) {
-      printf("%d %02x %d", bus_cycle, bus_data, pin_sync);
-      if (arguments.idx_rnw >= 0) {
-         printf(" %d", pin_rnw);
-      }
-      if (arguments.idx_rst >= 0) {
-         printf(" %d", pin_rst);
-      }
-      printf("\n");
+   // If the first sample is not an SYNC, then drop the sample
+   if (sample_q->type != OPCODE) {
+      return 1;
    }
 
-   bus_cycle++;
+   // SYNC seen, so decode the instruction
+   int num_cycles = analyze_instruction(sample_q, rst_seen);
 
-   // Increment the cycle number (used only to detect taken branches)
-   cyclenum++;
+   // And reset rst_seen for the next reset
+   if (rst_seen == 1) {
+      rst_seen = 0;
+   }
 
-   // Maintain an edge detector for rst
-   last_pin_rst = pin_rst;
+   return num_cycles;
 }
+
+
+// ====================================================================
+// Queue a small number of samples so the decoders can lookahead
+// ====================================================================
+
+void queue_sample(sample_t *sample) {
+   static sample_t sample_q[DEPTH];
+   static int index = 0;
+
+   // Queue the sample
+   sample_q[index++] = *sample;
+
+   // If the queue is full, then pass on to the decoder
+   if (index == DEPTH || sample->type == LAST) {
+      int consumed;
+      if (sample_q[0].type == UNKNOWN) {
+#if 0
+         consumed = decode_instruction_without_sync(sample_q);
+#endif
+         consumed = 1;
+      } else {
+         consumed = decode_instruction_with_sync(&sample_q[0]);
+      }
+      for (int i = 0; i < DEPTH - consumed; i++) {
+         sample_q[i] = sample_q[i + consumed];
+      }
+      index -= consumed;
+   }
+
+
+
+}
+
 
 // ====================================================================
 // Input file processing and bus cycle extraction
@@ -1119,7 +1151,12 @@ void decode(FILE *stream) {
    // The previous sample of phi2 (async sampling only)
    int last_phi2 = -1;
 
+   sample_t s;
+
    if (arguments.byte) {
+      s.rnw = -1;
+      s.rst = -1;
+      s.type = UNKNOWN;
 
       // In byte mode we have only data bus samples, nothing else so we must
       // use the sync-less decoder. The values of pin_rnw and pin_rst are set
@@ -1128,7 +1165,8 @@ void decode(FILE *stream) {
       while ((num = fread(buffer8, sizeof(uint8_t), BUFSIZE, stream)) > 0) {
          uint8_t *sampleptr = &buffer8[0];
          while (num-- > 0) {
-            lookahead_decode_cycle_without_sync(*sampleptr++, 1, 1);
+            s.data = *sampleptr++;
+            queue_sample(&s);
          }
       }
 
@@ -1237,21 +1275,31 @@ void decode(FILE *stream) {
             if (pin_rdy == 0)
                continue;
 
+            // Build the sample
             if (idx_sync < 0) {
-               lookahead_decode_cycle_without_sync(bus_data, pin_rnw, pin_rst);
+               s.type = UNKNOWN;
             } else {
-               decode_cycle_with_sync(bus_data, pin_rnw, pin_sync, pin_rst);
+               s.type = pin_sync ? OPCODE : DATA;
             }
+            s.data = bus_data;
+            if (idx_rnw < 0) {
+               s.rnw = -1;
+            } else {
+               s.rnw = pin_rnw;
+            }
+            if (idx_rst < 0) {
+               s.rst = -1;
+            } else {
+               s.rst = pin_rst;
+            }
+            queue_sample(&s);
          }
       }
    }
 
-   // Flush the lookhead decoder so it
-   if (idx_sync < 0) {
-      for (int i = 0; i < DEPTH - 1; i++) {
-         lookahead_decode_cycle_without_sync(0xEA, 1, 1);
-      }
-   }
+   // Flush the sample queue
+   s.type = LAST;
+   queue_sample(&s);
 
 }
 
