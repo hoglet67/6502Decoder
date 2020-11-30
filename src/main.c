@@ -421,7 +421,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
    int num_cycles = em_count_cycles(sample_q, rst_seen, intr_seen);
 
    // Deal with partial final instruction
-   if (num_samples < num_cycles || num_cycles == 0) {
+   if (num_samples <= num_cycles || num_cycles == 0) {
       return num_samples;
    }
 
@@ -927,6 +927,8 @@ void queue_sample(sample_t *sample) {
    sample_q[index++] = *sample;
 
    if (sample->type == LAST) {
+      // To prevent edge condition, don't advertise the LAST marker
+      index--;
       // Drain the queue when the LAST marker is seen
       while (index > 1) {
          int consumed = decode_instruction(sample_q, index);
