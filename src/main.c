@@ -41,6 +41,8 @@ const char default_fwa[] = "\?\?-\?\?:\?\?\?\?\?\?\?\?:\?\?:\?\? = \?\?\?\?\?\?\
 static char fwabuf[80];
 
 
+static cpu_emulator_t *em;
+
 // ====================================================================
 // Argp processing
 // ====================================================================
@@ -341,14 +343,14 @@ void write_hex2(char *buffer, int value) {
 
 static char *get_fwa(int a_sign, int a_exp, int a_mantissa, int a_round, int a_overflow) {
    strcpy(fwabuf, default_fwa);
-   int sign     = em_read_memory(a_sign);
-   int exp      = em_read_memory(a_exp);
-   int man1     = em_read_memory(a_mantissa);
-   int man2     = em_read_memory(a_mantissa + 1);
-   int man3     = em_read_memory(a_mantissa + 2);
-   int man4     = em_read_memory(a_mantissa + 3);
-   int round    = em_read_memory(a_round);
-   int overflow = a_overflow >= 0 ? em_read_memory(a_overflow) : -1;
+   int sign     = em->read_memory(a_sign);
+   int exp      = em->read_memory(a_exp);
+   int man1     = em->read_memory(a_mantissa);
+   int man2     = em->read_memory(a_mantissa + 1);
+   int man3     = em->read_memory(a_mantissa + 2);
+   int man4     = em->read_memory(a_mantissa + 3);
+   int round    = em->read_memory(a_round);
+   int overflow = a_overflow >= 0 ? em->read_memory(a_overflow) : -1;
    if (sign >= 0) {
       write_hex2(fwabuf + OFFSET_SIGN, sign);
    }
@@ -412,14 +414,14 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
    static int skipping_interrupted = 0;
    static int triggered = 0;
 
-   int intr_seen = em_match_interrupt(sample_q, num_samples);
+   int intr_seen = em->match_interrupt(sample_q, num_samples);
 
    int num_cycles;
 
    if (rst_seen > 0) {
       num_cycles = rst_seen;
    } else {
-      num_cycles = em_count_cycles(sample_q, intr_seen);
+      num_cycles = em->count_cycles(sample_q, intr_seen);
    }
 
    // Deal with partial final instruction
@@ -433,17 +435,17 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
 
    instruction_t instruction;
 
-   int oldpc = em_get_PC();
+   int oldpc = em->get_PC();
 
    if (rst_seen) {
       // Handle a reset
-      em_reset(sample_q, num_cycles, &instruction);
+      em->reset(sample_q, num_cycles, &instruction);
    } else if (intr_seen) {
       // Handle an interrupt
-      em_interrupt(sample_q, num_cycles, &instruction);
+      em->interrupt(sample_q, num_cycles, &instruction);
    } else {
       // Handle a normal instruction
-      em_emulate(sample_q, num_cycles, &instruction);
+      em->emulate(sample_q, num_cycles, &instruction);
    }
 
    // Sanity check the pc prediction has not gone awry
@@ -481,7 +483,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
       profiler_profile_instruction(instruction.pc, instruction.opcode, instruction.op1, instruction.op2, num_cycles);
    }
 
-   int fail = em_get_and_clear_fail();
+   int fail = em->get_and_clear_fail();
 
    if ((fail | arguments.show_something) && triggered && !skipping_interrupted) {
       int numchars = 0;
@@ -516,7 +518,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
          } else if (intr_seen) {
             numchars = printf("INTERRUPT !!");
          } else {
-            numchars = em_disassemble(&instruction);
+            numchars = em->disassemble(&instruction);
          }
       }
       // Pad if there is more to come
@@ -532,7 +534,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
       }
       // Show register state
       if (fail || arguments.show_state) {
-         printf(" : %s", em_get_state());
+         printf(" : %s", em->get_state());
       }
       // Show BBC floating point work area FWA, FWB
       if (arguments.show_bbcfwa) {
@@ -634,26 +636,6 @@ int decode_instruction(sample_t *sample_q, int num_samples) {
 // ====================================================================
 // Queue a small number of samples so the decoders can lookahead
 // ====================================================================
-
-
-int em_match_reset(sample_t *sample_q, int num_samples, int vec_rst) {
-   // Check we have enough valid samples
-   if (num_samples < 8) {
-      return 0;
-   }
-   // We use a heuristic, based on what we expect to see on the data
-   // bus in cycles 5, 6 and 7, i.e. RSTVECL, RSTVECH, RSTOPCODE
-   if ((sample_q[5].data == (vec_rst & 0xff)) &&
-       (sample_q[6].data == ((vec_rst >> 8) & 0xff)) &&
-       (sample_q[7].data == ((vec_rst >> 16) & 0xff) || (((vec_rst >> 16) & 0xff) == 0))) {
-      return 1;
-
-   }
-   return 0;
-}
-
-
-
 
 void queue_sample(sample_t *sample) {
    static sample_t sample_q[DEPTH];
@@ -932,11 +914,13 @@ int main(int argc, char *argv[]) {
       }
    }
 
+   em = &em_6502;
+
    // This flag tells the sync-less cycle count estimation to infer additional cycles on the master
    // It's needed when rdy is not being explicitely sampled
    int mast_nordy = (arguments.machine == MACHINE_MASTER) && (arguments.idx_rdy < 0);
 
-   em_init(arguments.c02, arguments.rockwell, arguments.undocumented, arguments.bbctube, mast_nordy);
+   em->init(arguments.c02, arguments.rockwell, arguments.undocumented, arguments.bbctube, mast_nordy);
 
    decode(stream);
    fclose(stream);

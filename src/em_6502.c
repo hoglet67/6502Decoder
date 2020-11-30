@@ -462,7 +462,7 @@ static int count_cycles_with_sync(sample_t *sample_q) {
 // Public Methods
 // ====================================================================
 
-void em_init(int support_c02, int support_rockwell, int support_undocumented, int decode_bbctube, int mast_nordy) {
+static void em_6502_init(int support_c02, int support_rockwell, int support_undocumented, int decode_bbctube, int mast_nordy) {
    int i;
    c02 = support_c02;
    rockwell = support_rockwell;
@@ -500,7 +500,7 @@ void em_init(int support_c02, int support_rockwell, int support_undocumented, in
 }
 
 
-int em_match_interrupt(sample_t *sample_q, int num_samples) {
+static int em_6502_match_interrupt(sample_t *sample_q, int num_samples) {
    // Check we have enough valid samples
    if (num_samples < 7) {
       return 0;
@@ -532,7 +532,7 @@ int em_match_interrupt(sample_t *sample_q, int num_samples) {
    return 0;
 }
 
-int em_count_cycles(sample_t *sample_q, int intr_seen) {
+static int em_6502_count_cycles(sample_t *sample_q, int intr_seen) {
    if (sample_q[0].type == UNKNOWN) {
       return count_cycles_without_sync(sample_q, intr_seen);
    } else {
@@ -540,7 +540,7 @@ int em_count_cycles(sample_t *sample_q, int intr_seen) {
    }
 }
 
-void em_reset(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
+static void em_6502_reset(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
    instruction->pc = -1;
    A = -1;
    X = -1;
@@ -558,7 +558,7 @@ void em_reset(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
    PC = (sample_q[num_cycles - 1].data << 8) + sample_q[num_cycles - 2].data;
 }
 
-void em_interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
+static void em_6502_interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
    int pc   = (sample_q[2].data << 8) + sample_q[3].data;
    int flags = sample_q[4].data;
    int vector = (sample_q[6].data << 8) + sample_q[5].data;
@@ -566,7 +566,7 @@ void em_interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruction
    interrupt(pc, flags, vector);
 }
 
-void em_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
+static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
 
    // Unpack the instruction bytes
    int opcode = sample_q[0].data;
@@ -725,7 +725,7 @@ void em_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) 
    }
 }
 
-int em_disassemble(instruction_t *instruction) {
+static int em_6502_disassemble(instruction_t *instruction) {
 
    int numchars;
    int offset;
@@ -798,16 +798,16 @@ int em_disassemble(instruction_t *instruction) {
    return numchars;
 }
 
-int em_get_PC() {
+static int em_6502_get_PC() {
    return PC;
 }
 
 
-int em_read_memory(int address) {
+static int em_6502_read_memory(int address) {
    return memory[address];
 }
 
-char *em_get_state() {
+static char *em_6502_get_state() {
    strcpy(buffer, default_state);
    if (A >= 0) {
       write_hex2(buffer + OFFSET_A, A);
@@ -842,11 +842,25 @@ char *em_get_state() {
    return buffer;
 }
 
-int em_get_and_clear_fail() {
+static int em_6502_get_and_clear_fail() {
    int ret = failflag;
    failflag = 0;
    return ret;
 }
+
+cpu_emulator_t em_6502 = {
+   .init = em_6502_init,
+   .match_interrupt = em_6502_match_interrupt,
+   .count_cycles = em_6502_count_cycles,
+   .reset = em_6502_reset,
+   .interrupt = em_6502_interrupt,
+   .emulate = em_6502_emulate,
+   .disassemble = em_6502_disassemble,
+   .get_PC = em_6502_get_PC,
+   .read_memory = em_6502_read_memory,
+   .get_state = em_6502_get_state,
+   .get_and_clear_fail = em_6502_get_and_clear_fail,
+};
 
 // ====================================================================
 // Individual Instructions

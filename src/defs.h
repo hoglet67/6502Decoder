@@ -37,4 +37,20 @@ typedef struct {
 void write_hex1(char *buffer, int value);
 void write_hex2(char *buffer, int value);
 
+
+typedef struct {
+   void (*init)(int support_c02, int support_rockwell, int support_undocumented, int decode_bbctube, int mast_nordy);
+   int (*match_interrupt)(sample_t *sample_q, int num_samples);
+   int (*count_cycles)(sample_t *sample_q, int intr_seen);
+   void (*reset)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
+   void (*interrupt)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
+   void (*emulate)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
+   int (*disassemble)(instruction_t *instruction);
+   int (*get_PC)();
+   int (*read_memory)(int address);
+   char *(*get_state)();
+   int (*get_and_clear_fail)();
+} cpu_emulator_t;
+
+
 #endif
