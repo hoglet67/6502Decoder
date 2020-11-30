@@ -3,6 +3,13 @@
 
 #include <inttypes.h>
 
+typedef enum {
+   CPU_6502,
+   CPU_65C02,
+   CPU_65C02_ROCKWELL,
+   CPU_65C816
+} cpu_t;
+
 // Sample Queue Depth - needs to fit the longest instruction
 #define DEPTH 10
 
@@ -39,7 +46,7 @@ void write_hex2(char *buffer, int value);
 
 
 typedef struct {
-   void (*init)(int support_c02, int support_rockwell, int support_undocumented, int decode_bbctube, int mast_nordy);
+   void (*init)(cpu_t cpu_type, int undocumented, int decode_bbctube, int mast_nordy);
    int (*match_interrupt)(sample_t *sample_q, int num_samples);
    int (*count_cycles)(sample_t *sample_q, int intr_seen);
    void (*reset)(sample_t *sample_q, int num_cycles, instruction_t *instruction);

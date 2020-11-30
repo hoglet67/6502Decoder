@@ -70,8 +70,8 @@ typedef struct {
 
 const char default_state[] = "A=?? X=?? Y=?? SP=?? N=? V=? D=? I=? Z=? C=?";
 
+static cpu_t cpu_type;
 static int c02;
-static int rockwell;
 static int bbctube;
 static int master_nordy;
 
@@ -317,7 +317,7 @@ static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
    // 6          (<page crossed penalty>)
    //
 
-   if (c02 && rockwell && (opcode & 0x0f) == 0x0f) {
+   if (cpu_type == CPU_65C02_ROCKWELL && (opcode & 0x0f) == 0x0f) {
       int operand = sample_q[2].data;
       // invert operand for BBR
       if (opcode <= 0x80) {
@@ -462,15 +462,22 @@ static int count_cycles_with_sync(sample_t *sample_q) {
 // Public Methods
 // ====================================================================
 
-static void em_6502_init(int support_c02, int support_rockwell, int support_undocumented, int decode_bbctube, int mast_nordy) {
+static void em_6502_init(cpu_t cpu_type, int undocumented, int decode_bbctube, int mast_nordy) {
    int i;
-   c02 = support_c02;
-   rockwell = support_rockwell;
-   instr_table = support_c02 ? instr_table_65c02 : instr_table_6502;
+   switch (cpu_type) {
+   case CPU_65C02:
+   case CPU_65C02_ROCKWELL:
+      c02 = 1;
+      instr_table = instr_table_65c02;
+      break;
+   default:
+      instr_table = instr_table_6502;
+      c02 = 0;
+   }
    bbctube = decode_bbctube;
    master_nordy = mast_nordy;
    // If not supporting the Rockwell C02 extensions, tweak the cycle countes
-   if (support_c02 && !support_rockwell) {
+   if (cpu_type == CPU_65C02) {
       // x7 (RMB/SMB): 5 cycles -> 1 cycles
       // xF (BBR/BBS): 5 cycles -> 1 cycles
       for (i = 0x07; i <= 0xff; i+= 0x08) {
@@ -484,7 +491,7 @@ static void em_6502_init(int support_c02, int support_rockwell, int support_undo
    InstrType *instr = instr_table;
    for (i = 0; i < 256; i++) {
       // Remove the undocumented instructions, if not supported
-      if (instr->undocumented && !support_undocumented) {
+      if (instr->undocumented && !undocumented) {
          instr->mnemonic = ILLEGAL;
          instr->mode     = IMP;
          instr->cycles   = 1;
@@ -710,7 +717,7 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
       // BRA
       PC += ((int8_t)(op1)) + 2;
       PC &= 0xffff;
-   } else if (c02 && rockwell && ((opcode & 0x0f) == 0x0f) && (num_cycles != 5)) {
+   } else if (cpu_type == CPU_65C02_ROCKWELL && ((opcode & 0x0f) == 0x0f) && (num_cycles != 5)) {
       // BBR/BBS: op2 if taken
       PC += ((int8_t)(op2)) + 3;
       PC &= 0xffff;

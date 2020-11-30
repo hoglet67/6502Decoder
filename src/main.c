@@ -96,6 +96,7 @@ static struct argp_option options[] = {
    { "vecrst",         7,    "HEX", OPTION_ARG_OPTIONAL, "The reset vector, black if not known"},
    { "machine",      'm', "MACHINE",                  0, "Enable machine specific behaviour"},
    { "c02",          'c',        0,                   0, "Enable 65C02 mode."},
+   { "c816",         '8',        0,                   0, "Enable 65C816 mode."},
    { "rockwell",     'r',        0,                   0, "Enable additional rockwell instructions."},
    { "undocumented", 'u',        0,                   0, "Enable undocumented 6502 opcodes (currently incomplete)"},
    { "byte",         'b',        0,                   0, "Byte samples"},
@@ -116,6 +117,7 @@ static struct argp_option options[] = {
 };
 
 struct arguments {
+   cpu_t cpu_type;
    int idx_data;
    int idx_rnw;
    int idx_sync;
@@ -132,8 +134,6 @@ struct arguments {
    int show_cycles;
    int show_something;
    int bbctube;
-   int c02;
-   int rockwell;
    int undocumented;
    int byte;
    int debug;
@@ -200,13 +200,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       arguments->bbctube = 1;
       break;
    case 'c':
-      if (arguments->undocumented) {
-         argp_error(state, "undocumented and c02 flags mutually exclusive");
-      }
-      arguments->c02 = 1;
+      arguments->cpu_type = CPU_65C02;
+      break;
+   case '8':
+      arguments->cpu_type = CPU_65C816;
       break;
    case 'r':
-      arguments->rockwell = 1;
+      arguments->cpu_type = CPU_65C02_ROCKWELL;
       break;
    case 'm':
       i = 0;
@@ -271,9 +271,6 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       }
       break;
    case 'u':
-      if (arguments->c02) {
-         argp_error(state, "undocumented and c02 flags mutually exclusive");
-      }
       arguments->undocumented = 1;
       break;
    case ARGP_KEY_ARG:
@@ -610,7 +607,7 @@ int decode_instruction(sample_t *sample_q, int num_samples) {
       }
       if (arguments.idx_sync < 0) {
          // Do this by dead reconning
-         rst_seen = arguments.c02 ? 8 : 9;
+         rst_seen = (arguments.cpu_type == CPU_65C02 || arguments.cpu_type == CPU_65C02_ROCKWELL) ? 8 : 9;
          // We could also check the vector
       } else {
          if (sample_q[7].type == OPCODE) {
@@ -873,8 +870,7 @@ int main(int argc, char *argv[]) {
    arguments.show_cycles      = 0;
 
    arguments.bbctube          = 0;
-   arguments.c02              = 0;
-   arguments.rockwell         = 0;
+   arguments.cpu_type         = CPU_6502;
    arguments.undocumented     = 0;
    arguments.byte             = 0;
    arguments.debug            = 0;
@@ -920,7 +916,7 @@ int main(int argc, char *argv[]) {
    // It's needed when rdy is not being explicitely sampled
    int mast_nordy = (arguments.machine == MACHINE_MASTER) && (arguments.idx_rdy < 0);
 
-   em->init(arguments.c02, arguments.rockwell, arguments.undocumented, arguments.bbctube, mast_nordy);
+   em->init(arguments.cpu_type, arguments.undocumented, arguments.bbctube, mast_nordy);
 
    decode(stream);
    fclose(stream);
