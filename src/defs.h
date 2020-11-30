@@ -43,7 +43,7 @@ typedef struct {
 
 void write_hex1(char *buffer, int value);
 void write_hex2(char *buffer, int value);
-
+void write_hex4(char *buffer, int value);
 
 typedef struct {
    void (*init)(cpu_t cpu_type, int undocumented, int decode_bbctube, int mast_nordy);

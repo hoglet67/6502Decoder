@@ -7,6 +7,7 @@
 
 #include "defs.h"
 #include "em_6502.h"
+#include "em_65816.h"
 #include "profiler.h"
 
 int sample_count = 0;
@@ -112,7 +113,8 @@ static struct argp_option options[] = {
    { "trigger",      't',"ADDRESS",                   0, "Trigger on address."},
    { "bbcfwa",       'f',        0,                   0, "Show BBC floating poing work areas."},
    { "bbctube",       8,         0,                   0, "Decode BBC tube protocol"},
-
+   { "vda",           9,  "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for vda, blank if unconnected"},
+   { "vpa",          10,  "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for vpa, blank if unconnected"},
    { 0 }
 };
 
@@ -124,6 +126,8 @@ struct arguments {
    int idx_rdy;
    int idx_phi2;
    int idx_rst;
+   int idx_vda;
+   int idx_vpa;
    int vec_rst;
    int machine;
    int show_address;
@@ -198,6 +202,20 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       break;
    case   8:
       arguments->bbctube = 1;
+      break;
+   case   9:
+      if (arg && strlen(arg) > 0) {
+         arguments->idx_vda = atoi(arg);
+      } else {
+         arguments->idx_vda = -1;
+      }
+      break;
+   case  10:
+      if (arg && strlen(arg) > 0) {
+         arguments->idx_vpa = atoi(arg);
+      } else {
+         arguments->idx_vpa = -1;
+      }
       break;
    case 'c':
       arguments->cpu_type = CPU_65C02;
@@ -334,6 +352,13 @@ void write_hex1(char *buffer, int value) {
 }
 
 void write_hex2(char *buffer, int value) {
+   write_hex1(buffer++, (value >> 4) & 15);
+   write_hex1(buffer++, (value >> 0) & 15);
+}
+
+void write_hex4(char *buffer, int value) {
+   write_hex1(buffer++, (value >> 12) & 15);
+   write_hex1(buffer++, (value >> 8) & 15);
    write_hex1(buffer++, (value >> 4) & 15);
    write_hex1(buffer++, (value >> 0) & 15);
 }
@@ -578,13 +603,16 @@ int decode_instruction(sample_t *sample_q, int num_samples) {
       return 1;
    }
 
+   // Flag to indicate the sample type is missing (sync/vda/vpa unconnected)
+   int notype = sample_q[0].type == UNKNOWN;
+
    if (arguments.idx_rst < 0) {
       // We use a heuristic, based on what we expect to see on the data
       // bus in cycles 5, 6 and 7, i.e. RSTVECL, RSTVECH, RSTOPCODE
       int veclo  = (arguments.vec_rst      ) & 0xff;
       int vechi  = (arguments.vec_rst >>  8) & 0xff;
       int opcode = (arguments.vec_rst >> 16) & 0xff;
-      if (arguments.idx_sync < 0) {
+      if (notype) {
          // No Sync, so search for heurisic anywhere in the sample queue
          for (int i = 0; i <= num_samples - 3; i++) {
             if (sample_q[i].data == veclo && sample_q[i + 1].data == vechi && (!opcode || sample_q[i + 2].data == opcode)) {
@@ -605,7 +633,7 @@ int decode_instruction(sample_t *sample_q, int num_samples) {
             return i + 1;
          }
       }
-      if (arguments.idx_sync < 0) {
+      if (notype) {
          // Do this by dead reconning
          rst_seen = (arguments.cpu_type == CPU_65C02 || arguments.cpu_type == CPU_65C02_ROCKWELL) ? 8 : 9;
          // We could also check the vector
@@ -677,6 +705,8 @@ void decode(FILE *stream) {
    int idx_rdy   = arguments.idx_rdy ;
    int idx_phi2  = arguments.idx_phi2;
    int idx_rst   = arguments.idx_rst;
+   int idx_vda   = arguments.idx_vda;
+   int idx_vpa   = arguments.idx_vpa;
 
    // Default Pin values
    int bus_data  =  0;
@@ -685,6 +715,8 @@ void decode(FILE *stream) {
    int pin_rdy   =  1;
    int pin_phi2  =  0;
    int pin_rst   =  1;
+   int pin_vda   =  0;
+   int pin_vpa   =  0;
 
    int num;
 
@@ -697,6 +729,8 @@ void decode(FILE *stream) {
    int last_phi2 = -1;
 
    sample_t s;
+
+   int c816 = (arguments.cpu_type == CPU_65C816);
 
    if (arguments.byte) {
       s.rnw = -1;
@@ -747,8 +781,17 @@ void decode(FILE *stream) {
                if (idx_rnw >= 0) {
                   pin_rnw = (sample >> idx_rnw ) & 1;
                }
-               if (idx_sync >= 0) {
-                  pin_sync = (sample >> idx_sync) & 1;
+               if (c816) {
+                  if (idx_vda >= 0) {
+                     pin_vda = (sample >> idx_vda) & 1;
+                  }
+                  if (idx_vpa >= 0) {
+                     pin_vpa = (sample >> idx_vpa) & 1;
+                  }
+               } else {
+                  if (idx_sync >= 0) {
+                     pin_sync = (sample >> idx_sync) & 1;
+                  }
                }
                if (idx_rdy >= 0) {
                   pin_rdy = (sample >> idx_rdy) & 1;
@@ -772,8 +815,17 @@ void decode(FILE *stream) {
                   if (idx_rnw >= 0) {
                      pin_rnw = (sample >> idx_rnw ) & 1;
                   }
-                  if (idx_sync >= 0) {
-                     pin_sync = (sample >> idx_sync) & 1;
+                  if (c816) {
+                     if (idx_vda >= 0) {
+                        pin_vda = (sample >> idx_vda) & 1;
+                     }
+                     if (idx_vpa >= 0) {
+                        pin_vpa = (sample >> idx_vpa) & 1;
+                     }
+                  } else {
+                     if (idx_sync >= 0) {
+                        pin_sync = (sample >> idx_sync) & 1;
+                     }
                   }
                   if (idx_rst >= 0) {
                      pin_rst = (sample >> idx_rst) & 1;
@@ -821,10 +873,18 @@ void decode(FILE *stream) {
                continue;
 
             // Build the sample
-            if (idx_sync < 0) {
-               s.type = UNKNOWN;
+            if (c816) {
+               if (idx_vda < 0 || idx_vpa < 0) {
+                  s.type = UNKNOWN;
+               } else {
+                  s.type = pin_vpa ? (pin_vda ? OPCODE : PROGRAM) : (pin_vda ? DATA : INTERNAL);
+               }
             } else {
-               s.type = pin_sync ? OPCODE : DATA;
+               if (idx_sync < 0) {
+                  s.type = UNKNOWN;
+               } else {
+                  s.type = pin_sync ? OPCODE : DATA;
+               }
             }
             s.data = bus_data;
             if (idx_rnw < 0) {
@@ -859,6 +919,8 @@ int main(int argc, char *argv[]) {
    arguments.idx_rdy          = 10;
    arguments.idx_phi2         = 11;
    arguments.idx_rst          = 14;
+   arguments.idx_vpa          =  9;
+   arguments.idx_vda          = 11;
    arguments.vec_rst          = 0xA9D9CD; // These are the defaults for the beeb
    arguments.machine          = MACHINE_DEFAULT;
 
@@ -893,6 +955,8 @@ int main(int argc, char *argv[]) {
       arguments.idx_rdy  = -1;
       arguments.idx_phi2 = -1;
       arguments.idx_rst  = -1;
+      arguments.idx_vpa  = -1;
+      arguments.idx_vda  = -1;
    }
 
    if (arguments.profile) {
@@ -910,7 +974,11 @@ int main(int argc, char *argv[]) {
       }
    }
 
-   em = &em_6502;
+   if (arguments.cpu_type == CPU_65C816) {
+      em = &em_65816;
+   } else {
+      em = &em_6502;
+   }
 
    // This flag tells the sync-less cycle count estimation to infer additional cycles on the master
    // It's needed when rdy is not being explicitely sampled

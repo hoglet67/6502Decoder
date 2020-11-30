@@ -3,7 +3,7 @@
 #include <string.h>
 #include <inttypes.h>
 #include "tube_decode.h"
-#include "em_6502.h"
+#include "em_65816.h"
 
 // ====================================================================
 // Type Defs
@@ -25,7 +25,15 @@ typedef enum {
    ABSY,
    IND16,
    IND1X,
-   ZPR
+   ZPR,
+   SR,
+   ISY,
+   IDL,
+   IDLY,
+   ABL,
+   ALX,
+   IAL,
+   BM
 } AddrMode ;
 
 typedef enum {
@@ -50,6 +58,8 @@ typedef struct {
    OpType optype;
    void (*emulate)(int, int);
    int len;
+   int m_extra;
+   int x_extra;
    const char *fmt;
 } InstrType;
 
@@ -59,17 +69,20 @@ typedef struct {
 // ====================================================================
 
 #define OFFSET_A   2
-#define OFFSET_X   7
-#define OFFSET_Y  12
-#define OFFSET_S  18
-#define OFFSET_N  23
-#define OFFSET_V  27
-#define OFFSET_D  31
-#define OFFSET_I  35
-#define OFFSET_Z  39
-#define OFFSET_C  43
+#define OFFSET_X   9
+#define OFFSET_Y  16
+#define OFFSET_S  24
+#define OFFSET_N  31
+#define OFFSET_V  35
+#define OFFSET_MS 39
+#define OFFSET_XS 43
+#define OFFSET_D  47
+#define OFFSET_I  51
+#define OFFSET_Z  55
+#define OFFSET_C  59
+#define OFFSET_E  63
 
-static const char default_state[] = "A=?? X=?? Y=?? SP=?? N=? V=? D=? I=? Z=? C=?";
+static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=? D=? I=? Z=? C=? E=?";
 
 static cpu_t cpu_type;
 static int c02;
@@ -78,24 +91,33 @@ static int master_nordy;
 
 static InstrType *instr_table;
 
-static AddrModeType addr_mode_table[] = {
-   {1,    "%1$s"},                  // IMP
-   {1,    "%1$s A"},                // IMPA
-   {2,    "%1$s %2$s"},             // BRA
-   {2,    "%1$s #%2$02X"},          // IMM
-   {2,    "%1$s %2$02X"},           // ZP
-   {2,    "%1$s %2$02X,X"},         // ZPX
-   {2,    "%1$s %2$02X,Y"},         // ZPY
-   {2,    "%1$s (%2$02X,X)"},       // INDX
-   {2,    "%1$s (%2$02X),Y"},       // INDY
-   {2,    "%1$s (%2$02X)"},         // IND
-   {3,    "%1$s %3$02X%2$02X"},     // ABS
-   {3,    "%1$s %3$02X%2$02X,X"},   // ABSX
-   {3,    "%1$s %3$02X%2$02X,Y"},   // ABSY
-   {3,    "%1$s (%3$02X%2$02X)"},   // IND1
-   {3,    "%1$s (%3$02X%2$02X,X)"}, // IND1X
-   {3,    "%1$s %2$02X,%3$s"}       // ZPR
+AddrModeType addr_mode_table[] = {
+   {1,    "%1$s"},                     // IMP
+   {1,    "%1$s A"},                   // IMPA
+   {2,    "%1$s %2$s"},                // BRA
+   {2,    "%1$s #%2$02X"},             // IMM
+   {2,    "%1$s %2$02X"},              // ZP
+   {2,    "%1$s %2$02X,X"},            // ZPX
+   {2,    "%1$s %2$02X,Y"},            // ZPY
+   {2,    "%1$s (%2$02X,X)"},          // INDX
+   {2,    "%1$s (%2$02X),Y"},          // INDY
+   {2,    "%1$s (%2$02X)"},            // IND
+   {3,    "%1$s %3$02X%2$02X"},        // ABS
+   {3,    "%1$s %3$02X%2$02X,X"},      // ABSX
+   {3,    "%1$s %3$02X%2$02X,Y"},      // ABSY
+   {3,    "%1$s (%3$02X%2$02X)"},      // IND1
+   {3,    "%1$s (%3$02X%2$02X,X)"},    // IND1X
+   {3,    "%1$s %2$02X,%3$s"},         // ZPR
+   {2,    "%1$s %2$02X,S"},            // SR
+   {2,    "%1$s (%2$02X,S),Y"},        // ISY
+   {2,    "%1$s [%2$02X]"},            // IDL
+   {2,    "%1$s [%2$02X],Y"},          // IDLY
+   {4,    "%1$s %4$02X%3$02X%2$02X"},  // ABL
+   {4,    "%1$s %4$02X%3$02X%2$02X,X"},// ABLX
+   {3,    "%1$s [%3$02X%2$02X]"},      // IAL
+   {3,    "%1$s %2$02X,%3$02X"}        // BM
 };
+
 
 static char buffer[80];
 
@@ -106,6 +128,12 @@ static int Y = -1;
 static int S = -1;
 static int PC = -1;
 
+// 65C816 additional registers: -1 means unknown
+static int B = -1;  // Accumulator bits 15..8
+static int DP = -1; // 16-bit Direct Page Register
+static int DB = -1; // 8-bit Data Bank Register
+static int PB = -1; // 8-bit Program Bank Register
+
 // 6502 flags: -1 means unknown
 static int N = -1;
 static int V = -1;
@@ -114,20 +142,69 @@ static int I = -1;
 static int Z = -1;
 static int C = -1;
 
+// 65C816 additional flags: -1 means unknown
+// TODO: these should start as unknown
+static int MS = 1; // Accumulator and Memeory Size Flag
+static int XS = 1; // Index Register Size Flag
+static int E =  1; // Emulation Mode Flag, updated by XCE
+
 // indicate state prediction failed
 static int failflag = 0;
 
-// 64KB Main Memory
-static int memory[0x10000];
+// 16MB Main Memory
+static int memory[0x1000000];
 
-static char ILLEGAL[] = "???";
+static char *x1_ops[] = {
+   "CPX",
+   "CPY",
+   "DEX",
+   "DEY",
+   "INX",
+   "INY",
+   "LDX",
+   "LDY",
+   "PHX",
+   "PHY",
+   "PLX",
+   "PLY",
+   "STX",
+   "STY",
+   NULL
+};
+
+static char *m1_ops[] = {
+   "ADC",
+   "AND",
+   "BIT",
+   "CMP",
+   "EOR",
+   "LDA",
+   "ORA",
+   "PHA",
+   "PLA",
+   "SBC",
+   "STA",
+   "STZ",
+   NULL
+};
+
+static char *m2_ops[] = {
+   "ASL",
+   "DEC",
+   "INC",
+   "LSR",
+   "ROL",
+   "ROR",
+   "TSB",
+   "TRB",
+   NULL
+};
 
 // ====================================================================
 // Forward declarations
 // ====================================================================
 
-static InstrType instr_table_6502[];
-static InstrType instr_table_65c02[];
+static InstrType instr_table_65c816[];
 
 static void op_STA(int operand, int ea);
 static void op_STX(int operand, int ea);
@@ -260,187 +337,10 @@ static void interrupt(int pc, int flags, int vector) {
 
 static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
 
-   static int mhz1_phase = 1;
+   printf("VPA/VDA must be connected in 65816 mode\n");
+   exit(1);
 
-   if (intr_seen) {
-      mhz1_phase ^= 1;
-      return 7;
-   }
-
-   int opcode = sample_q[0].data;
-   int op1    = sample_q[1].data;
-   int op2    = sample_q[opcode == 0x20 ? 5 : ((opcode & 0x0f) == 0x0f) ? 4 : 2].data;
-
-   InstrType *instr = &instr_table[opcode];
-
-   int cycle_count = instr->cycles;
-
-   // Account for extra cycle in ADC/SBC in decimal mode in C02
-   if (c02 && instr->decimalcorrect && D == 1) {
-      cycle_count++;
-   }
-
-   // Account for extra cycle in a page crossing in (indirect), Y (not stores)
-   // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
-   if ((instr->mode == INDY) && (instr->optype != WRITEOP) && Y >= 0) {
-      int base = (sample_q[3].data << 8) + sample_q[2].data;
-      if ((base & 0xff00) != ((base + Y) & 0xff00)) {
-         cycle_count++;
-      }
-   }
-
-   // Account for extra cycle in a page crossing in absolute indexed (not stores)
-   if (((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype != WRITEOP)) {
-      // 6502:  Need to exclude ASL/ROL/LSR/ROR/DEC/INC, which are 7 cycles regardless
-      // 65C02: Need to exclude DEC/INC, which are 7 cycles regardless
-      if ((opcode != 0xDE) && (opcode != 0xFE) && (c02 || ((opcode != 0x1E) && (opcode != 0x3E) && (opcode != 0x5E) && (opcode != 0x7E)))) {
-         int index = (instr->mode == ABSX) ? X : Y;
-         if (index >= 0) {
-            int base = op1 + (op2 << 8);
-            if ((base & 0xff00) != ((base + index) & 0xff00)) {
-               cycle_count++;
-            }
-         }
-      }
-   }
-
-   // Account for extra cycles in BBR/BBS
-   //
-   // Example: BBR0, $50, +6
-   // 0 8f 1 1 1 <opcode>
-   // 1 50 1 0 1 <op1> i.e. ZP address
-   // 2 01 1 0 1 <mem rd>
-   // 3 01 1 0 1 <mem rd>
-   // 4 06 1 0 1 <op2> i.e.
-   // 5 20 1 0 1 (<branch taken penalty>)
-   // 6          (<page crossed penalty>)
-   //
-
-   if (cpu_type == CPU_65C02_ROCKWELL && (opcode & 0x0f) == 0x0f) {
-      int operand = sample_q[2].data;
-      // invert operand for BBR
-      if (opcode <= 0x80) {
-         operand ^= 0xff;
-      }
-      int bit = (opcode >> 4) & 7;
-      // Figure out if the branch was taken
-      if (operand & (1 << bit)) {
-         // A taken bbr/bbs branch is 6 cycles, not 5
-         cycle_count = 6;
-         // A taken bbr/bbs branch that crosses a page boundary is 7 cycles
-         if (PC >= 0) {
-            int target =  (PC + 3) + ((int8_t)(op2));
-            if ((target & 0xFF00) != ((PC + 3) & 0xff00)) {
-               cycle_count = 7;
-            }
-         }
-      }
-   }
-
-   // Account for extra cycles in a branch
-   if (((opcode & 0x1f) == 0x10) || (opcode == 0x80)) {
-      // Default to backards branches taken, forward not taken
-      int taken = ((int8_t)op1) < 0;
-      switch (opcode) {
-      case 0x10: // BPL
-         if (N >= 0) {
-            taken = !N;
-         }
-         break;
-      case 0x30: // BMI
-         if (N >= 0) {
-            taken = N;
-         }
-         break;
-      case 0x50: // BVC
-         if (V >= 0) {
-            taken = !V;
-         }
-         break;
-      case 0x70: // BVS
-         if (V >= 0) {
-            taken = V;
-         }
-         break;
-      case 0x80: // BRA
-         taken = 1;
-         break;
-      case 0x90: // BCC
-         if (C >= 0) {
-            taken = !C;
-         }
-         break;
-      case 0xB0: // BCS
-         if (C >= 0) {
-            taken = C;
-         }
-         break;
-      case 0xD0: // BNE
-         if (Z >= 0) {
-            taken = !Z;
-         }
-         break;
-      case 0xF0: // BEQ
-         if (Z >= 0) {
-            taken = Z;
-         }
-         break;
-      }
-      if (taken) {
-         // A taken branch is 3 cycles, not 2
-         cycle_count = 3;
-         // A taken branch that crosses a page boundary is 4 cycle
-         if (PC >= 0) {
-            int target =  (PC + 2) + ((int8_t)(op1));
-            if ((target & 0xFF00) != ((PC + 2) & 0xff00)) {
-               cycle_count = 4;
-            }
-         }
-      }
-   }
-
-   // Master specific behaviour to remain in sync if rdy is not available
-   if (master_nordy) {
-      if (instr->len == 3) {
-         if ((op2 == 0xfc) ||              // &FC00-&FCFF
-             (op2 == 0xfd) ||              // &FD00-&FDFF
-             (op2 == 0xfe && (
-             ((op1 & 0xE0) == 0x00) ||     // &FE00-&FE1F
-             ((op1 & 0xC0) == 0x40) ||     // &FE40-&FE7F
-             ((op1 & 0xE0) == 0x80) ||     // &FE80-&FE9F
-             ((op1 & 0xE0) == 0xC0)        // &FEC0-&FEDF
-            ))) {
-            // Use STA/STX/STA to determine 1MHz clock phase
-            if (opcode == 0x8C || opcode == 0x8D || opcode == 0x8E) {
-               if (sample_q[3].data == sample_q[4].data) {
-                  int new_phase;
-                  if (sample_q[3].data == sample_q[5].data) {
-                     new_phase = 1;
-                  } else {
-                     new_phase = 0;
-                  }
-                  if (mhz1_phase != new_phase) {
-                     //printf("correcting 1MHz phase\n");
-                     mhz1_phase = new_phase;
-                  }
-               } else {
-                  printf("fail: 1MHz access not extended as expected\n");
-               }
-            }
-            // Correct cycle count based on expected cycle stretching behaviour
-            if (opcode == 0x9D) {
-               // STA abs, X which has an unfortunate dummy cycle
-               cycle_count += 2 + mhz1_phase;
-            } else {
-               cycle_count += 1 + mhz1_phase;
-            }
-         }
-      }
-      // Toggle the phase every cycle
-      mhz1_phase ^= (cycle_count & 1);
-   }
-
-   return cycle_count;
+   return 0;
 }
 
 static int count_cycles_with_sync(sample_t *sample_q) {
@@ -461,42 +361,45 @@ static int count_cycles_with_sync(sample_t *sample_q) {
 // Public Methods
 // ====================================================================
 
-static void em_6502_init(cpu_t cpu_type, int undocumented, int decode_bbctube, int mast_nordy) {
+static void em_65816_init(cpu_t cpu_type, int undocumented, int decode_bbctube, int mast_nordy) {
    switch (cpu_type) {
-   case CPU_6502:
-      instr_table = instr_table_6502;
-      c02 = 0;
-      break;
-   case CPU_65C02:
-   case CPU_65C02_ROCKWELL:
+   case CPU_65C816:
       c02 = 1;
-      instr_table = instr_table_65c02;
+      instr_table = instr_table_65c816;
       break;
    default:
-      printf("em_6502_init called with unsupported cpu_type (%d)\n", cpu_type);
+      printf("em_65816_init called with unsupported cpu_type (%d)\n", cpu_type);
       exit(1);
    }
    bbctube = decode_bbctube;
    master_nordy = mast_nordy;
-   // If not supporting the Rockwell C02 extensions, tweak the cycle countes
-   if (cpu_type == CPU_65C02) {
-      // x7 (RMB/SMB): 5 cycles -> 1 cycles
-      // xF (BBR/BBS): 5 cycles -> 1 cycles
-      for (int i = 0x07; i <= 0xff; i+= 0x08) {
-         instr_table[i].mnemonic = ILLEGAL;
-         instr_table[i].mode     = IMP;
-         instr_table[i].cycles   = 1;
-         instr_table[i].optype   = READOP;
-         instr_table[i].len      = 1;
-      }
-   }
    InstrType *instr = instr_table;
    for (int i = 0; i < 256; i++) {
-      // Remove the undocumented instructions, if not supported
-      if (instr->undocumented && !undocumented) {
-         instr->mnemonic = ILLEGAL;
-         instr->mode     = IMP;
-         instr->cycles   = 1;
+      // Compute the extra cycles for the 816 when M=0 and/or X=0
+      instr->m_extra = 0;
+      instr->x_extra = 0;
+      if (instr->mode != IMPA) {
+         // add 1 cycle if m=0: ADC, AND, BIT, CMP, EOR, LDA, ORA, PHA, PLA, SBC, STA, STZ
+         for (int j = 0; m1_ops[j]; j++) {
+            if (!strcmp(instr->mnemonic, m1_ops[j])) {
+               instr->m_extra++;
+               break;
+            }
+         }
+         // add 2 cycles if m=0 (NOT the implied ones): ASL, DEC, INC, LSR, ROL, ROR, TRB, TSB
+         for (int j = 0; m2_ops[j]; j++) {
+            if (!strcmp(instr->mnemonic, m2_ops[j])) {
+               instr->m_extra += 2;
+               break;
+            }
+         }
+         // add 1 cycle if x=0: CPX, CPY, LDX, LDY, STX, STY, PLX, PLY, PHX, PHY
+         for (int j = 0; x1_ops[j]; j++) {
+            if (!strcmp(instr->mnemonic, x1_ops[j])) {
+               instr->x_extra++;
+               break;
+            }
+         }
       }
       // Copy the length and format from the address mode, for efficiency
       instr->len = addr_mode_table[instr->mode].len;
@@ -509,7 +412,7 @@ static void em_6502_init(cpu_t cpu_type, int undocumented, int decode_bbctube, i
 }
 
 
-static int em_6502_match_interrupt(sample_t *sample_q, int num_samples) {
+static int em_65816_match_interrupt(sample_t *sample_q, int num_samples) {
    // Check we have enough valid samples
    if (num_samples < 7) {
       return 0;
@@ -541,7 +444,7 @@ static int em_6502_match_interrupt(sample_t *sample_q, int num_samples) {
    return 0;
 }
 
-static int em_6502_count_cycles(sample_t *sample_q, int intr_seen) {
+static int em_65816_count_cycles(sample_t *sample_q, int intr_seen) {
    if (sample_q[0].type == UNKNOWN) {
       return count_cycles_without_sync(sample_q, intr_seen);
    } else {
@@ -549,7 +452,7 @@ static int em_6502_count_cycles(sample_t *sample_q, int intr_seen) {
    }
 }
 
-static void em_6502_reset(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
+static void em_65816_reset(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
    instruction->pc = -1;
    A = -1;
    X = -1;
@@ -561,13 +464,17 @@ static void em_6502_reset(sample_t *sample_q, int num_cycles, instruction_t *ins
    Z = -1;
    C = -1;
    I = 1;
-   if (c02) {
-      D = 0;
-   }
+   D = 0;
+   // Extra 816 flags
+   B = -1;
+   DP = 0;
+   E = 1;
+   MS = 1;
+   XS = 1;
    PC = (sample_q[num_cycles - 1].data << 8) + sample_q[num_cycles - 2].data;
 }
 
-static void em_6502_interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
+static void em_65816_interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
    int pc   = (sample_q[2].data << 8) + sample_q[3].data;
    int flags = sample_q[4].data;
    int vector = (sample_q[6].data << 8) + sample_q[5].data;
@@ -575,7 +482,7 @@ static void em_6502_interrupt(sample_t *sample_q, int num_cycles, instruction_t 
    interrupt(pc, flags, vector);
 }
 
-static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
+static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
 
    // Unpack the instruction bytes
    int opcode = sample_q[0].data;
@@ -587,11 +494,7 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
 
    int op1 = (opcount < 1) ? 0 : sample_q[1].data;
 
-   int op2 =
-      (opcount < 2)             ? 0 :
-      (opcode == 0x20)          ? sample_q[5].data :
-      ((opcode & 0x0f) == 0x0f) ? sample_q[4].data : sample_q[2].data;
-
+   int op2 = (opcount < 2) ? 0 : sample_q[2].data;
 
    // Save the instruction state
    instruction->opcode  = opcode;
@@ -603,7 +506,7 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
    if (opcode == 0x00) {
       instruction->pc = (((sample_q[3].data << 8) + sample_q[4].data) - 2) & 0xffff;
    } else if (opcode == 0x20) {
-      instruction->pc = (((sample_q[3].data << 8) + sample_q[4].data) - 2) & 0xffff;
+      instruction->pc = (((sample_q[4].data << 8) + sample_q[5].data) - 2) & 0xffff;
    } else {
       instruction->pc = PC;
    }
@@ -614,7 +517,7 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
       if (instr->optype == RMWOP) {
          // e.g. <opcode> <op1> <op2> <read> <write> <write>
          // Want to pick off the read
-         operand = sample_q[3].data;
+         operand = sample_q[num_cycles - 3].data;
       } else if (instr->optype == BRANCHOP) {
          // the operand is true if branch taken
          operand = (num_cycles != 2);
@@ -624,8 +527,8 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
          operand = (sample_q[2].data << 16) +  (sample_q[3].data << 8) + sample_q[4].data;
       } else if (opcode == 0x20) {
          // JSR: the operand is the data pushed to the stack (PCH, PCL)
-         // <opcode> <op1> <read dummy> <write pch> <write pcl> <op2>
-         operand = (sample_q[3].data << 8) + sample_q[4].data;
+         // <opcode> <op1> <op2> <read dummy> <write pch> <write pcl>
+         operand = (sample_q[4].data << 8) + sample_q[5].data;
       } else if (opcode == 0x40) {
          // RTI: the operand is the data pulled from the stack (P, PCL, PCH)
          // <opcode> <op1> <read dummy> <read p> <read pcl> <read pch>
@@ -734,7 +637,7 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
    }
 }
 
-static int em_6502_disassemble(instruction_t *instruction) {
+static int em_65816_disassemble(instruction_t *instruction) {
 
    int numchars;
    int offset;
@@ -744,6 +647,7 @@ static int em_6502_disassemble(instruction_t *instruction) {
    int opcode = instruction->opcode;
    int op1    = instruction->op1;
    int op2    = instruction->op2;
+   int op3    = instruction->op3;
    int pc     = instruction->pc;
 
    // lookup the entry for the instruction
@@ -791,6 +695,10 @@ static int em_6502_disassemble(instruction_t *instruction) {
    case INDX:
    case INDY:
    case IND:
+   case SR:
+   case ISY:
+   case IDL:
+   case IDLY:
       numchars = printf(fmt, mnemonic, op1);
       break;
    case ABS:
@@ -798,7 +706,13 @@ static int em_6502_disassemble(instruction_t *instruction) {
    case ABSY:
    case IND16:
    case IND1X:
+   case IAL:
+   case BM:
       numchars = printf(fmt, mnemonic, op1, op2);
+      break;
+   case ABL:
+   case ALX:
+      numchars = printf(fmt, mnemonic, op1, op2, op3);
       break;
    default:
       numchars = 0;
@@ -807,34 +721,40 @@ static int em_6502_disassemble(instruction_t *instruction) {
    return numchars;
 }
 
-static int em_6502_get_PC() {
+static int em_65816_get_PC() {
    return PC;
 }
 
 
-static int em_6502_read_memory(int address) {
+static int em_65816_read_memory(int address) {
    return memory[address];
 }
 
-static char *em_6502_get_state() {
+static char *em_65816_get_state() {
    strcpy(buffer, default_state);
    if (A >= 0) {
-      write_hex2(buffer + OFFSET_A, A);
+      write_hex4(buffer + OFFSET_A, A);
    }
    if (X >= 0) {
-      write_hex2(buffer + OFFSET_X, X);
+      write_hex4(buffer + OFFSET_X, X);
    }
    if (Y >= 0) {
-      write_hex2(buffer + OFFSET_Y, Y);
+      write_hex4(buffer + OFFSET_Y, Y);
    }
    if (S >= 0) {
-      write_hex2(buffer + OFFSET_S, S);
+      write_hex4(buffer + OFFSET_S, S);
    }
    if (N >= 0) {
       buffer[OFFSET_N] = '0' + N;
    }
    if (V >= 0) {
       buffer[OFFSET_V] = '0' + V;
+   }
+   if (MS >= 0) {
+      buffer[OFFSET_MS] = '0' + MS;
+   }
+   if (XS >= 0) {
+      buffer[OFFSET_XS] = '0' + XS;
    }
    if (D >= 0) {
       buffer[OFFSET_D] = '0' + D;
@@ -848,31 +768,320 @@ static char *em_6502_get_state() {
    if (C >= 0) {
       buffer[OFFSET_C] = '0' + C;
    }
+   if (E >= 0) {
+      buffer[OFFSET_E] = '0' + E;
+   }
    return buffer;
 }
 
-static int em_6502_get_and_clear_fail() {
+static int em_65816_get_and_clear_fail() {
    int ret = failflag;
    failflag = 0;
    return ret;
 }
 
-cpu_emulator_t em_6502 = {
-   .init = em_6502_init,
-   .match_interrupt = em_6502_match_interrupt,
-   .count_cycles = em_6502_count_cycles,
-   .reset = em_6502_reset,
-   .interrupt = em_6502_interrupt,
-   .emulate = em_6502_emulate,
-   .disassemble = em_6502_disassemble,
-   .get_PC = em_6502_get_PC,
-   .read_memory = em_6502_read_memory,
-   .get_state = em_6502_get_state,
-   .get_and_clear_fail = em_6502_get_and_clear_fail,
+cpu_emulator_t em_65816 = {
+   .init = em_65816_init,
+   .match_interrupt = em_65816_match_interrupt,
+   .count_cycles = em_65816_count_cycles,
+   .reset = em_65816_reset,
+   .interrupt = em_65816_interrupt,
+   .emulate = em_65816_emulate,
+   .disassemble = em_65816_disassemble,
+   .get_PC = em_65816_get_PC,
+   .read_memory = em_65816_read_memory,
+   .get_state = em_65816_get_state,
+   .get_and_clear_fail = em_65816_get_and_clear_fail,
 };
 
 // ====================================================================
-// Individual Instructions
+// 65816 specific instructions
+// ====================================================================
+
+// Coprocessor
+
+static void op_COP(int operand, int ea) {
+   D = 0;
+   I = 0;
+}
+
+// Push Effective Address
+static void op_PEA(int operand, int ea) {
+   if (S >= 0) {
+      memory_write((operand >> 8) & 255, 0x100 + S);
+      S = (S - 1) & 255;
+      memory_write(operand & 255, 0x100 + S);
+      S = (S - 1) & 255;
+   }
+}
+
+static void op_PEI(int operand, int ea) {
+   // TODO
+}
+
+static void op_PER(int operand, int ea) {
+   // TODO
+}
+
+// Push Data Bank Register
+static void op_PHB(int operand, int ea) {
+   if (S >= 0) {
+      memory_write(operand, 0x100 + S);
+      S = (S - 1) & 255;
+   }
+   if (DB >= 0) {
+      if (operand != DB) {
+         failflag = 1;
+      }
+   }
+   DB = operand;
+}
+
+// Push Program Bank Register
+static void op_PHK(int operand, int ea) {
+   if (S >= 0) {
+      memory_write(operand, 0x100 + S);
+      S = (S - 1) & 255;
+   }
+   if (PB >= 0) {
+      if (operand != PB) {
+         failflag = 1;
+      }
+   }
+   PB = operand;
+}
+
+// Push Direct Page Register
+static void op_PHD(int operand, int ea) {
+   if (S >= 0) {
+      memory_write((operand >> 8) & 255, 0x100 + S);
+      S = (S - 1) & 255;
+      memory_write(operand & 255, 0x100 + S);
+      S = (S - 1) & 255;
+   }
+   if (DP >= 0) {
+      if (operand != DP) {
+         failflag = 1;
+      }
+   }
+   DP = operand;
+}
+
+// Pull Data Bank Register
+static void op_PLB(int operand, int ea) {
+   DB = operand;
+   set_NZ(DB);
+   if (S >= 0) {
+      S = (S + 1) & 255;
+      memory_read(operand, 0x100 + S);
+   }
+}
+
+// Pull Direct Page Register
+static void op_PLD(int operand, int ea) {
+   DP = operand;
+   set_NZ(DP);
+   if (S >= 0) {
+      S = (S + 1) & 255;
+      memory_read((operand >> 8) & 255, 0x100 + S);
+      S = (S + 1) & 255;
+      memory_read(operand & 255, 0x100 + S);
+   }
+}
+
+
+// Block Move (Decrementing)
+static void op_MVP(int operand, int ea) {
+   if (A >= 0 && B >= 0) {
+      int C = (B << 8) + A;
+      C--;
+      A = C & 0xff;
+      B = (C >> 8) & 0xff;
+      if (X >= 0) {
+         X = (X - 1) & 0xFFFF;
+      }
+      if (Y >= 0) {
+         Y = (Y - 1) & 0xFFFF;
+      }
+   } else {
+      A = -1;
+      B = -1;
+      X = -1;
+      Y = -1;
+   }
+}
+
+// Block Move (Incrementing)
+static void op_MVN(int operand, int ea) {
+   if (A >= 0 && B >= 0) {
+      int C = (B << 8) + A;
+      C--;
+      A = C & 0xff;
+      B = (C >> 8) & 0xff;
+      if (X >= 0) {
+         X = (X + 1) & 0xFFFF;
+      }
+      if (Y >= 0) {
+         Y = (Y + 1) & 0xFFFF;
+      }
+   } else {
+      A = -1;
+      B = -1;
+      X = -1;
+      Y = -1;
+   }
+}
+
+// Transfer Transfer C accumulator to Direct Page register
+static void op_TCD(int operand, int ea) {
+   if (B >= 0 && A >= 0) {
+      DP = (B << 8) + A;
+      // TODO: Need to pick the right sign bit
+      set_NZ(DP);
+   } else {
+      DP = -1;
+      set_NZ_unknown();
+   }
+}
+
+// Transfer Transfer C accumulator to Stack pointer
+static void op_TCS(int operand, int ea) {
+   if (B >= 0 && A >= 0) {
+      S = (B << 8) + A;
+   } else {
+      S = -1;
+   }
+}
+
+// Transfer Transfer Direct Page register to C accumulator
+static void op_TDC(int operand, int ea) {
+   if (DP >= 0) {
+      A = DP & 255;
+      B = (DP >> 8) & 255;
+      // TODO: Need to pick the right sign bit
+      set_NZ(DP);
+   } else {
+      A = -1;
+      B = -1;
+      set_NZ_unknown();
+   }
+}
+
+// Transfer Transfer Stack pointer to C accumulator
+static void op_TSC(int operand, int ea) {
+   if (S >= 0) {
+      A = S & 255;
+      B = (S >> 8) & 255;
+      // TODO: Need to pick the right sign bit
+      set_NZ(S);
+   } else {
+      A = -1;
+      B = -1;
+      set_NZ_unknown();
+   }
+}
+
+static void op_TXY(int operand, int ea) {
+   if (X >= 0) {
+      Y = X;
+      set_NZ(Y);
+   } else {
+      Y = -1;
+      set_NZ_unknown();
+   }
+}
+
+static void op_TYX(int operand, int ea) {
+   if (Y >= 0) {
+      X = Y;
+      set_NZ(X);
+   } else {
+      X = -1;
+      set_NZ_unknown();
+   }
+}
+
+// Exchange A and B
+static void op_XBA(int operand, int ea) {
+   int tmp = A;
+   B = A;
+   A = tmp;
+   if (A >= 0) {
+      // Always based on the 8-bit result of A
+      set_NZ(A);
+   } else {
+      set_NZ_unknown();
+   }
+}
+
+static void op_XCE(int operand, int ea) {
+   int tmp = C;
+   C = E;
+   E = tmp;
+   if (E < 0) {
+      MS = -1;
+      XS = -1;
+   } else if (E > 0) {
+      MS = 1;
+      XS = 1;
+      X &= 0x00ff;
+      Y &= 0x00ff;
+      S &= 0x00ff;
+      S |= 0x0100;
+   }
+}
+
+static void repsep(int operand, int val) {
+   if (operand & 0x80) {
+      N = val;
+   }
+   if (operand & 0x40) {
+      V = val;
+   }
+   if (E == 0) {
+      if (operand & 0x20) {
+         MS = val;
+      }
+      if (operand & 0x10) {
+         XS = val;
+      }
+   }
+   if (operand & 0x08) {
+      D = val;
+   }
+   if (operand & 0x04) {
+      I = val;
+   }
+   if (operand & 0x02) {
+      Z = val;
+   }
+   if (operand & 0x01) {
+      C = val;
+   }
+}
+
+// Reset/Set Processor Status Bits
+static void op_REP(int operand, int ea) {
+   repsep(operand, 0);
+}
+
+static void op_SEP(int operand, int ea) {
+   repsep(operand, 1);
+}
+
+// Return from Subroutine Long
+static void op_RTL(int operand, int ea) {
+   // RTL: the operand is the data pulled from the stack (PCL, PCH, PB)
+   if (S >= 0) {
+      S = (S + 1) & 255;
+      memory_read((operand >> 8) & 255, 0x100 + S);
+      S = (S + 1) & 255;
+      memory_read(operand & 255, 0x100 + S);
+   }
+}
+
+// ====================================================================
+// 65816/6502 instructions
 // ====================================================================
 
 static void op_ADC(int operand, int ea) {
@@ -1575,219 +1784,211 @@ static void op_TYA(int operand, int ea) {
    }
 }
 
-static void op_RMB(int operand, int ea) {
-   memory_write(operand, ea);
-}
-
-static void op_SMB(int operand, int ea) {
-   memory_write(operand, ea);
-}
-
 // ====================================================================
 // Opcode Tables
 // ====================================================================
 
-static InstrType instr_table_65c02[] = {
+static InstrType instr_table_65c816[] = {
    /* 00 */   { "BRK",  0, IMM   , 7, 0, WRITEOP,  op_BRK},
    /* 01 */   { "ORA",  0, INDX  , 6, 0, READOP,   op_ORA},
-   /* 02 */   { "NOP",  0, IMM   , 2, 0, READOP,   0},
-   /* 03 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 02 */   { "COP",  0, IMM   , 7, 0, READOP,   op_COP},
+   /* 03 */   { "ORA",  0, SR    , 4, 0, READOP,   op_ORA},
    /* 04 */   { "TSB",  0, ZP    , 5, 0, TSBTRBOP, op_TSB},
    /* 05 */   { "ORA",  0, ZP    , 3, 0, READOP,   op_ORA},
    /* 06 */   { "ASL",  0, ZP    , 5, 0, RMWOP,    op_ASL},
-   /* 07 */   { "RMB0", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 07 */   { "ORA",  0, IDL   , 6, 0, READOP,   op_ORA},
    /* 08 */   { "PHP",  0, IMP   , 3, 0, WRITEOP,  op_PHP},
    /* 09 */   { "ORA",  0, IMM   , 2, 0, READOP,   op_ORA},
    /* 0A */   { "ASL",  0, IMPA  , 2, 0, READOP,   op_ASLA},
-   /* 0B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 0B */   { "PHD",  0, IMP   , 4, 0, WRITEOP,  op_PHD},
    /* 0C */   { "TSB",  0, ABS   , 6, 0, TSBTRBOP, op_TSB},
    /* 0D */   { "ORA",  0, ABS   , 4, 0, READOP,   op_ORA},
    /* 0E */   { "ASL",  0, ABS   , 6, 0, RMWOP,    op_ASL},
-   /* 0F */   { "BBR0", 0, ZPR   , 5, 0, READOP,   0},
+   /* 0F */   { "ORA",  0, ABL   , 5, 0, READOP,   op_ORA},
    /* 10 */   { "BPL",  0, BRA   , 2, 0, BRANCHOP, op_BPL},
    /* 11 */   { "ORA",  0, INDY  , 5, 0, READOP,   op_ORA},
    /* 12 */   { "ORA",  0, IND   , 5, 0, READOP,   op_ORA},
-   /* 13 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 13 */   { "ORA",  0, ISY   , 7, 0, READOP,   op_ORA},
    /* 14 */   { "TRB",  0, ZP    , 5, 0, TSBTRBOP, op_TRB},
    /* 15 */   { "ORA",  0, ZPX   , 4, 0, READOP,   op_ORA},
    /* 16 */   { "ASL",  0, ZPX   , 6, 0, RMWOP,    op_ASL},
-   /* 17 */   { "RMB1", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 17 */   { "ORA",  0, IDLY  , 6, 0, READOP,   op_ORA},
    /* 18 */   { "CLC",  0, IMP   , 2, 0, READOP,   op_CLC},
    /* 19 */   { "ORA",  0, ABSY  , 4, 0, READOP,   op_ORA},
    /* 1A */   { "INC",  0, IMPA  , 2, 0, READOP,   op_INCA},
-   /* 1B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 1B */   { "TCS",  0, IMP   , 2, 0, READOP,   op_TCS},
    /* 1C */   { "TRB",  0, ABS   , 6, 0, TSBTRBOP, op_TRB},
    /* 1D */   { "ORA",  0, ABSX  , 4, 0, READOP,   op_ORA},
-   /* 1E */   { "ASL",  0, ABSX  , 6, 0, RMWOP,    op_ASL},
-   /* 1F */   { "BBR1", 0, ZPR   , 5, 0, READOP,   0},
+   /* 1E */   { "ASL",  0, ABSX  , 7, 0, RMWOP,    op_ASL},
+   /* 1F */   { "ORA",  0, ALX   , 5, 0, READOP,   op_ORA},
    /* 20 */   { "JSR",  0, ABS   , 6, 0, READOP,   op_JSR},
    /* 21 */   { "AND",  0, INDX  , 6, 0, READOP,   op_AND},
-   /* 22 */   { "NOP",  0, IMM   , 2, 0, READOP,   0},
-   /* 23 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 22 */   { "JSR",  0, ABL   , 8, 0, READOP,   op_JSR},
+   /* 23 */   { "AND",  0, SR    , 4, 0, READOP,   op_AND},
    /* 24 */   { "BIT",  0, ZP    , 3, 0, READOP,   op_BIT},
    /* 25 */   { "AND",  0, ZP    , 3, 0, READOP,   op_AND},
    /* 26 */   { "ROL",  0, ZP    , 5, 0, RMWOP,    op_ROL},
-   /* 27 */   { "RMB2", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 27 */   { "AND",  0, IDL   , 6, 0, READOP,   op_AND},
    /* 28 */   { "PLP",  0, IMP   , 4, 0, READOP,   op_PLP},
    /* 29 */   { "AND",  0, IMM   , 2, 0, READOP,   op_AND},
    /* 2A */   { "ROL",  0, IMPA  , 2, 0, READOP,   op_ROLA},
-   /* 2B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 2B */   { "PLD",  0, IMP   , 5, 0, READOP,   op_PLD},
    /* 2C */   { "BIT",  0, ABS   , 4, 0, READOP,   op_BIT},
    /* 2D */   { "AND",  0, ABS   , 4, 0, READOP,   op_AND},
    /* 2E */   { "ROL",  0, ABS   , 6, 0, RMWOP,    op_ROL},
-   /* 2F */   { "BBR2", 0, ZPR   , 5, 0, READOP,   0},
+   /* 2F */   { "AND",  0, ABL   , 5, 0, READOP,   op_AND},
    /* 30 */   { "BMI",  0, BRA   , 2, 0, BRANCHOP, op_BMI},
    /* 31 */   { "AND",  0, INDY  , 5, 0, READOP,   op_AND},
    /* 32 */   { "AND",  0, IND   , 5, 0, READOP,   op_AND},
-   /* 33 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 33 */   { "AND",  0, ISY   , 7, 0, READOP,   op_AND},
    /* 34 */   { "BIT",  0, ZPX   , 4, 0, READOP,   op_BIT},
    /* 35 */   { "AND",  0, ZPX   , 4, 0, READOP,   op_AND},
    /* 36 */   { "ROL",  0, ZPX   , 6, 0, RMWOP,    op_ROL},
-   /* 37 */   { "RMB3", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 37 */   { "AND",  0, IDLY  , 6, 0, READOP,   op_AND},
    /* 38 */   { "SEC",  0, IMP   , 2, 0, READOP,   op_SEC},
    /* 39 */   { "AND",  0, ABSY  , 4, 0, READOP,   op_AND},
    /* 3A */   { "DEC",  0, IMPA  , 2, 0, READOP,   op_DECA},
-   /* 3B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 3B */   { "TSC",  0, IMP   , 2, 0, READOP,   op_TSC},
    /* 3C */   { "BIT",  0, ABSX  , 4, 0, READOP,   op_BIT},
    /* 3D */   { "AND",  0, ABSX  , 4, 0, READOP,   op_AND},
-   /* 3E */   { "ROL",  0, ABSX  , 6, 0, RMWOP,    op_ROL},
-   /* 3F */   { "BBR3", 0, ZPR   , 5, 0, READOP,   0},
+   /* 3E */   { "ROL",  0, ABSX  , 7, 0, RMWOP,    op_ROL},
+   /* 3F */   { "AND",  0, ALX   , 5, 0, READOP,   op_AND},
    /* 40 */   { "RTI",  0, IMP   , 6, 0, READOP,   op_RTI},
    /* 41 */   { "EOR",  0, INDX  , 6, 0, READOP,   op_EOR},
-   /* 42 */   { "NOP",  0, IMM   , 2, 0, READOP,   0},
-   /* 43 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 44 */   { "NOP",  0, ZP    , 3, 0, READOP,   0},
+   /* 42 */   { "WDM",  0, IMM   , 2, 0, READOP,   0},
+   /* 43 */   { "EOR",  0, SR    , 4, 0, READOP,   op_EOR},
+   /* 44 */   { "MVP",  0, BM    , 7, 0, WRITEOP,  op_MVP},
    /* 45 */   { "EOR",  0, ZP    , 3, 0, READOP,   op_EOR},
    /* 46 */   { "LSR",  0, ZP    , 5, 0, RMWOP,    op_LSR},
-   /* 47 */   { "RMB4", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 47 */   { "EOR",  0, IDL   , 6, 0, READOP,   op_EOR},
    /* 48 */   { "PHA",  0, IMP   , 3, 0, WRITEOP,  op_PHA},
    /* 49 */   { "EOR",  0, IMM   , 2, 0, READOP,   op_EOR},
    /* 4A */   { "LSR",  0, IMPA  , 2, 0, READOP,   op_LSRA},
-   /* 4B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 4B */   { "PHK",  0, IMP   , 3, 0, WRITEOP,  op_PHK},
    /* 4C */   { "JMP",  0, ABS   , 3, 0, READOP,   0},
    /* 4D */   { "EOR",  0, ABS   , 4, 0, READOP,   op_EOR},
    /* 4E */   { "LSR",  0, ABS   , 6, 0, RMWOP,    op_LSR},
-   /* 4F */   { "BBR4", 0, ZPR   , 5, 0, READOP,   0},
+   /* 4F */   { "EOR",  0, ABL   , 5, 0, READOP,   op_EOR},
    /* 50 */   { "BVC",  0, BRA   , 2, 0, BRANCHOP, op_BVC},
    /* 51 */   { "EOR",  0, INDY  , 5, 0, READOP,   op_EOR},
    /* 52 */   { "EOR",  0, IND   , 5, 0, READOP,   op_EOR},
-   /* 53 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 54 */   { "NOP",  0, ZPX   , 4, 0, READOP,   0},
+   /* 53 */   { "EOR",  0, ISY   , 7, 0, READOP,   op_EOR},
+   /* 54 */   { "MVN",  0, BM    , 7, 0, WRITEOP,  op_MVN},
    /* 55 */   { "EOR",  0, ZPX   , 4, 0, READOP,   op_EOR},
    /* 56 */   { "LSR",  0, ZPX   , 6, 0, RMWOP,    op_LSR},
-   /* 57 */   { "RMB5", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 57 */   { "EOR",  0, IDLY  , 6, 0, READOP,   op_EOR},
    /* 58 */   { "CLI",  0, IMP   , 2, 0, READOP,   op_CLI},
    /* 59 */   { "EOR",  0, ABSY  , 4, 0, READOP,   op_EOR},
    /* 5A */   { "PHY",  0, IMP   , 3, 0, WRITEOP,  op_PHY},
-   /* 5B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 5C */   { "NOP",  0, ABS   , 8, 0, READOP,   0},
+   /* 5B */   { "TCD",  0, IMP   , 2, 0, READOP,   op_TCD},
+   /* 5C */   { "JMP",  0, ABS   , 4, 0, READOP,   0},
    /* 5D */   { "EOR",  0, ABSX  , 4, 0, READOP,   op_EOR},
-   /* 5E */   { "LSR",  0, ABSX  , 6, 0, RMWOP,    op_LSR},
-   /* 5F */   { "BBR5", 0, ZPR   , 5, 0, READOP,   0},
+   /* 5E */   { "LSR",  0, ABSX  , 7, 0, RMWOP,    op_LSR},
+   /* 5F */   { "EOR",  0, ALX   , 5, 0, READOP,   op_EOR},
    /* 60 */   { "RTS",  0, IMP   , 6, 0, READOP,   op_RTS},
    /* 61 */   { "ADC",  0, INDX  , 6, 1, READOP,   op_ADC},
-   /* 62 */   { "NOP",  0, IMM   , 2, 0, READOP,   0},
-   /* 63 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 62 */   { "PER",  0, IMP   , 6, 0, WRITEOP,  op_PER},
+   /* 63 */   { "ADC",  0, SR    , 4, 0, READOP,   op_ADC},
    /* 64 */   { "STZ",  0, ZP    , 3, 0, WRITEOP,  op_STZ},
    /* 65 */   { "ADC",  0, ZP    , 3, 1, READOP,   op_ADC},
    /* 66 */   { "ROR",  0, ZP    , 5, 0, RMWOP,    op_ROR},
-   /* 67 */   { "RMB6", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 67 */   { "ADC",  0, IDL   , 6, 0, READOP,   op_ADC},
    /* 68 */   { "PLA",  0, IMP   , 4, 0, READOP,   op_PLA},
    /* 69 */   { "ADC",  0, IMM   , 2, 1, READOP,   op_ADC},
    /* 6A */   { "ROR",  0, IMPA  , 2, 0, READOP,   op_RORA},
-   /* 6B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 6C */   { "JMP",  0, IND16 , 6, 0, READOP,   0},
+   /* 6B */   { "RTL",  0, IMP   , 6, 0, READOP,   op_RTL},
+   /* 6C */   { "JMP",  0, IND16 , 5, 0, READOP,   0},
    /* 6D */   { "ADC",  0, ABS   , 4, 1, READOP,   op_ADC},
    /* 6E */   { "ROR",  0, ABS   , 6, 0, RMWOP,    op_ROR},
-   /* 6F */   { "BBR6", 0, ZPR   , 5, 0, READOP,   0},
+   /* 6F */   { "ADC",  0, ABL   , 5, 0, READOP,   op_ADC},
    /* 70 */   { "BVS",  0, BRA   , 2, 0, BRANCHOP, op_BVS},
    /* 71 */   { "ADC",  0, INDY  , 5, 1, READOP,   op_ADC},
    /* 72 */   { "ADC",  0, IND   , 5, 1, READOP,   op_ADC},
-   /* 73 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 73 */   { "ADC",  0, ISY   , 7, 0, READOP,   op_ADC},
    /* 74 */   { "STZ",  0, ZPX   , 4, 0, WRITEOP,  op_STZ},
    /* 75 */   { "ADC",  0, ZPX   , 4, 1, READOP,   op_ADC},
    /* 76 */   { "ROR",  0, ZPX   , 6, 0, RMWOP,    op_ROR},
-   /* 77 */   { "RMB7", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 77 */   { "ADC",  0, IDLY  , 6, 0, READOP,   op_ADC},
    /* 78 */   { "SEI",  0, IMP   , 2, 0, READOP,   op_SEI},
    /* 79 */   { "ADC",  0, ABSY  , 4, 1, READOP,   op_ADC},
    /* 7A */   { "PLY",  0, IMP   , 4, 0, READOP,   op_PLY},
-   /* 7B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 7B */   { "TDC",  0, IMP   , 2, 0, READOP,   op_TDC},
    /* 7C */   { "JMP",  0, IND1X , 6, 0, READOP,   0},
    /* 7D */   { "ADC",  0, ABSX  , 4, 1, READOP,   op_ADC},
-   /* 7E */   { "ROR",  0, ABSX  , 6, 0, RMWOP,    op_ROR},
-   /* 7F */   { "BBR7", 0, ZPR   , 5, 0, READOP,   0},
+   /* 7E */   { "ROR",  0, ABSX  , 7, 0, RMWOP,    op_ROR},
+   /* 7F */   { "ADC",  0, ALX   , 5, 0, READOP,   op_ADC},
    /* 80 */   { "BRA",  0, BRA   , 3, 0, READOP,   0},
    /* 81 */   { "STA",  0, INDX  , 6, 0, WRITEOP,  op_STA},
-   /* 82 */   { "NOP",  0, IMM   , 2, 0, READOP,   0},
-   /* 83 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 82 */   { "BRL",  0, BRA   , 4, 0, READOP,   0},
+   /* 83 */   { "STA",  0, SR    , 4, 0, WRITEOP,  op_STA},
    /* 84 */   { "STY",  0, ZP    , 3, 0, WRITEOP,  op_STY},
    /* 85 */   { "STA",  0, ZP    , 3, 0, WRITEOP,  op_STA},
    /* 86 */   { "STX",  0, ZP    , 3, 0, WRITEOP,  op_STX},
-   /* 87 */   { "SMB0", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* 87 */   { "STA" , 0, IDL   , 6, 0, WRITEOP,  op_STA},
    /* 88 */   { "DEY",  0, IMP   , 2, 0, READOP,   op_DEY},
    /* 89 */   { "BIT",  0, IMM   , 2, 0, READOP,   op_BIT_IMM},
    /* 8A */   { "TXA",  0, IMP   , 2, 0, READOP,   op_TXA},
-   /* 8B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 8B */   { "PHB",  0, IMP   , 3, 0, WRITEOP,  op_PHB},
    /* 8C */   { "STY",  0, ABS   , 4, 0, WRITEOP,  op_STY},
    /* 8D */   { "STA",  0, ABS   , 4, 0, WRITEOP,  op_STA},
    /* 8E */   { "STX",  0, ABS   , 4, 0, WRITEOP,  op_STX},
-   /* 8F */   { "BBS0", 0, ZPR   , 5, 0, READOP,   0},
+   /* 8F */   { "STA",  0, ABL   , 5, 0, WRITEOP,  op_STA},
    /* 90 */   { "BCC",  0, BRA   , 2, 0, BRANCHOP, op_BCC},
    /* 91 */   { "STA",  0, INDY  , 6, 0, WRITEOP,  op_STA},
    /* 92 */   { "STA",  0, IND   , 5, 0, WRITEOP,  op_STA},
-   /* 93 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 93 */   { "STA",  0, ISY   , 7, 0, WRITEOP,  op_STA},
    /* 94 */   { "STY",  0, ZPX   , 4, 0, WRITEOP,  op_STY},
    /* 95 */   { "STA",  0, ZPX   , 4, 0, WRITEOP,  op_STA},
    /* 96 */   { "STX",  0, ZPY   , 4, 0, WRITEOP,  op_STX},
-   /* 97 */   { "SMB1", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* 97 */   { "STA",  0, IDLY  , 6, 0, WRITEOP,  op_STA},
    /* 98 */   { "TYA",  0, IMP   , 2, 0, READOP,   op_TYA},
    /* 99 */   { "STA",  0, ABSY  , 5, 0, WRITEOP,  op_STA},
    /* 9A */   { "TXS",  0, IMP   , 2, 0, READOP,   op_TXS},
-   /* 9B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* 9B */   { "TXY",  0, IMP   , 2, 0, READOP,   op_TXY},
    /* 9C */   { "STZ",  0, ABS   , 4, 0, WRITEOP,  op_STZ},
    /* 9D */   { "STA",  0, ABSX  , 5, 0, WRITEOP,  op_STA},
    /* 9E */   { "STZ",  0, ABSX  , 5, 0, WRITEOP,  op_STZ},
-   /* 9F */   { "BBS1", 0, ZPR   , 5, 0, READOP,   0},
+   /* 9F */   { "STA",  0, ALX   , 5, 0, WRITEOP,  op_STA},
    /* A0 */   { "LDY",  0, IMM   , 2, 0, READOP,   op_LDY},
    /* A1 */   { "LDA",  0, INDX  , 6, 0, READOP,   op_LDA},
    /* A2 */   { "LDX",  0, IMM   , 2, 0, READOP,   op_LDX},
-   /* A3 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* A3 */   { "LDA",  0, SR    , 4, 0, READOP,   op_LDA},
    /* A4 */   { "LDY",  0, ZP    , 3, 0, READOP,   op_LDY},
    /* A5 */   { "LDA",  0, ZP    , 3, 0, READOP,   op_LDA},
    /* A6 */   { "LDX",  0, ZP    , 3, 0, READOP,   op_LDX},
-   /* A7 */   { "SMB2", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* A7 */   { "LDA",  0, IDL   , 6, 0, READOP,   op_LDA},
    /* A8 */   { "TAY",  0, IMP   , 2, 0, READOP,   op_TAY},
    /* A9 */   { "LDA",  0, IMM   , 2, 0, READOP,   op_LDA},
    /* AA */   { "TAX",  0, IMP   , 2, 0, READOP,   op_TAX},
-   /* AB */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* AB */   { "PLB",  0, IMP   , 4, 0, READOP,   op_PLB},
    /* AC */   { "LDY",  0, ABS   , 4, 0, READOP,   op_LDY},
    /* AD */   { "LDA",  0, ABS   , 4, 0, READOP,   op_LDA},
    /* AE */   { "LDX",  0, ABS   , 4, 0, READOP,   op_LDX},
-   /* AF */   { "BBS2", 0, ZPR   , 5, 0, READOP,   0},
+   /* AF */   { "LDA",  0, ABL   , 5, 0, READOP,   op_LDA},
    /* B0 */   { "BCS",  0, BRA   , 2, 0, BRANCHOP, op_BCS},
    /* B1 */   { "LDA",  0, INDY  , 5, 0, READOP,   op_LDA},
    /* B2 */   { "LDA",  0, IND   , 5, 0, READOP,   op_LDA},
-   /* B3 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* B3 */   { "LDA",  0, ISY   , 7, 0, READOP,   op_LDA},
    /* B4 */   { "LDY",  0, ZPX   , 4, 0, READOP,   op_LDY},
    /* B5 */   { "LDA",  0, ZPX   , 4, 0, READOP,   op_LDA},
    /* B6 */   { "LDX",  0, ZPY   , 4, 0, READOP,   op_LDX},
-   /* B7 */   { "SMB3", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* B7 */   { "LDA",  0, IDLY  , 6, 0, READOP,   op_LDA},
    /* B8 */   { "CLV",  0, IMP   , 2, 0, READOP,   op_CLV},
    /* B9 */   { "LDA",  0, ABSY  , 4, 0, READOP,   op_LDA},
    /* BA */   { "TSX",  0, IMP   , 2, 0, READOP,   op_TSX},
-   /* BB */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* BB */   { "TYX",  0, IMP   , 2, 0, READOP,   op_TYX},
    /* BC */   { "LDY",  0, ABSX  , 4, 0, READOP,   op_LDY},
    /* BD */   { "LDA",  0, ABSX  , 4, 0, READOP,   op_LDA},
    /* BE */   { "LDX",  0, ABSY  , 4, 0, READOP,   op_LDX},
-   /* BF */   { "BBS3", 0, ZPR   , 5, 0, READOP,   0},
+   /* BF */   { "LDA",  0, ALX   , 5, 0, READOP,   op_LDA},
    /* C0 */   { "CPY",  0, IMM   , 2, 0, READOP,   op_CPY},
    /* C1 */   { "CMP",  0, INDX  , 6, 0, READOP,   op_CMP},
-   /* C2 */   { "NOP",  0, IMM   , 2, 0, READOP,   0},
-   /* C3 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* C2 */   { "REP",  0, IMM   , 3, 0, READOP,   op_REP},
+   /* C3 */   { "CMP",  0, SR    , 4, 0, READOP,   op_CMP},
    /* C4 */   { "CPY",  0, ZP    , 3, 0, READOP,   op_CPY},
    /* C5 */   { "CMP",  0, ZP    , 3, 0, READOP,   op_CMP},
    /* C6 */   { "DEC",  0, ZP    , 5, 0, RMWOP,    op_DEC},
-   /* C7 */   { "SMB4", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* C7 */   { "CMP",  0, IDL   , 6, 0, READOP,   op_CMP},
    /* C8 */   { "INY",  0, IMP   , 2, 0, READOP,   op_INY},
    /* C9 */   { "CMP",  0, IMM   , 2, 0, READOP,   op_CMP},
    /* CA */   { "DEX",  0, IMP   , 2, 0, READOP,   op_DEX},
@@ -1795,312 +1996,53 @@ static InstrType instr_table_65c02[] = {
    /* CC */   { "CPY",  0, ABS   , 4, 0, READOP,   op_CPY},
    /* CD */   { "CMP",  0, ABS   , 4, 0, READOP,   op_CMP},
    /* CE */   { "DEC",  0, ABS   , 6, 0, RMWOP,    op_DEC},
-   /* CF */   { "BBS4", 0, ZPR   , 5, 0, READOP,   0},
+   /* CF */   { "CMP",  0, ABL   , 5, 0, READOP,   op_CMP},
    /* D0 */   { "BNE",  0, BRA   , 2, 0, BRANCHOP, op_BNE},
    /* D1 */   { "CMP",  0, INDY  , 5, 0, READOP,   op_CMP},
    /* D2 */   { "CMP",  0, IND   , 5, 0, READOP,   op_CMP},
-   /* D3 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* D4 */   { "NOP",  0, ZPX   , 4, 0, READOP,   0},
+   /* D3 */   { "CMP",  0, ISY   , 7, 0, READOP,   op_CMP},
+   /* D4 */   { "PEI",  0, IND   , 6, 0, WRITEOP,  op_PEI},
    /* D5 */   { "CMP",  0, ZPX   , 4, 0, READOP,   op_CMP},
    /* D6 */   { "DEC",  0, ZPX   , 6, 0, RMWOP,    op_DEC},
-   /* D7 */   { "SMB5", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* D7 */   { "CMP" , 0, IDLY  , 6, 0, READOP,   op_CMP},
    /* D8 */   { "CLD",  0, IMP   , 2, 0, READOP,   op_CLD},
    /* D9 */   { "CMP",  0, ABSY  , 4, 0, READOP,   op_CMP},
    /* DA */   { "PHX",  0, IMP   , 3, 0, WRITEOP,  op_PHX},
    /* DB */   { "STP",  0, IMP   , 1, 0, READOP,   0},        // WD65C02=3
-   /* DC */   { "NOP",  0, ABS   , 4, 0, READOP,   0},
+   /* DC */   { "JMP",  0, IAL   , 6, 0, READOP,   0},
    /* DD */   { "CMP",  0, ABSX  , 4, 0, READOP,   op_CMP},
    /* DE */   { "DEC",  0, ABSX  , 7, 0, RMWOP,    op_DEC},
-   /* DF */   { "BBS5", 0, ZPR   , 5, 0, READOP,   0},
+   /* DF */   { "CMP",  0, ALX   , 5, 0, READOP,   op_CMP},
    /* E0 */   { "CPX",  0, IMM   , 2, 0, READOP,   op_CPX},
    /* E1 */   { "SBC",  0, INDX  , 6, 1, READOP,   op_SBC},
-   /* E2 */   { "NOP",  0, IMM   , 2, 0, READOP,   0},
-   /* E3 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* E2 */   { "SEP",  0, IMM   , 3, 0, READOP,   op_SEP},
+   /* E3 */   { "SBC",  0, SR    , 4, 0, READOP,   op_SBC},
    /* E4 */   { "CPX",  0, ZP    , 3, 0, READOP,   op_CPX},
    /* E5 */   { "SBC",  0, ZP    , 3, 1, READOP,   op_SBC},
    /* E6 */   { "INC",  0, ZP    , 5, 0, RMWOP,    op_INC},
-   /* E7 */   { "SMB6", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* E7 */   { "SBC",  0, IDL   , 6, 0, READOP,   op_SBC},
    /* E8 */   { "INX",  0, IMP   , 2, 0, READOP,   op_INX},
    /* E9 */   { "SBC",  0, IMM   , 2, 1, READOP,   op_SBC},
    /* EA */   { "NOP",  0, IMP   , 2, 0, READOP,   0},
-   /* EB */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
+   /* EB */   { "XBA",  0, IMP   , 3, 0, READOP,   op_XBA},
    /* EC */   { "CPX",  0, ABS   , 4, 0, READOP,   op_CPX},
    /* ED */   { "SBC",  0, ABS   , 4, 1, READOP,   op_SBC},
    /* EE */   { "INC",  0, ABS   , 6, 0, RMWOP,    op_INC},
-   /* EF */   { "BBS6", 0, ZPR   , 5, 0, READOP,   0},
+   /* EF */   { "SBC",  0, ABL   , 5, 0, READOP,   op_SBC},
    /* F0 */   { "BEQ",  0, BRA   , 2, 0, BRANCHOP, op_BEQ},
    /* F1 */   { "SBC",  0, INDY  , 5, 1, READOP,   op_SBC},
    /* F2 */   { "SBC",  0, IND   , 5, 1, READOP,   op_SBC},
-   /* F3 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* F4 */   { "NOP",  0, ZPX   , 4, 0, READOP,   0},
+   /* F3 */   { "SBC",  0, ISY   , 7, 0, READOP,   op_SBC},
+   /* F4 */   { "PEA",  0, ABS   , 5, 0, WRITEOP,  op_PEA},
    /* F5 */   { "SBC",  0, ZPX   , 4, 1, READOP,   op_SBC},
    /* F6 */   { "INC",  0, ZPX   , 6, 0, RMWOP,    op_INC},
-   /* F7 */   { "SMB7", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* F7 */   { "SBC",  0, IDLY  , 6, 0, READOP,   op_SBC},
    /* F8 */   { "SED",  0, IMP   , 2, 0, READOP,   op_SED},
    /* F9 */   { "SBC",  0, ABSY  , 4, 1, READOP,   op_SBC},
    /* FA */   { "PLX",  0, IMP   , 4, 0, READOP,   op_PLX},
-   /* FB */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* FC */   { "NOP",  0, ABS   , 4, 0, READOP,   0},
+   /* FB */   { "XCE",  0, IMP   , 2, 0, READOP,   op_XCE},
+   /* FC */   { "JSR",  0, IND1X , 8, 0, READOP,   0},
    /* FD */   { "SBC",  0, ABSX  , 4, 1, READOP,   op_SBC},
    /* FE */   { "INC",  0, ABSX  , 7, 0, RMWOP,    op_INC},
-   /* FF */   { "BBS7", 0, ZPR   , 5, 0, READOP,   0}
-};
-
-static InstrType instr_table_6502[] = {
-   /* 00 */   { "BRK",  0, IMM   , 7, 0, WRITEOP,  op_BRK},
-   /* 01 */   { "ORA",  0, INDX  , 6, 0, READOP,   op_ORA},
-   /* 02 */   { "KIL",  1, IMP   , 0, 0, READOP,   0},
-   /* 03 */   { "SLO",  1, INDX  , 8, 0, READOP,   0},
-   /* 04 */   { "NOP",  1, ZP    , 3, 0, READOP,   0},
-   /* 05 */   { "ORA",  0, ZP    , 3, 0, READOP,   op_ORA},
-   /* 06 */   { "ASL",  0, ZP    , 5, 0, RMWOP,    op_ASL},
-   /* 07 */   { "SLO",  1, ZP    , 5, 0, READOP,   0},
-   /* 08 */   { "PHP",  0, IMP   , 3, 0, WRITEOP,  op_PHP},
-   /* 09 */   { "ORA",  0, IMM   , 2, 0, READOP,   op_ORA},
-   /* 0A */   { "ASL",  0, IMPA  , 2, 0, READOP,   op_ASLA},
-   /* 0B */   { "ANC",  1, IMM   , 2, 0, READOP,   0},
-   /* 0C */   { "NOP",  1, ABS   , 4, 0, READOP,   0},
-   /* 0D */   { "ORA",  0, ABS   , 4, 0, READOP,   op_ORA},
-   /* 0E */   { "ASL",  0, ABS   , 6, 0, RMWOP,    op_ASL},
-   /* 0F */   { "SLO",  1, ABS   , 6, 0, READOP,   0},
-   /* 10 */   { "BPL",  0, BRA   , 2, 0, BRANCHOP, op_BPL},
-   /* 11 */   { "ORA",  0, INDY  , 5, 0, READOP,   op_ORA},
-   /* 12 */   { "KIL",  1, IMP   , 0, 0, READOP,   0},
-   /* 13 */   { "SLO",  1, INDY  , 8, 0, READOP,   0},
-   /* 14 */   { "NOP",  1, ZPX   , 4, 0, READOP,   0},
-   /* 15 */   { "ORA",  0, ZPX   , 4, 0, READOP,   op_ORA},
-   /* 16 */   { "ASL",  0, ZPX   , 6, 0, RMWOP,    op_ASL},
-   /* 17 */   { "SLO",  1, ZPX   , 6, 0, READOP,   0},
-   /* 18 */   { "CLC",  0, IMP   , 2, 0, READOP,   op_CLC},
-   /* 19 */   { "ORA",  0, ABSY  , 4, 0, READOP,   op_ORA},
-   /* 1A */   { "NOP",  1, IMP   , 2, 0, READOP,   0},
-   /* 1B */   { "SLO",  1, ABSY  , 7, 0, READOP,   0},
-   /* 1C */   { "NOP",  1, ABSX  , 4, 0, READOP,   0},
-   /* 1D */   { "ORA",  0, ABSX  , 4, 0, READOP,   op_ORA},
-   /* 1E */   { "ASL",  0, ABSX  , 7, 0, RMWOP,    op_ASL},
-   /* 1F */   { "SLO",  1, ABSX  , 4, 0, READOP,   0},
-   /* 20 */   { "JSR",  0, ABS   , 6, 0, READOP,   op_JSR},
-   /* 21 */   { "AND",  0, INDX  , 6, 0, READOP,   op_AND},
-   /* 22 */   { "KIL",  1, IMP   , 0, 0, READOP,   0},
-   /* 23 */   { "RLA",  1, INDX  , 8, 0, READOP,   0},
-   /* 24 */   { "BIT",  0, ZP    , 3, 0, READOP,   op_BIT},
-   /* 25 */   { "AND",  0, ZP    , 3, 0, READOP,   op_AND},
-   /* 26 */   { "ROL",  0, ZP    , 5, 0, RMWOP,    op_ROL},
-   /* 27 */   { "RLA",  1, ZP    , 5, 0, READOP,   0},
-   /* 28 */   { "PLP",  0, IMP   , 4, 0, READOP,   op_PLP},
-   /* 29 */   { "AND",  0, IMM   , 2, 0, READOP,   op_AND},
-   /* 2A */   { "ROL",  0, IMPA  , 2, 0, READOP,   op_ROLA},
-   /* 2B */   { "ANC",  1, IMM   , 2, 0, READOP,   0},
-   /* 2C */   { "BIT",  0, ABS   , 4, 0, READOP,   op_BIT},
-   /* 2D */   { "AND",  0, ABS   , 4, 0, READOP,   op_AND},
-   /* 2E */   { "ROL",  0, ABS   , 6, 0, RMWOP,    op_ROL},
-   /* 2F */   { "RLA",  1, ABS   , 6, 0, READOP,   0},
-   /* 30 */   { "BMI",  0, BRA   , 2, 0, BRANCHOP, op_BMI},
-   /* 31 */   { "AND",  0, INDY  , 5, 0, READOP,   op_AND},
-   /* 32 */   { "KIL",  1, IMP   , 0, 0, READOP,   0},
-   /* 33 */   { "RLA",  1, INDY  , 8, 0, READOP,   0},
-   /* 34 */   { "NOP",  1, ZPX   , 4, 0, READOP,   0},
-   /* 35 */   { "AND",  0, ZPX   , 4, 0, READOP,   op_AND},
-   /* 36 */   { "ROL",  0, ZPX   , 6, 0, RMWOP,    op_ROL},
-   /* 37 */   { "RLA",  1, ZPX   , 6, 0, READOP,   0},
-   /* 38 */   { "SEC",  0, IMP   , 2, 0, READOP,   op_SEC},
-   /* 39 */   { "AND",  0, ABSY  , 4, 0, READOP,   op_AND},
-   /* 3A */   { "NOP",  1, IMP   , 2, 0, READOP,   0},
-   /* 3B */   { "RLA",  1, ABSY  , 7, 0, READOP,   0},
-   /* 3C */   { "NOP",  1, ABSX  , 4, 0, READOP,   0},
-   /* 3D */   { "AND",  0, ABSX  , 4, 0, READOP,   op_AND},
-   /* 3E */   { "ROL",  0, ABSX  , 7, 0, RMWOP,    op_ROL},
-   /* 3F */   { "RLA",  1, ABSX  , 7, 0, READOP,   0},
-   /* 40 */   { "RTI",  0, IMP   , 6, 0, READOP,   op_RTI},
-   /* 41 */   { "EOR",  0, INDX  , 6, 0, READOP,   op_EOR},
-   /* 42 */   { "KIL",  1, IMP   , 0, 0, READOP,   0},
-   /* 43 */   { "SRE",  1, INDX  , 8, 0, READOP,   0},
-   /* 44 */   { "NOP",  1, ZP    , 3, 0, READOP,   0},
-   /* 45 */   { "EOR",  0, ZP    , 3, 0, READOP,   op_EOR},
-   /* 46 */   { "LSR",  0, ZP    , 5, 0, RMWOP,    op_LSR},
-   /* 47 */   { "SRE",  1, ZP    , 5, 0, READOP,   0},
-   /* 48 */   { "PHA",  0, IMP   , 3, 0, WRITEOP,  op_PHA},
-   /* 49 */   { "EOR",  0, IMM   , 2, 0, READOP,   op_EOR},
-   /* 4A */   { "LSR",  0, IMPA  , 2, 0, READOP,   op_LSRA},
-   /* 4B */   { "ALR",  1, IMM   , 2, 0, READOP,   0},
-   /* 4C */   { "JMP",  0, ABS   , 3, 0, READOP,   0},
-   /* 4D */   { "EOR",  0, ABS   , 4, 0, READOP,   op_EOR},
-   /* 4E */   { "LSR",  0, ABS   , 6, 0, RMWOP,    op_LSR},
-   /* 4F */   { "SRE",  1, ABS   , 6, 0, READOP,   0},
-   /* 50 */   { "BVC",  0, BRA   , 2, 0, BRANCHOP, op_BVC},
-   /* 51 */   { "EOR",  0, INDY  , 5, 0, READOP,   op_EOR},
-   /* 52 */   { "KIL",  1, IMP   , 0, 0, READOP,   0},
-   /* 53 */   { "SRE",  1, INDY  , 8, 0, READOP,   0},
-   /* 54 */   { "NOP",  1, ZPX   , 4, 0, READOP,   0},
-   /* 55 */   { "EOR",  0, ZPX   , 4, 0, READOP,   op_EOR},
-   /* 56 */   { "LSR",  0, ZPX   , 6, 0, RMWOP,    op_LSR},
-   /* 57 */   { "SRE",  1, ZPX   , 6, 0, READOP,   0},
-   /* 58 */   { "CLI",  0, IMP   , 2, 0, READOP,   op_CLI},
-   /* 59 */   { "EOR",  0, ABSY  , 4, 0, READOP,   op_EOR},
-   /* 5A */   { "NOP",  1, IMP   , 2, 0, READOP,   0},
-   /* 5B */   { "SRE",  1, ABSY  , 7, 0, READOP,   0},
-   /* 5C */   { "NOP",  1, ABSX  , 4, 0, READOP,   0},
-   /* 5D */   { "EOR",  0, ABSX  , 4, 0, READOP,   op_EOR},
-   /* 5E */   { "LSR",  0, ABSX  , 7, 0, RMWOP,    op_LSR},
-   /* 5F */   { "SRX",  1, ABSX  , 7, 0, READOP,   0},
-   /* 60 */   { "RTS",  0, IMP   , 6, 0, READOP,   op_RTS},
-   /* 61 */   { "ADC",  0, INDX  , 6, 0, READOP,   op_ADC},
-   /* 62 */   { "KIL",  1, IMP   , 0, 0, READOP,   0},
-   /* 63 */   { "RRA",  1, INDX  , 8, 0, READOP,   0},
-   /* 64 */   { "NOP",  1, ZP    , 3, 0, READOP,   0},
-   /* 65 */   { "ADC",  0, ZP    , 3, 0, READOP,   op_ADC},
-   /* 66 */   { "ROR",  0, ZP    , 5, 0, RMWOP,    op_ROR},
-   /* 67 */   { "RRA",  1, ZP    , 5, 0, READOP,   0},
-   /* 68 */   { "PLA",  0, IMP   , 4, 0, READOP,   op_PLA},
-   /* 69 */   { "ADC",  0, IMM   , 2, 0, READOP,   op_ADC},
-   /* 6A */   { "ROR",  0, IMPA  , 2, 0, READOP,   op_RORA},
-   /* 6B */   { "ARR",  1, IMM   , 2, 0, READOP,   0},
-   /* 6C */   { "JMP",  0, IND16 , 5, 0, READOP,   0},
-   /* 6D */   { "ADC",  0, ABS   , 4, 0, READOP,   op_ADC},
-   /* 6E */   { "ROR",  0, ABS   , 6, 0, RMWOP,    op_ROR},
-   /* 6F */   { "RRA",  1, ABS   , 6, 0, READOP,   0},
-   /* 70 */   { "BVS",  0, BRA   , 2, 0, BRANCHOP, op_BVS},
-   /* 71 */   { "ADC",  0, INDY  , 5, 0, READOP,   op_ADC},
-   /* 72 */   { "KIL",  1, IMP   , 0, 0, READOP,   0},
-   /* 73 */   { "RRA",  1, INDY  , 8, 0, READOP,   0},
-   /* 74 */   { "NOP",  1, ZPX   , 4, 0, READOP,   0},
-   /* 75 */   { "ADC",  0, ZPX   , 4, 0, READOP,   op_ADC},
-   /* 76 */   { "ROR",  0, ZPX   , 6, 0, RMWOP,    op_ROR},
-   /* 77 */   { "RRA",  1, ZPX   , 6, 0, READOP,   0},
-   /* 78 */   { "SEI",  0, IMP   , 2, 0, READOP,   op_SEI},
-   /* 79 */   { "ADC",  0, ABSY  , 4, 0, READOP,   op_ADC},
-   /* 7A */   { "NOP",  1, IMP   , 2, 0, READOP,   0},
-   /* 7B */   { "RRA",  1, ABSY  , 8, 0, READOP,   0},
-   /* 7C */   { "NOP",  1, ABSX  , 4, 0, READOP,   0},
-   /* 7D */   { "ADC",  0, ABSX  , 4, 0, READOP,   op_ADC},
-   /* 7E */   { "ROR",  0, ABSX  , 7, 0, RMWOP,    op_ROR},
-   /* 7F */   { "RRA",  1, ABSX  , 8, 0, READOP,   0},
-   /* 80 */   { "NOP",  1, IMM   , 2, 0, READOP,   0},
-   /* 81 */   { "STA",  0, INDX  , 6, 0, WRITEOP,  op_STA},
-   /* 82 */   { "NOP",  1, IMM   , 2, 0, READOP,   0},
-   /* 83 */   { "SAX",  1, INDX  , 6, 0, READOP,   0},
-   /* 84 */   { "STY",  0, ZP    , 3, 0, WRITEOP,  op_STY},
-   /* 85 */   { "STA",  0, ZP    , 3, 0, WRITEOP,  op_STA},
-   /* 86 */   { "STX",  0, ZP    , 3, 0, WRITEOP,  op_STX},
-   /* 87 */   { "SAX",  1, ZP    , 3, 0, READOP,   0},
-   /* 88 */   { "DEY",  0, IMP   , 2, 0, READOP,   op_DEY},
-   /* 89 */   { "NOP",  1, IMM   , 2, 0, READOP,   0},
-   /* 8A */   { "TXA",  0, IMP   , 2, 0, READOP,   op_TXA},
-   /* 8B */   { "XXA",  1, IMM   , 2, 0, READOP,   0},
-   /* 8C */   { "STY",  0, ABS   , 4, 0, WRITEOP,  op_STY},
-   /* 8D */   { "STA",  0, ABS   , 4, 0, WRITEOP,  op_STA},
-   /* 8E */   { "STX",  0, ABS   , 4, 0, WRITEOP,  op_STX},
-   /* 8F */   { "SAX",  1, ABS   , 4, 0, READOP,   0},
-   /* 90 */   { "BCC",  0, BRA   , 2, 0, BRANCHOP, op_BCC},
-   /* 91 */   { "STA",  0, INDY  , 6, 0, WRITEOP,  op_STA},
-   /* 92 */   { "KIL",  1, IMP   , 0, 0, READOP,   0},
-   /* 93 */   { "AHX",  1, INDY  , 6, 0, READOP,   0},
-   /* 94 */   { "STY",  0, ZPX   , 4, 0, WRITEOP,  op_STY},
-   /* 95 */   { "STA",  0, ZPX   , 4, 0, WRITEOP,  op_STA},
-   /* 96 */   { "STX",  0, ZPY   , 4, 0, WRITEOP,  op_STX},
-   /* 97 */   { "SAX",  1, ZPY   , 4, 0, READOP,   0},
-   /* 98 */   { "TYA",  0, IMP   , 2, 0, READOP,   op_TYA},
-   /* 99 */   { "STA",  0, ABSY  , 5, 0, WRITEOP,  op_STA},
-   /* 9A */   { "TXS",  0, IMP   , 2, 0, READOP,   op_TXS},
-   /* 9B */   { "TAS",  1, ABS   , 5, 0, READOP,   0},
-   /* 9C */   { "SHY",  1, ABSX  , 5, 0, READOP,   0},
-   /* 9D */   { "STA",  0, ABSX  , 5, 0, WRITEOP,  op_STA},
-   /* 9E */   { "SHX",  1, ABSY  , 5, 0, READOP,   0},
-   /* 9F */   { "AHX",  1, ABSY  , 5, 0, READOP,   0},
-   /* A0 */   { "LDY",  0, IMM   , 2, 0, READOP,   op_LDY},
-   /* A1 */   { "LDA",  0, INDX  , 6, 0, READOP,   op_LDA},
-   /* A2 */   { "LDX",  0, IMM   , 2, 0, READOP,   op_LDX},
-   /* A3 */   { "LAX",  1, INDX  , 6, 0, READOP,   0},
-   /* A4 */   { "LDY",  0, ZP    , 3, 0, READOP,   op_LDY},
-   /* A5 */   { "LDA",  0, ZP    , 3, 0, READOP,   op_LDA},
-   /* A6 */   { "LDX",  0, ZP    , 3, 0, READOP,   op_LDX},
-   /* A7 */   { "LAX",  1, ZP    , 3, 0, READOP,   0},
-   /* A8 */   { "TAY",  0, IMP   , 2, 0, READOP,   op_TAY},
-   /* A9 */   { "LDA",  0, IMM   , 2, 0, READOP,   op_LDA},
-   /* AA */   { "TAX",  0, IMP   , 2, 0, READOP,   op_TAX},
-   /* AB */   { "LAX",  1, IMM   , 2, 0, READOP,   0},
-   /* AC */   { "LDY",  0, ABS   , 4, 0, READOP,   op_LDY},
-   /* AD */   { "LDA",  0, ABS   , 4, 0, READOP,   op_LDA},
-   /* AE */   { "LDX",  0, ABS   , 4, 0, READOP,   op_LDX},
-   /* AF */   { "LAX",  1, ABS   , 4, 0, READOP,   0},
-   /* B0 */   { "BCS",  0, BRA   , 2, 0, BRANCHOP, op_BCS},
-   /* B1 */   { "LDA",  0, INDY  , 5, 0, READOP,   op_LDA},
-   /* B2 */   { "KIL",  1, IMP   , 0, 0, READOP,   0},
-   /* B3 */   { "LAX",  1, INDY  , 5, 0, READOP,   0},
-   /* B4 */   { "LDY",  0, ZPX   , 4, 0, READOP,   op_LDY},
-   /* B5 */   { "LDA",  0, ZPX   , 4, 0, READOP,   op_LDA},
-   /* B6 */   { "LDX",  0, ZPY   , 4, 0, READOP,   op_LDX},
-   /* B7 */   { "LAX",  1, ZPY   , 4, 0, READOP,   0},
-   /* B8 */   { "CLV",  0, IMP   , 2, 0, READOP,   op_CLV},
-   /* B9 */   { "LDA",  0, ABSY  , 4, 0, READOP,   op_LDA},
-   /* BA */   { "TSX",  0, IMP   , 2, 0, READOP,   op_TSX},
-   /* BB */   { "LAS",  1, ABSY  , 4, 0, READOP,   0},
-   /* BC */   { "LDY",  0, ABSX  , 4, 0, READOP,   op_LDY},
-   /* BD */   { "LDA",  0, ABSX  , 4, 0, READOP,   op_LDA},
-   /* BE */   { "LDX",  0, ABSY  , 4, 0, READOP,   op_LDX},
-   /* BF */   { "LAX",  1, ABSY  , 4, 0, READOP,   0},
-   /* C0 */   { "CPY",  0, IMM   , 2, 0, READOP,   op_CPY},
-   /* C1 */   { "CMP",  0, INDX  , 6, 0, READOP,   op_CMP},
-   /* C2 */   { "NOP",  1, IMP   , 0, 0, READOP,   0},
-   /* C3 */   { "DCP",  1, INDX  , 8, 0, READOP,   0},
-   /* C4 */   { "CPY",  0, ZP    , 3, 0, READOP,   op_CPY},
-   /* C5 */   { "CMP",  0, ZP    , 3, 0, READOP,   op_CMP},
-   /* C6 */   { "DEC",  0, ZP    , 5, 0, RMWOP,    op_DEC},
-   /* C7 */   { "DCP",  1, ZP    , 5, 0, READOP,   0},
-   /* C8 */   { "INY",  0, IMP   , 2, 0, READOP,   op_INY},
-   /* C9 */   { "CMP",  0, IMM   , 2, 0, READOP,   op_CMP},
-   /* CA */   { "DEX",  0, IMP   , 2, 0, READOP,   op_DEX},
-   /* CB */   { "AXS",  1, IMM   , 2, 0, READOP,   0},
-   /* CC */   { "CPY",  0, ABS   , 4, 0, READOP,   op_CPY},
-   /* CD */   { "CMP",  0, ABS   , 4, 0, READOP,   op_CMP},
-   /* CE */   { "DEC",  0, ABS   , 6, 0, RMWOP,    op_DEC},
-   /* CF */   { "DCP",  1, ABS   , 6, 0, READOP,   0},
-   /* D0 */   { "BNE",  0, BRA   , 2, 0, BRANCHOP, op_BNE},
-   /* D1 */   { "CMP",  0, INDY  , 5, 0, READOP,   op_CMP},
-   /* D2 */   { "KIL",  1, IMP   , 0, 0, READOP,   0},
-   /* D3 */   { "DCP",  1, INDY  , 8, 0, READOP,   0},
-   /* D4 */   { "NOP",  1, ZPX   , 4, 0, READOP,   0},
-   /* D5 */   { "CMP",  0, ZPX   , 4, 0, READOP,   op_CMP},
-   /* D6 */   { "DEC",  0, ZPX   , 6, 0, RMWOP,    op_DEC},
-   /* D7 */   { "DCP",  1, ZPX   , 6, 0, READOP,   0},
-   /* D8 */   { "CLD",  0, IMP   , 2, 0, READOP,   op_CLD},
-   /* D9 */   { "CMP",  0, ABSY  , 4, 0, READOP,   op_CMP},
-   /* DA */   { "NOP",  1, IMP   , 2, 0, READOP,   0},
-   /* DB */   { "DCP",  1, ABSY  , 7, 0, READOP,   0},
-   /* DC */   { "NOP",  1, ABSX  , 4, 0, READOP,   0},
-   /* DD */   { "CMP",  0, ABSX  , 4, 0, READOP,   op_CMP},
-   /* DE */   { "DEC",  0, ABSX  , 7, 0, RMWOP,    op_DEC},
-   /* DF */   { "DCP",  1, ABSX  , 7, 0, READOP,   0},
-   /* E0 */   { "CPX",  0, IMM   , 2, 0, READOP,   op_CPX},
-   /* E1 */   { "SBC",  0, INDX  , 6, 0, READOP,   op_SBC},
-   /* E2 */   { "NOP",  1, IMP   , 0, 0, READOP,   0},
-   /* E3 */   { "ISC",  1, INDX  , 8, 0, READOP,   0},
-   /* E4 */   { "CPX",  0, ZP    , 3, 0, READOP,   op_CPX},
-   /* E5 */   { "SBC",  0, ZP    , 3, 0, READOP,   op_SBC},
-   /* E6 */   { "INC",  0, ZP    , 5, 0, RMWOP,    op_INC},
-   /* E7 */   { "ISC",  1, ZP    , 5, 0, READOP,   0},
-   /* E8 */   { "INX",  0, IMP   , 2, 0, READOP,   op_INX},
-   /* E9 */   { "SBC",  0, IMM   , 2, 0, READOP,   op_SBC},
-   /* EA */   { "NOP",  0, IMP   , 2, 0, READOP,   0},
-   /* EB */   { "SBC",  1, IMM   , 2, 0, READOP,   0},
-   /* EC */   { "CPX",  0, ABS   , 4, 0, READOP,   op_CPX},
-   /* ED */   { "SBC",  0, ABS   , 4, 0, READOP,   op_SBC},
-   /* EE */   { "INC",  0, ABS   , 6, 0, RMWOP,    op_INC},
-   /* EF */   { "ISC",  1, ABS   , 6, 0, READOP,   0},
-   /* F0 */   { "BEQ",  0, BRA   , 2, 0, BRANCHOP, op_BEQ},
-   /* F1 */   { "SBC",  0, INDY  , 5, 0, READOP,   op_SBC},
-   /* F2 */   { "KIL",  1, IMP   , 0, 0, READOP,   0},
-   /* F3 */   { "ISC",  1, INDY  , 8, 0, READOP,   0},
-   /* F4 */   { "NOP",  1, ZPX   , 4, 0, READOP,   0},
-   /* F5 */   { "SBC",  0, ZPX   , 4, 0, READOP,   op_SBC},
-   /* F6 */   { "INC",  0, ZPX   , 6, 0, RMWOP,    op_INC},
-   /* F7 */   { "ISC",  1, ZPX   , 6, 0, READOP,   0},
-   /* F8 */   { "SED",  0, IMP   , 2, 0, READOP,   op_SED},
-   /* F9 */   { "SBC",  0, ABSY  , 4, 0, READOP,   op_SBC},
-   /* FA */   { "NOP",  1, IMP   , 2, 0, READOP,   0},
-   /* FB */   { "ISC",  1, ABSY  , 7, 0, READOP,   0},
-   /* FC */   { "NOP",  1, ABSX  , 4, 0, READOP,   0},
-   /* FD */   { "SBC",  0, ABSX  , 4, 0, READOP,   op_SBC},
-   /* FE */   { "INC",  0, ABSX  , 7, 0, RMWOP,    op_INC},
-   /* FF */   { "ISC",  1, ABSX  , 7, 0, READOP,   0}
+   /* FF */   { "SBC",  0, ALX   , 5, 0, READOP,   op_SBC}
 };
