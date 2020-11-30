@@ -414,11 +414,13 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
 
    int intr_seen = em_match_interrupt(sample_q, num_samples);
 
-   if (rst_seen < 0) {
-      rst_seen = em_match_reset(sample_q, num_samples, arguments.vec_rst);
-   }
+   int num_cycles;
 
-   int num_cycles = em_count_cycles(sample_q, rst_seen, intr_seen);
+   if (rst_seen > 0) {
+      num_cycles = rst_seen;
+   } else {
+      num_cycles = em_count_cycles(sample_q, intr_seen);
+   }
 
    // Deal with partial final instruction
    if (num_samples <= num_cycles || num_cycles == 0) {
@@ -435,10 +437,10 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
 
    if (rst_seen) {
       // Handle a reset
-      em_reset(sample_q, &instruction);
+      em_reset(sample_q, num_cycles, &instruction);
    } else if (intr_seen) {
       // Handle an interrupt
-      em_interrupt(sample_q, &instruction);
+      em_interrupt(sample_q, num_cycles, &instruction);
    } else {
       // Handle a normal instruction
       em_emulate(sample_q, num_cycles, &instruction);
@@ -872,8 +874,18 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
 // Generic instruction decoder
 // ====================================================================
 
+// This stage is mostly about cleaning coming out of reset in all cases
+//
+//        Rst Sync
+//
+// Case 1:  ?   ?  : search for heuristic at n, n+1, n+2 - consume n+2 cycles
+// Case 2:  ?  01  : search for heuristic at 5, 6, 7 - consume 7 ctcles
+// Case 3: 01   ?  : dead reconning; 8 or 9 depending on the cpu type
+// Case 4: 01  01  : mark first instruction after rst stable
+//
+
 int decode_instruction(sample_t *sample_q, int num_samples) {
-   static int rst_seen = -1;
+   static int rst_seen = 0;
 
    // Skip any samples where RST is asserted (active low)
    if (sample_q[0].rst == 0) {
@@ -881,35 +893,57 @@ int decode_instruction(sample_t *sample_q, int num_samples) {
       return 1;
    }
 
-   // This is a hack to align the syncless decoding with the rising edge of rst
-   if (rst_seen == 1) {
-      // Make sure we have a full set of samples where rst is high
-      for (int i = 1; i < num_samples; i++) {
-         if (sample_q[i].rst == 0) {
-            return i;
-         }
-      }
-      // Skip 1 or 2 samples depending on the CPU type
-      int skip = arguments.c02 ? 1 : 2;
-
-      // Decode the reset sequence (rst_seen is 1 here)
-      int num_cycles = analyze_instruction(sample_q + skip, num_samples - skip, rst_seen);
-
-      rst_seen = 0;
-
-      return num_cycles + skip;
-   }
-
    // If the first sample is not an SYNC, then drop the sample
    if (sample_q->type != OPCODE && sample_q->type != UNKNOWN) {
       return 1;
    }
 
-   // SYNC seen, so decode the instruction
+   if (arguments.idx_rst < 0) {
+      // We use a heuristic, based on what we expect to see on the data
+      // bus in cycles 5, 6 and 7, i.e. RSTVECL, RSTVECH, RSTOPCODE
+      int veclo  = (arguments.vec_rst      ) & 0xff;
+      int vechi  = (arguments.vec_rst >>  8) & 0xff;
+      int opcode = (arguments.vec_rst >> 16) & 0xff;
+      if (arguments.idx_sync < 0) {
+         // No Sync, so search for heurisic anywhere in the sample queue
+         for (int i = 0; i <= num_samples - 3; i++) {
+            if (sample_q[i].data == veclo && sample_q[i + 1].data == vechi && (!opcode || sample_q[i + 2].data == opcode)) {
+               rst_seen = i + 2;
+               break;
+            }
+         }
+      } else {
+         // Sync, so check heurisic at a specific offset in the sample queue
+         if (sample_q[5].data == veclo && sample_q[6].data == vechi && (!opcode || sample_q[7].data == opcode) && sample_q[7].type == OPCODE) {
+            rst_seen = 7;
+         }
+      }
+   } else if (rst_seen) {
+      // First, make sure rst is stable
+      for (int i = 1; i < num_samples; i++) {
+         if (sample_q[i].rst == 0) {
+            return i + 1;
+         }
+      }
+      if (arguments.idx_sync < 0) {
+         // Do this by dead reconning
+         rst_seen = arguments.c02 ? 8 : 9;
+         // We could also check the vector
+      } else {
+         if (sample_q[7].type == OPCODE) {
+            rst_seen = 7;
+         } else {
+            printf("Instruction after rst /= 7 cycles\n");
+            rst_seen = 0;
+         }
+      }
+   }
+
+   // Decode the instruction
    int num_cycles = analyze_instruction(sample_q, num_samples, rst_seen);
 
    // And reset rst_seen for the next reset
-   if (rst_seen == 1) {
+   if (rst_seen) {
       rst_seen = 0;
    }
 
@@ -919,6 +953,26 @@ int decode_instruction(sample_t *sample_q, int num_samples) {
 // ====================================================================
 // Queue a small number of samples so the decoders can lookahead
 // ====================================================================
+
+
+int em_match_reset(sample_t *sample_q, int num_samples, int vec_rst) {
+   // Check we have enough valid samples
+   if (num_samples < 8) {
+      return 0;
+   }
+   // We use a heuristic, based on what we expect to see on the data
+   // bus in cycles 5, 6 and 7, i.e. RSTVECL, RSTVECH, RSTOPCODE
+   if ((sample_q[5].data == (vec_rst & 0xff)) &&
+       (sample_q[6].data == ((vec_rst >> 8) & 0xff)) &&
+       (sample_q[7].data == ((vec_rst >> 16) & 0xff) || (((vec_rst >> 16) & 0xff) == 0))) {
+      return 1;
+
+   }
+   return 0;
+}
+
+
+
 
 void queue_sample(sample_t *sample) {
    static sample_t sample_q[DEPTH];

@@ -259,15 +259,9 @@ static void interrupt(int pc, int flags, int vector) {
    PC = vector;
 }
 
-static int count_cycles_without_sync(sample_t *sample_q, int rst_seen, int intr_seen) {
+static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
 
    static int mhz1_phase = 0;
-
-   if (rst_seen) {
-      // return c02 ? 7 : 8;
-      mhz1_phase ^= 1;
-      return 7;
-   }
 
    if (intr_seen) {
       mhz1_phase ^= 1;
@@ -506,22 +500,6 @@ void em_init(int support_c02, int support_rockwell, int support_undocumented, in
 }
 
 
-int em_match_reset(sample_t *sample_q, int num_samples, int vec_rst) {
-   // Check we have enough valid samples
-   if (num_samples < 8) {
-      return 0;
-   }
-   // We use a heuristic, based on what we expect to see on the data
-   // bus in cycles 5, 6 and 7, i.e. RSTVECL, RSTVECH, RSTOPCODE
-   if ((sample_q[5].data == (vec_rst & 0xff)) &&
-       (sample_q[6].data == ((vec_rst >> 8) & 0xff)) &&
-       (sample_q[7].data == ((vec_rst >> 16) & 0xff) || (((vec_rst >> 16) & 0xff) == 0))) {
-      return 1;
-
-   }
-   return 0;
-}
-
 int em_match_interrupt(sample_t *sample_q, int num_samples) {
    // Check we have enough valid samples
    if (num_samples < 7) {
@@ -554,15 +532,15 @@ int em_match_interrupt(sample_t *sample_q, int num_samples) {
    return 0;
 }
 
-int em_count_cycles(sample_t *sample_q, int rst_seen, int intr_seen) {
+int em_count_cycles(sample_t *sample_q, int intr_seen) {
    if (sample_q[0].type == UNKNOWN) {
-      return count_cycles_without_sync(sample_q, rst_seen, intr_seen);
+      return count_cycles_without_sync(sample_q, intr_seen);
    } else {
       return count_cycles_with_sync(sample_q);
    }
 }
 
-void em_reset(sample_t *sample_q, instruction_t *instruction) {
+void em_reset(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
    instruction->pc = -1;
    A = -1;
    X = -1;
@@ -577,10 +555,10 @@ void em_reset(sample_t *sample_q, instruction_t *instruction) {
    if (c02) {
       D = 0;
    }
-   PC = (sample_q[6].data << 8) + sample_q[5].data;
+   PC = (sample_q[num_cycles - 1].data << 8) + sample_q[num_cycles - 2].data;
 }
 
-void em_interrupt(sample_t *sample_q, instruction_t *instruction) {
+void em_interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
    int pc   = (sample_q[2].data << 8) + sample_q[3].data;
    int flags = sample_q[4].data;
    int vector = (sample_q[6].data << 8) + sample_q[5].data;
