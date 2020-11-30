@@ -39,12 +39,12 @@ extended_data_names=(
 declare -A data_options
 
 data_options[reset]="-h -s"
-data_options[dormann_d6502]="--quiet --emulate"
-data_options[dormann_d65c00]="--quiet --emulate"
-data_options[dormann_d65c01]="--quiet --emulate"
-data_options[dormann_d65c10]="--quiet --emulate"
-data_options[dormann_d65c11]="--quiet --emulate"
-data_options[clark_bcd_full]="--quiet --emulate"
+data_options[dormann_d6502]="--quiet"
+data_options[dormann_d65c00]="--quiet"
+data_options[dormann_d65c01]="--quiet"
+data_options[dormann_d65c10]="--quiet"
+data_options[dormann_d65c11]="--quiet"
+data_options[clark_bcd_full]="--quiet"
 
 test_names=(
     sync
