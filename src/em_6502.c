@@ -261,7 +261,7 @@ static void interrupt(int pc, int flags, int vector) {
 
 static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
 
-   static int mhz1_phase = 0;
+   static int mhz1_phase = 1;
 
    if (intr_seen) {
       mhz1_phase ^= 1;
