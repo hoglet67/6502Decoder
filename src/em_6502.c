@@ -73,6 +73,7 @@ const char default_state[] = "A=?? X=?? Y=?? SP=?? N=? V=? D=? I=? Z=? C=?";
 static int c02;
 static int rockwell;
 static int bbctube;
+static int master_nordy;
 
 static InstrType *instr_table;
 
@@ -260,18 +261,22 @@ static void interrupt(int pc, int flags, int vector) {
 
 static int count_cycles_without_sync(sample_t *sample_q, int rst_seen, int intr_seen) {
 
+   static int mhz1_phase = 0;
+
    if (rst_seen) {
       // return c02 ? 7 : 8;
+      mhz1_phase ^= 1;
       return 7;
    }
 
    if (intr_seen) {
+      mhz1_phase ^= 1;
       return 7;
    }
 
    int opcode = sample_q[0].data;
    int op1    = sample_q[1].data;
-   int op2    = sample_q[((opcode & 0x0f) == 0x0f) ? 4 : 2].data;
+   int op2    = sample_q[opcode == 0x20 ? 5 : ((opcode & 0x0f) == 0x0f) ? 4 : 2].data;
 
    InstrType *instr = &instr_table[opcode];
 
@@ -401,6 +406,47 @@ static int count_cycles_without_sync(sample_t *sample_q, int rst_seen, int intr_
       }
    }
 
+   // Master specific behaviour to remain in sync if rdy is not available
+   if (master_nordy) {
+      if (instr->len == 3) {
+         if ((op2 == 0xfc) ||              // &FC00-&FCFF
+             (op2 == 0xfd) ||              // &FD00-&FDFF
+             (op2 == 0xfe && (
+             ((op1 & 0xE0) == 0x00) ||     // &FE00-&FE1F
+             ((op1 & 0xC0) == 0x40) ||     // &FE40-&FE7F
+             ((op1 & 0xE0) == 0x80) ||     // &FE80-&FE9F
+             ((op1 & 0xE0) == 0xC0)        // &FEC0-&FEDF
+            ))) {
+            // Use STA/STX/STA to determine 1MHz clock phase
+            if (opcode == 0x8C || opcode == 0x8D || opcode == 0x8E) {
+               if (sample_q[3].data == sample_q[4].data) {
+                  int new_phase;
+                  if (sample_q[3].data == sample_q[5].data) {
+                     new_phase = 1;
+                  } else {
+                     new_phase = 0;
+                  }
+                  if (mhz1_phase != new_phase) {
+                     //printf("correcting 1MHz phase\n");
+                     mhz1_phase = new_phase;
+                  }
+               } else {
+                  printf("fail: 1MHz access not extended as expected\n");
+               }
+            }
+            // Correct cycle count based on expected cycle stretching behaviour
+            if (opcode == 0x9D) {
+               // STA abs, X which has an unfortunate dummy cycle
+               cycle_count += 2 + mhz1_phase;
+            } else {
+               cycle_count += 1 + mhz1_phase;
+            }
+         }
+      }
+      // Toggle the phase every cycle
+      mhz1_phase ^= (cycle_count & 1);
+   }
+
    return cycle_count;
 }
 
@@ -422,12 +468,13 @@ static int count_cycles_with_sync(sample_t *sample_q) {
 // Public Methods
 // ====================================================================
 
-void em_init(int support_c02, int support_rockwell, int support_undocumented, int decode_bbctube) {
+void em_init(int support_c02, int support_rockwell, int support_undocumented, int decode_bbctube, int mast_nordy) {
    int i;
    c02 = support_c02;
    rockwell = support_rockwell;
    instr_table = support_c02 ? instr_table_65c02 : instr_table_6502;
    bbctube = decode_bbctube;
+   master_nordy = mast_nordy;
    // If not supporting the Rockwell C02 extensions, tweak the cycle countes
    if (support_c02 && !support_rockwell) {
       // x7 (RMB/SMB): 5 cycles -> 1 cycles

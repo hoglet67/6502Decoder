@@ -3,7 +3,7 @@
 
 #include "defs.h"
 
-void em_init(int support_c02, int support_rockwell, int support_undocumented, int decode_bbctube);
+void em_init(int support_c02, int support_rockwell, int support_undocumented, int decode_bbctube, int mast_nordy);
 
 int em_match_reset(sample_t *sample_q, int num_samples, int vec_rst);
 
