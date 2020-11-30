@@ -5,11 +5,11 @@
 
 void em_init(int support_c02, int support_rockwell, int support_undocumented, int decode_bbctube);
 
+int em_match_reset(sample_t *sample_q, int num_samples, int vec_rst);
+
+int em_match_interrupt(sample_t *sample_q, int num_samples);
+
 int em_count_cycles(sample_t *sample_q, int rst_seen, int intr_seen);
-
-int em_match_reset(sample_t *sample_q, int vec_rst);
-
-int em_match_interrupt(sample_t *sample_q);
 
 void em_reset(sample_t *sample_q, instruction_t *instruction);
 

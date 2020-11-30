@@ -406,19 +406,24 @@ static char *get_fwa(int a_sign, int a_exp, int a_mantissa, int a_round, int a_o
 }
 
 
-static int analyze_instruction(sample_t *sample_q, int rst_seen) {
+static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen) {
 
    static int interrupt_depth = 0;
    static int skipping_interrupted = 0;
    static int triggered = 0;
 
-   int intr_seen = em_match_interrupt(sample_q);
+   int intr_seen = em_match_interrupt(sample_q, num_samples);
 
    if (rst_seen < 0) {
-      rst_seen = em_match_reset(sample_q, arguments.vec_rst);
+      rst_seen = em_match_reset(sample_q, num_samples, arguments.vec_rst);
    }
 
    int num_cycles = em_count_cycles(sample_q, rst_seen, intr_seen);
+
+   // Deal with partial final instruction
+   if (num_samples < num_cycles || num_cycles == 0) {
+      return num_samples;
+   }
 
    if (arguments.debug >= 1) {
       dump_samples(sample_q, num_cycles);
@@ -867,7 +872,7 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
 // Sync-based instruction decoder
 // ====================================================================
 
-int decode_instruction(sample_t *sample_q) {
+int decode_instruction(sample_t *sample_q, int num_samples) {
    static int rst_seen = -1;
 
    // Skip any samples where RST is asserted (active low)
@@ -882,7 +887,7 @@ int decode_instruction(sample_t *sample_q) {
    }
 
    // SYNC seen, so decode the instruction
-   int num_cycles = analyze_instruction(sample_q, rst_seen);
+   int num_cycles = analyze_instruction(sample_q, num_samples, rst_seen);
 
    // And reset rst_seen for the next reset
    if (rst_seen == 1) {
@@ -892,7 +897,6 @@ int decode_instruction(sample_t *sample_q) {
    return num_cycles;
 }
 
-
 // ====================================================================
 // Queue a small number of samples so the decoders can lookahead
 // ====================================================================
@@ -901,19 +905,29 @@ void queue_sample(sample_t *sample) {
    static sample_t sample_q[DEPTH];
    static int index = 0;
 
-   // Queue the sample
    sample_q[index++] = *sample;
 
-   // If the queue is full, then pass on to the decoder
-   if (index == DEPTH || sample->type == LAST) {
-      int consumed = decode_instruction(sample_q);
-      for (int i = 0; i < DEPTH - consumed; i++) {
-         sample_q[i] = sample_q[i + consumed];
+   if (sample->type == LAST) {
+      // Drain the queue when the LAST marker is seen
+      while (index > 1) {
+         int consumed = decode_instruction(sample_q, index);
+         for (int i = 0; i < DEPTH - consumed; i++) {
+            sample_q[i] = sample_q[i + consumed];
+         }
+         index -= consumed;
       }
-      index -= consumed;
+   } else {
+      // Else queue the samples
+      // If the queue is full, then pass on to the decoder
+      if (index == DEPTH) {
+         int consumed = decode_instruction(sample_q, index);
+         for (int i = 0; i < DEPTH - consumed; i++) {
+            sample_q[i] = sample_q[i + consumed];
+         }
+         index -= consumed;
+      }
    }
 }
-
 
 // ====================================================================
 // Input file processing and bus cycle extraction
@@ -1096,7 +1110,6 @@ void decode(FILE *stream) {
    // Flush the sample queue
    s.type = LAST;
    queue_sample(&s);
-
 }
 
 

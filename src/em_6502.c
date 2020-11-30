@@ -4,9 +4,9 @@
 #include "tube_decode.h"
 #include "em_6502.h"
 
-static int c02;
-static int rockwell;
-static int bbctube;
+// ====================================================================
+// Type Defs
+// ====================================================================
 
 typedef enum {
    IMP,
@@ -52,9 +52,31 @@ typedef struct {
    const char *fmt;
 } InstrType;
 
+
+// ====================================================================
+// Static variables
+// ====================================================================
+
+#define OFFSET_A   2
+#define OFFSET_X   7
+#define OFFSET_Y  12
+#define OFFSET_S  18
+#define OFFSET_N  23
+#define OFFSET_V  27
+#define OFFSET_D  31
+#define OFFSET_I  35
+#define OFFSET_Z  39
+#define OFFSET_C  43
+
+const char default_state[] = "A=?? X=?? Y=?? SP=?? N=? V=? D=? I=? Z=? C=?";
+
+static int c02;
+static int rockwell;
+static int bbctube;
+
 static InstrType *instr_table;
 
-AddrModeType addr_mode_table[] = {
+static AddrModeType addr_mode_table[] = {
    {1,    "%1$s"},                  // IMP
    {1,    "%1$s A"},                // IMPA
    {2,    "%1$s %2$s"},             // BRA
@@ -73,21 +95,6 @@ AddrModeType addr_mode_table[] = {
    {3,    "%1$s %2$02X,%3$s"}       // ZPR
 };
 
-const char default_state[] = "A=?? X=?? Y=?? SP=?? N=? V=? D=? I=? Z=? C=?";
-
-#define OFFSET_A   2
-#define OFFSET_X   7
-#define OFFSET_Y  12
-#define OFFSET_S  18
-#define OFFSET_N  23
-#define OFFSET_V  27
-#define OFFSET_D  31
-#define OFFSET_I  35
-#define OFFSET_Z  39
-#define OFFSET_C  43
-#define OFFSET_FF 44
-
-
 static char buffer[80];
 
 // 6502 registers: -1 means unknown
@@ -104,15 +111,31 @@ static int D = -1;
 static int I = -1;
 static int Z = -1;
 static int C = -1;
+
 // indicate state prediction failed
 static int failflag = 0;
 
+
+static int memory[0x10000];
+
+
+static char ILLEGAL[] = "???";
+
+
+// ====================================================================
+// Forward declarations
+// ====================================================================
+
+static InstrType instr_table_6502[];
+static InstrType instr_table_65c02[];
 
 static void op_STA(int operand, int ea);
 static void op_STX(int operand, int ea);
 static void op_STY(int operand, int ea);
 
-static int memory[0x10000];
+// ====================================================================
+// Helper Methods
+// ====================================================================
 
 static void memory_read(int data, int ea) {
    // TODO: allow memory bounds to be passed in as a command line parameter
@@ -143,7 +166,7 @@ static void memory_write(int data, int ea) {
    }
 }
 
-int compare_NVDIZC(int operand) {
+static int compare_NVDIZC(int operand) {
    if (N >= 0) {
       if (N != ((operand >> 7) & 1)) {
          return 1;
@@ -234,97 +257,6 @@ static void interrupt(int pc, int flags, int vector) {
    }
    PC = vector;
 }
-
-int em_get_PC() {
-   return PC;
-}
-
-//int em_get_N() {
-//   return N;
-//}
-//
-//int em_get_V() {
-//   return V;
-//}
-//
-//int em_get_D() {
-//   return D;
-//}
-//
-//int em_get_I() {
-//   return I;
-//}
-//
-//int em_get_Z() {
-//   return Z;
-//}
-//
-//int em_get_C() {
-//   return C;
-//}
-//
-//int em_get_A() {
-//   return A;
-//}
-//
-//int em_get_X() {
-//   return X;
-//}
-//
-//int em_get_Y() {
-//   return Y;
-//}
-//
-//int em_get_S() {
-//   return S;
-//}
-
-int em_read_memory(int address) {
-   return memory[address];
-}
-
-char *em_get_state() {
-   strcpy(buffer, default_state);
-   if (A >= 0) {
-      write_hex2(buffer + OFFSET_A, A);
-   }
-   if (X >= 0) {
-      write_hex2(buffer + OFFSET_X, X);
-   }
-   if (Y >= 0) {
-      write_hex2(buffer + OFFSET_Y, Y);
-   }
-   if (S >= 0) {
-      write_hex2(buffer + OFFSET_S, S);
-   }
-   if (N >= 0) {
-      buffer[OFFSET_N] = '0' + N;
-   }
-   if (V >= 0) {
-      buffer[OFFSET_V] = '0' + V;
-   }
-   if (D >= 0) {
-      buffer[OFFSET_D] = '0' + D;
-   }
-   if (I >= 0) {
-      buffer[OFFSET_I] = '0' + I;
-   }
-   if (Z >= 0) {
-      buffer[OFFSET_Z] = '0' + Z;
-   }
-   if (C >= 0) {
-      buffer[OFFSET_C] = '0' + C;
-   }
-   return buffer;
-}
-
-
-int em_get_and_clear_fail() {
-   int ret = failflag;
-   failflag = 0;
-   return ret;
-}
-
 
 static int count_cycles_without_sync(sample_t *sample_q, int rst_seen, int intr_seen) {
 
@@ -472,10 +404,12 @@ static int count_cycles_without_sync(sample_t *sample_q, int rst_seen, int intr_
    return cycle_count;
 }
 
-
 static int count_cycles_with_sync(sample_t *sample_q) {
    if (sample_q[0].type == OPCODE) {
       for (int i = 1; i < DEPTH; i++) {
+         if (sample_q[i].type == LAST) {
+            return 0;
+         }
          if (sample_q[i].type == OPCODE) {
             return i;
          }
@@ -484,15 +418,52 @@ static int count_cycles_with_sync(sample_t *sample_q) {
    return 1;
 }
 
-int em_count_cycles(sample_t *sample_q, int rst_seen, int intr_seen) {
-   if (sample_q[0].type == UNKNOWN) {
-      return count_cycles_without_sync(sample_q, rst_seen, intr_seen);
-   } else {
-      return count_cycles_with_sync(sample_q);
+// ====================================================================
+// Public Methods
+// ====================================================================
+
+void em_init(int support_c02, int support_rockwell, int support_undocumented, int decode_bbctube) {
+   int i;
+   c02 = support_c02;
+   rockwell = support_rockwell;
+   instr_table = support_c02 ? instr_table_65c02 : instr_table_6502;
+   bbctube = decode_bbctube;
+   // If not supporting the Rockwell C02 extensions, tweak the cycle countes
+   if (support_c02 && !support_rockwell) {
+      // x7 (RMB/SMB): 5 cycles -> 1 cycles
+      // xF (BBR/BBS): 5 cycles -> 1 cycles
+      for (i = 0x07; i <= 0xff; i+= 0x08) {
+         instr_table[i].mnemonic = ILLEGAL;
+         instr_table[i].mode     = IMP;
+         instr_table[i].cycles   = 1;
+         instr_table[i].optype   = READOP;
+         instr_table[i].len      = 1;
+      }
+   }
+   InstrType *instr = instr_table;
+   for (i = 0; i < 256; i++) {
+      // Remove the undocumented instructions, if not supported
+      if (instr->undocumented && !support_undocumented) {
+         instr->mnemonic = ILLEGAL;
+         instr->mode     = IMP;
+         instr->cycles   = 1;
+      }
+      // Copy the length and format from the address mode, for efficiency
+      instr->len = addr_mode_table[instr->mode].len;
+      instr->fmt = addr_mode_table[instr->mode].fmt;
+      instr++;
+   }
+   for (i = 0; i < 0xffff; i++) {
+      memory[i] = -1;
    }
 }
 
-int em_match_reset(sample_t *sample_q, int vec_rst) {
+
+int em_match_reset(sample_t *sample_q, int num_samples, int vec_rst) {
+   // Check we have enough valid samples
+   if (num_samples < 8) {
+      return 0;
+   }
    // We use a heuristic, based on what we expect to see on the data
    // bus in cycles 5, 6 and 7, i.e. RSTVECL, RSTVECH, RSTOPCODE
    if ((sample_q[5].data == (vec_rst & 0xff)) &&
@@ -504,8 +475,11 @@ int em_match_reset(sample_t *sample_q, int vec_rst) {
    return 0;
 }
 
-
-int em_match_interrupt(sample_t *sample_q) {
+int em_match_interrupt(sample_t *sample_q, int num_samples) {
+   // Check we have enough valid samples
+   if (num_samples < 7) {
+      return 0;
+   }
    // An interupt will write PCH, PCL, PSW in bus cycles 2,3,4
    if (sample_q[0].rnw >= 0) {
       // If we have the RNW pin connected, then just look for these three writes in succession
@@ -533,12 +507,12 @@ int em_match_interrupt(sample_t *sample_q) {
    return 0;
 }
 
-void em_interrupt(sample_t *sample_q, instruction_t *instruction) {
-   int pc   = (sample_q[2].data << 8) + sample_q[3].data;
-   int flags = sample_q[4].data;
-   int vector = (sample_q[5].data << 8) + sample_q[6].data;
-   instruction->pc = pc;
-   interrupt(pc, flags, vector);
+int em_count_cycles(sample_t *sample_q, int rst_seen, int intr_seen) {
+   if (sample_q[0].type == UNKNOWN) {
+      return count_cycles_without_sync(sample_q, rst_seen, intr_seen);
+   } else {
+      return count_cycles_with_sync(sample_q);
+   }
 }
 
 void em_reset(sample_t *sample_q, instruction_t *instruction) {
@@ -557,6 +531,14 @@ void em_reset(sample_t *sample_q, instruction_t *instruction) {
       D = 0;
    }
    PC = (sample_q[6].data << 8) + sample_q[5].data;
+}
+
+void em_interrupt(sample_t *sample_q, instruction_t *instruction) {
+   int pc   = (sample_q[2].data << 8) + sample_q[3].data;
+   int flags = sample_q[4].data;
+   int vector = (sample_q[6].data << 8) + sample_q[5].data;
+   instruction->pc = pc;
+   interrupt(pc, flags, vector);
 }
 
 void em_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
@@ -791,6 +773,59 @@ int em_disassemble(instruction_t *instruction) {
    return numchars;
 }
 
+int em_get_PC() {
+   return PC;
+}
+
+
+int em_read_memory(int address) {
+   return memory[address];
+}
+
+char *em_get_state() {
+   strcpy(buffer, default_state);
+   if (A >= 0) {
+      write_hex2(buffer + OFFSET_A, A);
+   }
+   if (X >= 0) {
+      write_hex2(buffer + OFFSET_X, X);
+   }
+   if (Y >= 0) {
+      write_hex2(buffer + OFFSET_Y, Y);
+   }
+   if (S >= 0) {
+      write_hex2(buffer + OFFSET_S, S);
+   }
+   if (N >= 0) {
+      buffer[OFFSET_N] = '0' + N;
+   }
+   if (V >= 0) {
+      buffer[OFFSET_V] = '0' + V;
+   }
+   if (D >= 0) {
+      buffer[OFFSET_D] = '0' + D;
+   }
+   if (I >= 0) {
+      buffer[OFFSET_I] = '0' + I;
+   }
+   if (Z >= 0) {
+      buffer[OFFSET_Z] = '0' + Z;
+   }
+   if (C >= 0) {
+      buffer[OFFSET_C] = '0' + C;
+   }
+   return buffer;
+}
+
+int em_get_and_clear_fail() {
+   int ret = failflag;
+   failflag = 0;
+   return ret;
+}
+
+// ====================================================================
+// Individual Instructions
+// ====================================================================
 
 static void op_ADC(int operand, int ea) {
    memory_read(operand, ea);
@@ -1500,6 +1535,10 @@ static void op_SMB(int operand, int ea) {
    memory_write(operand, ea);
 }
 
+// ====================================================================
+// Opcode Tables
+// ====================================================================
+
 static InstrType instr_table_65c02[] = {
    /* 00 */   { "BRK",  0, IMM   , 7, 0, WRITEOP,  op_BRK},
    /* 01 */   { "ORA",  0, INDX  , 6, 0, READOP,   op_ORA},
@@ -2017,41 +2056,3 @@ static InstrType instr_table_6502[] = {
    /* FE */   { "INC",  0, ABSX  , 7, 0, RMWOP,    op_INC},
    /* FF */   { "ISC",  1, ABSX  , 7, 0, READOP,   0}
 };
-
-static char ILLEGAL[] = "???";
-
-void em_init(int support_c02, int support_rockwell, int support_undocumented, int decode_bbctube) {
-   int i;
-   c02 = support_c02;
-   rockwell = support_rockwell;
-   instr_table = support_c02 ? instr_table_65c02 : instr_table_6502;
-   bbctube = decode_bbctube;
-   // If not supporting the Rockwell C02 extensions, tweak the cycle countes
-   if (support_c02 && !support_rockwell) {
-      // x7 (RMB/SMB): 5 cycles -> 1 cycles
-      // xF (BBR/BBS): 5 cycles -> 1 cycles
-      for (i = 0x07; i <= 0xff; i+= 0x08) {
-         instr_table[i].mnemonic = ILLEGAL;
-         instr_table[i].mode     = IMP;
-         instr_table[i].cycles   = 1;
-         instr_table[i].optype   = READOP;
-         instr_table[i].len      = 1;
-      }
-   }
-   InstrType *instr = instr_table;
-   for (i = 0; i < 256; i++) {
-      // Remove the undocumented instructions, if not supported
-      if (instr->undocumented && !support_undocumented) {
-         instr->mnemonic = ILLEGAL;
-         instr->mode     = IMP;
-         instr->cycles   = 1;
-      }
-      // Copy the length and format from the address mode, for efficiency
-      instr->len = addr_mode_table[instr->mode].len;
-      instr->fmt = addr_mode_table[instr->mode].fmt;
-      instr++;
-   }
-   for (i = 0; i < 0xffff; i++) {
-      memory[i] = -1;
-   }
-}
