@@ -869,16 +869,35 @@ void decode_cycle_without_sync(int *bus_data_q, int *pin_rnw_q, int *pin_rst_q) 
 #endif
 
 // ====================================================================
-// Sync-based instruction decoder
+// Generic instruction decoder
 // ====================================================================
 
 int decode_instruction(sample_t *sample_q, int num_samples) {
    static int rst_seen = -1;
 
    // Skip any samples where RST is asserted (active low)
-   if (sample_q->rst == 0) {
+   if (sample_q[0].rst == 0) {
       rst_seen = 1;
       return 1;
+   }
+
+   // This is a hack to align the syncless decoding with the rising edge of rst
+   if (rst_seen == 1) {
+      // Make sure we have a full set of samples where rst is high
+      for (int i = 1; i < num_samples; i++) {
+         if (sample_q[i].rst == 0) {
+            return i;
+         }
+      }
+      // Skip 1 or 2 samples depending on the CPU type
+      int skip = arguments.c02 ? 1 : 2;
+
+      // Decode the reset sequence (rst_seen is 1 here)
+      int num_cycles = analyze_instruction(sample_q + skip, num_samples - skip, rst_seen);
+
+      rst_seen = 0;
+
+      return num_cycles + skip;
    }
 
    // If the first sample is not an SYNC, then drop the sample
