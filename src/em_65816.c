@@ -33,7 +33,8 @@ typedef enum {
    ABL,
    ALX,
    IAL,
-   BM
+   BM,
+   IMM16
 } AddrMode ;
 
 typedef enum {
@@ -68,7 +69,8 @@ typedef struct {
 // Static variables
 // ====================================================================
 
-#define OFFSET_A   2
+#define OFFSET_B   2
+#define OFFSET_A   4
 #define OFFSET_X   9
 #define OFFSET_Y  16
 #define OFFSET_S  24
@@ -82,7 +84,9 @@ typedef struct {
 #define OFFSET_C  59
 #define OFFSET_E  63
 
-static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=? D=? I=? Z=? C=? E=?";
+//static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=? D=? I=? Z=? C=? E=?";
+
+static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=? D=? I=? Z=? C=?";
 
 static cpu_t cpu_type;
 static int c02;
@@ -115,7 +119,8 @@ AddrModeType addr_mode_table[] = {
    {4,    "%1$s %4$02X%3$02X%2$02X"},  // ABL
    {4,    "%1$s %4$02X%3$02X%2$02X,X"},// ABLX
    {3,    "%1$s [%3$02X%2$02X]"},      // IAL
-   {3,    "%1$s %2$02X,%3$02X"}        // BM
+   {3,    "%1$s %2$02X,%3$02X"},       // BM
+   {3,    "%1$s #%3$02X%2$02X"}        // IMM16
 };
 
 
@@ -404,6 +409,7 @@ static void em_65816_init(cpu_t cpu_type, int undocumented, int decode_bbctube, 
       // Copy the length and format from the address mode, for efficiency
       instr->len = addr_mode_table[instr->mode].len;
       instr->fmt = addr_mode_table[instr->mode].fmt;
+      //printf("%02x %d %d %d\n", i, instr->m_extra, instr->x_extra, instr->len);
       instr++;
    }
    for (int i = 0; i < sizeof(memory) / sizeof(int); i++) {
@@ -490,16 +496,29 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    // lookup the entry for the instruction
    InstrType *instr = &instr_table[opcode];
 
-   int opcount = instr->len - 1;
+   int opcount = 0;
+   //Immediate operands can be 16-bit
+   if (instr->mode == IMM) {
+      if (MS == 0 && instr->m_extra) {
+         opcount = 1;
+      }
+      if (XS == 0 && instr->x_extra) {
+         opcount = 1;
+      }
+   }
+   opcount += instr->len - 1;
 
    int op1 = (opcount < 1) ? 0 : sample_q[1].data;
 
    int op2 = (opcount < 2) ? 0 : sample_q[2].data;
 
+   int op3 = (opcount < 3) ? 0 : sample_q[(opcode == 0x22) ? 5 : 3].data;
+
    // Save the instruction state
    instruction->opcode  = opcode;
    instruction->op1     = op1;
    instruction->op2     = op2;
+   instruction->op3     = op3;
    instruction->opcount = opcount;
 
    // Determine the current PC value
@@ -529,6 +548,10 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          // JSR: the operand is the data pushed to the stack (PCH, PCL)
          // <opcode> <op1> <op2> <read dummy> <write pch> <write pcl>
          operand = (sample_q[4].data << 8) + sample_q[5].data;
+      } else if (opcode == 0x22) {
+         // JSL: the operand is the data pushed to the stack (PCB, PCH, PCL)
+         // <opcode> <op1> <op2> <write pbr> <op3> <read dummy> <write pch> <write pcl>
+         operand = (sample_q[3].data << 16) + (sample_q[6].data << 8) + sample_q[7].data;
       } else if (opcode == 0x40) {
          // RTI: the operand is the data pulled from the stack (P, PCL, PCH)
          // <opcode> <op1> <read dummy> <read p> <read pcl> <read pch>
@@ -537,9 +560,13 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          // RTS: the operand is the data pulled from the stack (PCL, PCH)
          // <opcode> <op1> <read dummy> <read pcl> <read pch>
          operand = (sample_q[3].data << 8) + sample_q[4].data;
+      } else if (opcode == 0x6B) {
+         // RTL: the operand is the data pulled from the stack (PCL, PCH)
+         // <opcode> <op1> <read dummy> <read pcl> <read pch>
+         operand = (sample_q[5].data << 16) + (sample_q[4].data << 8) + sample_q[2].data;
       } else if (instr->mode == IMM) {
          // Immediate addressing mode: the operand is the 2nd byte of the instruction
-         operand = op1;
+         operand = (op2 << 8) + op1;
       } else if (instr->decimalcorrect && (D == 1)) {
          // read operations on the C02 that have an extra cycle added
          operand = sample_q[num_cycles - 2].data;
@@ -609,9 +636,9 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c) {
       // RTI, BRK, INTR, JMP (ind), JMP (ind, X), IRQ/NMI/RST
       PC = (sample_q[num_cycles - 1].data << 8) | sample_q[num_cycles - 2].data;
-   } else if (opcode == 0x20 || opcode == 0x4c) {
-      // JSR abs, JMP abs
-      PC = op2 << 8 | op1;
+   } else if (opcode == 0x20 || opcode == 0x22 || opcode == 0x4c) {
+      // JSR abs, JSL long, JMP abs
+      PC = (op3 << 16) | (op2 << 8) | op1;
    } else if (opcode == 0x60) {
       // RTS
       PC = (((sample_q[num_cycles - 2].data << 8) | sample_q[num_cycles - 3].data) + 1) & 0xffff;
@@ -632,7 +659,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       PC &= 0xffff;
    } else {
       // Otherwise, increment pc by length of instuction
-      PC += instr->len;
+      PC += opcount + 1;
       PC &= 0xffff;
    }
 }
@@ -644,12 +671,12 @@ static int em_65816_disassemble(instruction_t *instruction) {
    char target[16];
 
    // Unpack the instruction bytes
-   int opcode = instruction->opcode;
-   int op1    = instruction->op1;
-   int op2    = instruction->op2;
-   int op3    = instruction->op3;
-   int pc     = instruction->pc;
-
+   int opcode  = instruction->opcode;
+   int op1     = instruction->op1;
+   int op2     = instruction->op2;
+   int op3     = instruction->op3;
+   int pc      = instruction->pc;
+   int opcount = instruction->opcount;
    // lookup the entry for the instruction
    InstrType *instr = &instr_table[opcode];
 
@@ -689,6 +716,12 @@ static int em_65816_disassemble(instruction_t *instruction) {
       numchars = printf(fmt, mnemonic, op1, target);
       break;
    case IMM:
+      if (opcount == 2) {
+         numchars = printf(addr_mode_table[IMM16].fmt, mnemonic, op1, op2);
+      } else {
+         numchars = printf(fmt, mnemonic, op1);
+      }
+      break;
    case ZP:
    case ZPX:
    case ZPY:
@@ -732,8 +765,11 @@ static int em_65816_read_memory(int address) {
 
 static char *em_65816_get_state() {
    strcpy(buffer, default_state);
+   if (B >= 0) {
+      write_hex2(buffer + OFFSET_B, B);
+   }
    if (A >= 0) {
-      write_hex4(buffer + OFFSET_A, A);
+      write_hex2(buffer + OFFSET_A, A);
    }
    if (X >= 0) {
       write_hex4(buffer + OFFSET_X, X);
@@ -768,9 +804,11 @@ static char *em_65816_get_state() {
    if (C >= 0) {
       buffer[OFFSET_C] = '0' + C;
    }
+#if 0
    if (E >= 0) {
       buffer[OFFSET_E] = '0' + E;
    }
+#endif
    return buffer;
 }
 
@@ -893,8 +931,7 @@ static void op_PLD(int operand, int ea) {
 // Block Move (Decrementing)
 static void op_MVP(int operand, int ea) {
    if (A >= 0 && B >= 0) {
-      int C = (B << 8) + A;
-      C--;
+      int C = (((B << 8) | A) - 1) & 0xffff;
       A = C & 0xff;
       B = (C >> 8) & 0xff;
       if (X >= 0) {
@@ -903,19 +940,22 @@ static void op_MVP(int operand, int ea) {
       if (Y >= 0) {
          Y = (Y - 1) & 0xFFFF;
       }
+      if (PC >= 0 && C != 0xFFFF) {
+         PC -= 3;
+      }
    } else {
       A = -1;
       B = -1;
       X = -1;
       Y = -1;
+      PC = -1;
    }
 }
 
 // Block Move (Incrementing)
 static void op_MVN(int operand, int ea) {
    if (A >= 0 && B >= 0) {
-      int C = (B << 8) + A;
-      C--;
+      int C = (((B << 8) | A) - 1) & 0xffff;
       A = C & 0xff;
       B = (C >> 8) & 0xff;
       if (X >= 0) {
@@ -924,11 +964,15 @@ static void op_MVN(int operand, int ea) {
       if (Y >= 0) {
          Y = (Y + 1) & 0xFFFF;
       }
+      if (PC >= 0 && C != 0xFFFF) {
+         PC -= 3;
+      }
    } else {
       A = -1;
       B = -1;
       X = -1;
       Y = -1;
+      PC = -1;
    }
 }
 
@@ -1073,6 +1117,8 @@ static void op_SEP(int operand, int ea) {
 static void op_RTL(int operand, int ea) {
    // RTL: the operand is the data pulled from the stack (PCL, PCH, PB)
    if (S >= 0) {
+      S = (S + 1) & 255;
+      memory_read((operand >> 16) & 255, 0x100 + S);
       S = (S + 1) & 255;
       memory_read((operand >> 8) & 255, 0x100 + S);
       S = (S + 1) & 255;
@@ -1409,6 +1455,9 @@ static void op_JSR(int operand, int ea) {
 static void op_LDA(int operand, int ea) {
    memory_read(operand, ea);
    A = operand;
+   if (!MS) {
+      B = (operand >> 8) & 0xff;
+   }
    set_NZ(A);
 }
 
@@ -1823,7 +1872,7 @@ static InstrType instr_table_65c816[] = {
    /* 1F */   { "ORA",  0, ALX   , 5, 0, READOP,   op_ORA},
    /* 20 */   { "JSR",  0, ABS   , 6, 0, READOP,   op_JSR},
    /* 21 */   { "AND",  0, INDX  , 6, 0, READOP,   op_AND},
-   /* 22 */   { "JSR",  0, ABL   , 8, 0, READOP,   op_JSR},
+   /* 22 */   { "JSL",  0, ABL   , 8, 0, READOP,   op_JSR},
    /* 23 */   { "AND",  0, SR    , 4, 0, READOP,   op_AND},
    /* 24 */   { "BIT",  0, ZP    , 3, 0, READOP,   op_BIT},
    /* 25 */   { "AND",  0, ZP    , 3, 0, READOP,   op_AND},
@@ -1881,7 +1930,7 @@ static InstrType instr_table_65c816[] = {
    /* 59 */   { "EOR",  0, ABSY  , 4, 0, READOP,   op_EOR},
    /* 5A */   { "PHY",  0, IMP   , 3, 0, WRITEOP,  op_PHY},
    /* 5B */   { "TCD",  0, IMP   , 2, 0, READOP,   op_TCD},
-   /* 5C */   { "JMP",  0, ABS   , 4, 0, READOP,   0},
+   /* 5C */   { "JML",  0, ABL   , 4, 0, READOP,   0},
    /* 5D */   { "EOR",  0, ABSX  , 4, 0, READOP,   op_EOR},
    /* 5E */   { "LSR",  0, ABSX  , 7, 0, RMWOP,    op_LSR},
    /* 5F */   { "EOR",  0, ALX   , 5, 0, READOP,   op_EOR},

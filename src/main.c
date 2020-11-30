@@ -41,8 +41,9 @@ const char default_fwa[] = "\?\?-\?\?:\?\?\?\?\?\?\?\?:\?\?:\?\? = \?\?\?\?\?\?\
 
 static char fwabuf[80];
 
-
 static cpu_emulator_t *em;
+
+static int c816;
 
 // ====================================================================
 // Argp processing
@@ -519,17 +520,31 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
       }
       // Show hex bytes
       if (fail || arguments.show_hex) {
-         if (rst_seen) {
-            printf("         : ");
-         } else if (intr_seen) {
-            printf("         : ");
-         } else {
-            if (instruction.opcount == 0) {
-               printf("%02X       : ", opcode);
-            } else if (instruction.opcount == 1) {
-               printf("%02X %02X    : ", opcode, instruction.op1);
+         if (c816) {
+            if (rst_seen || intr_seen) {
+               printf("         : ");
             } else {
-               printf("%02X %02X %02X : ", opcode, instruction.op1, instruction.op2);
+               if (instruction.opcount == 0) {
+                  printf("%02X          : ", opcode);
+               } else if (instruction.opcount == 1) {
+                  printf("%02X %02X       : ", opcode, instruction.op1);
+               } else if (instruction.opcount == 2) {
+                  printf("%02X %02X %02X    : ", opcode, instruction.op1, instruction.op2);
+               } else {
+                  printf("%02X %02X %02X %02X : ", opcode, instruction.op1, instruction.op2, instruction.op3);
+               }
+            }
+         } else {
+            if (rst_seen || intr_seen) {
+               printf("         : ");
+            } else {
+               if (instruction.opcount == 0) {
+                  printf("%02X       : ", opcode);
+               } else if (instruction.opcount == 1) {
+                  printf("%02X %02X    : ", opcode, instruction.op1);
+               } else {
+                  printf("%02X %02X %02X : ", opcode, instruction.op1, instruction.op2);
+               }
             }
          }
       }
@@ -729,8 +744,6 @@ void decode(FILE *stream) {
    int last_phi2 = -1;
 
    sample_t s;
-
-   int c816 = (arguments.cpu_type == CPU_65C816);
 
    if (arguments.byte) {
       s.rnw = -1;
@@ -975,9 +988,11 @@ int main(int argc, char *argv[]) {
    }
 
    if (arguments.cpu_type == CPU_65C816) {
+      c816 = 1;
       em = &em_65816;
    } else {
       em = &em_6502;
+      c816 = 0;
    }
 
    // This flag tells the sync-less cycle count estimation to infer additional cycles on the master
