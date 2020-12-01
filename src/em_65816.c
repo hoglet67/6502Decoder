@@ -242,7 +242,7 @@ static void memory_write(int data, int ea) {
          printf("memory modelling failed at %04x: illegal write of %02x\n", ea, data);
          failflag |= 1;
       } else {
-         printf("memory write: %04x = %02x\n", ea, data);
+         //printf("memory write: %04x = %02x\n", ea, data);
          memory[ea] = data;
       }
    }
@@ -863,6 +863,11 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    case BRL:
       if (PC > 0) {
          ea = (PC + ((int16_t)((op2 << 8) + op1)) + 3) & 0xffff;
+      }
+      break;
+   case SR:
+      if (SL >= 0 && SH >= 0) {
+         ea = ((SH << 8) + SL + op1) & 0xffff;
       }
       break;
    default:
@@ -1928,14 +1933,32 @@ static void op_SEI(operand_t operand, ea_t ea) {
 }
 
 static void op_STA(operand_t operand, ea_t ea) {
-   // TODO: fix for variable width
-   memory_write(operand, ea);
+   int oplo = operand & 0xff;
+   int ophi = (operand >> 8) & 0xff;
+   if (MS == 0 && ea >= 0) {
+      memory_write(oplo,  ea              );
+      memory_write(ophi, (ea + 1) & 0xffff);
+   } else {
+      memory_write(oplo, ea);
+   }
+   // Always write A
    if (A >= 0) {
-      if (operand != A) {
+      if (oplo != A) {
          failflag = 1;
       }
    }
-   A = operand;
+   A = oplo;
+   // Optionally write B, depending on the MS flag
+   if (MS < 0) {
+      B = -1;
+   } else if (MS == 0) {
+      if (B >= 0) {
+         if (ophi != B) {
+            failflag = 1;
+         }
+      }
+      B = ophi;
+   }
 }
 
 static void op_STX(operand_t operand, ea_t ea) {
