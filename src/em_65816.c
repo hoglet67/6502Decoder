@@ -50,6 +50,10 @@ typedef struct {
    const char *fmt;
 } AddrModeType;
 
+typedef uint32_t operand_t;
+
+typedef int ea_t;
+
 typedef struct {
    const char *mnemonic;
    int undocumented;
@@ -57,7 +61,7 @@ typedef struct {
    int cycles;
    int decimalcorrect;
    OpType optype;
-   void (*emulate)(int, int);
+   void (*emulate)(operand_t, ea_t);
    int len;
    int m_extra;
    int x_extra;
@@ -127,7 +131,7 @@ static const char *fmt_imm16 = "%1$s #%3$02X%2$02X";
 static int A = -1;
 static int X = -1;
 static int Y = -1;
-static int S = -1;
+static int S = 0x1FF;
 static int PC = -1;
 
 // 65C816 additional registers: -1 means unknown
@@ -145,10 +149,9 @@ static int Z = -1;
 static int C = -1;
 
 // 65C816 additional flags: -1 means unknown
-// TODO: these should start as unknown
-static int MS = 1; // Accumulator and Memeory Size Flag
-static int XS = 1; // Index Register Size Flag
-static int E =  1; // Emulation Mode Flag, updated by XCE
+static int MS = -1; // Accumulator and Memeory Size Flag
+static int XS = -1; // Index Register Size Flag
+static int E =  -1; // Emulation Mode Flag, updated by XCE
 
 // indicate state prediction failed
 static int failflag = 0;
@@ -208,9 +211,9 @@ static char *m2_ops[] = {
 
 static InstrType instr_table_65c816[];
 
-static void op_STA(int operand, int ea);
-static void op_STX(int operand, int ea);
-static void op_STY(int operand, int ea);
+static void op_STA(operand_t operand, ea_t ea);
+static void op_STX(operand_t operand, ea_t ea);
+static void op_STY(operand_t operand, ea_t ea);
 
 // ====================================================================
 // Helper Methods
@@ -316,8 +319,13 @@ static void set_NZ(int value) {
 }
 
 
-static void interrupt(int pc, int flags, int vector) {
+static void interrupt(int pb, int pc, int flags, int vector) {
    if (S >= 0) {
+      // In native mode, push PB
+      if (E == 0) {
+         memory_write(pb & 0xff, 0x100 + S);
+         S = (S - 1) & 255;
+      }
       // Push PCH
       memory_write((pc >> 8) & 0xff, 0x100 + S);
       S = (S - 1) & 255;
@@ -356,6 +364,32 @@ static int count_cycles_with_sync(sample_t *sample_q) {
       }
    }
    return 1;
+}
+
+// A set of actions to take if emulation mode enabled
+static void emulation_mode_on() {
+   if (E == 0) {
+      failflag = 1;
+   }
+   MS = 1;
+   XS = 1;
+   if (X >= 0) {
+      X &= 0x00ff;
+      Y &= 0x00ff;
+   }
+   if (S >= 0) {
+      S &= 0x00ff;
+      S |= 0x0100;
+   }
+   E = 1;
+}
+
+// A set of actions to take if emulation mode enabled
+static void emulation_mode_off() {
+   if (E == 1) {
+      failflag = 1;
+   }
+   E = 0;
 }
 
 // ====================================================================
@@ -419,7 +453,10 @@ static int em_65816_match_interrupt(sample_t *sample_q, int num_samples) {
    if (num_samples < 7) {
       return 0;
    }
-   // An interupt will write PCH, PCL, PSW in bus cycles 2,3,4
+   // In emulation mode an interupt will write PCH, PCL, PSW in bus cycles 2,3,4
+   // In native mode an interupt will write PBR, PCH, PCL, PSW in bus cycles 2,3,4,5
+   //
+   // TODO: the heuristic only works in emulation mode
    if (sample_q[0].rnw >= 0) {
       // If we have the RNW pin connected, then just look for these three writes in succession
       // Currently can't detect a BRK being interrupted
@@ -473,18 +510,34 @@ static void em_65816_reset(sample_t *sample_q, int num_cycles, instruction_t *in
    PB = 0;
    // Extra 816 flags
    E = 1;
-   MS = 1;
-   XS = 1;
+   emulation_mode_on();
    // Program Counter
    PC = (sample_q[num_cycles - 1].data << 8) + sample_q[num_cycles - 2].data;
 }
 
 static void em_65816_interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
-   int pc   = (sample_q[2].data << 8) + sample_q[3].data;
-   int flags = sample_q[4].data;
-   int vector = (sample_q[6].data << 8) + sample_q[5].data;
+   int i;
+   int pb;
+   if (num_cycles == 7) {
+      // We must be in emulation mode
+      emulation_mode_on();
+      i = 2;
+      pb = -1;
+   } else {
+      // We must be in native mode
+      pb = sample_q[2].data;
+      emulation_mode_off();
+      i = 3;
+      pb = sample_q[2].data;
+   }
+   int pc     = (sample_q[i].data << 8) + sample_q[i + 1].data;
+   int flags  = sample_q[i + 2].data;
+   int vector = (sample_q[i + 4].data << 8) + sample_q[i + 3].data;
+   if (pb >= 0) {
+      instruction->pb = pb;
+   }
    instruction->pc = pc;
-   interrupt(pc, flags, vector);
+   interrupt(pb, pc, flags, vector);
 }
 
 static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
@@ -547,7 +600,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
 
    if (instr->emulate) {
 
-      int operand;
+      uint32_t operand;
       if (instr->optype == RMWOP) {
          // e.g. <opcode> <op1> <op2> <read> <write> <write>
          // Want to pick off the read
@@ -569,8 +622,15 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          operand = (sample_q[3].data << 16) + (sample_q[6].data << 8) + sample_q[7].data;
       } else if (opcode == 0x40) {
          // RTI: the operand is the data pulled from the stack (P, PCL, PCH)
-         // <opcode> <op1> <read dummy> <read p> <read pcl> <read pch>
-         operand = (sample_q[3].data << 16) +  (sample_q[4].data << 8) + sample_q[5].data;
+         // E=0: <opcode> <op1> <read dummy> <read p> <read pcl> <read pch> <read pbr>
+         // E=1: <opcode> <op1> <read dummy> <read p> <read pcl> <read pch>
+         operand = (sample_q[5].data << 16) +  (sample_q[4].data << 8) + sample_q[3].data;
+         if (num_cycles == 6) {
+            emulation_mode_on();
+         } else {
+            emulation_mode_off();
+            operand |= (sample_q[5].data << 24);
+         }
       } else if (opcode == 0x60) {
          // RTS: the operand is the data pulled from the stack (PCL, PCH)
          // <opcode> <op1> <read dummy> <read pcl> <read pch> <read dummy>
@@ -866,13 +926,13 @@ cpu_emulator_t em_65816 = {
 
 // Coprocessor
 
-static void op_COP(int operand, int ea) {
+static void op_COP(operand_t operand, ea_t ea) {
    D = 0;
    I = 0;
 }
 
 // Push Effective Address
-static void op_PEA(int operand, int ea) {
+static void op_PEA(operand_t operand, ea_t ea) {
    if (S >= 0) {
       memory_write((operand >> 8) & 255, 0x100 + S);
       S = (S - 1) & 255;
@@ -881,16 +941,16 @@ static void op_PEA(int operand, int ea) {
    }
 }
 
-static void op_PEI(int operand, int ea) {
+static void op_PEI(operand_t operand, ea_t ea) {
    // TODO
 }
 
-static void op_PER(int operand, int ea) {
+static void op_PER(operand_t operand, ea_t ea) {
    // TODO
 }
 
 // Push Data Bank Register
-static void op_PHB(int operand, int ea) {
+static void op_PHB(operand_t operand, ea_t ea) {
    if (S >= 0) {
       memory_write(operand, 0x100 + S);
       S = (S - 1) & 255;
@@ -904,7 +964,7 @@ static void op_PHB(int operand, int ea) {
 }
 
 // Push Program Bank Register
-static void op_PHK(int operand, int ea) {
+static void op_PHK(operand_t operand, ea_t ea) {
    if (S >= 0) {
       memory_write(operand, 0x100 + S);
       S = (S - 1) & 255;
@@ -918,7 +978,7 @@ static void op_PHK(int operand, int ea) {
 }
 
 // Push Direct Page Register
-static void op_PHD(int operand, int ea) {
+static void op_PHD(operand_t operand, ea_t ea) {
    if (S >= 0) {
       memory_write((operand >> 8) & 255, 0x100 + S);
       S = (S - 1) & 255;
@@ -934,7 +994,7 @@ static void op_PHD(int operand, int ea) {
 }
 
 // Pull Data Bank Register
-static void op_PLB(int operand, int ea) {
+static void op_PLB(operand_t operand, ea_t ea) {
    DB = operand;
    set_NZ(DB);
    if (S >= 0) {
@@ -944,7 +1004,7 @@ static void op_PLB(int operand, int ea) {
 }
 
 // Pull Direct Page Register
-static void op_PLD(int operand, int ea) {
+static void op_PLD(operand_t operand, ea_t ea) {
    DP = operand;
    set_NZ(DP);
    if (S >= 0) {
@@ -957,7 +1017,7 @@ static void op_PLD(int operand, int ea) {
 
 
 // Block Move (Decrementing)
-static void op_MVP(int operand, int ea) {
+static void op_MVP(operand_t operand, ea_t ea) {
    if (A >= 0 && B >= 0) {
       int C = (((B << 8) | A) - 1) & 0xffff;
       A = C & 0xff;
@@ -981,7 +1041,7 @@ static void op_MVP(int operand, int ea) {
 }
 
 // Block Move (Incrementing)
-static void op_MVN(int operand, int ea) {
+static void op_MVN(operand_t operand, ea_t ea) {
    if (A >= 0 && B >= 0) {
       int C = (((B << 8) | A) - 1) & 0xffff;
       A = C & 0xff;
@@ -1005,7 +1065,7 @@ static void op_MVN(int operand, int ea) {
 }
 
 // Transfer Transfer C accumulator to Direct Page register
-static void op_TCD(int operand, int ea) {
+static void op_TCD(operand_t operand, ea_t ea) {
    if (B >= 0 && A >= 0) {
       DP = (B << 8) + A;
       // TODO: Need to pick the right sign bit
@@ -1017,7 +1077,7 @@ static void op_TCD(int operand, int ea) {
 }
 
 // Transfer Transfer C accumulator to Stack pointer
-static void op_TCS(int operand, int ea) {
+static void op_TCS(operand_t operand, ea_t ea) {
    if (B >= 0 && A >= 0) {
       S = (B << 8) + A;
    } else {
@@ -1026,7 +1086,7 @@ static void op_TCS(int operand, int ea) {
 }
 
 // Transfer Transfer Direct Page register to C accumulator
-static void op_TDC(int operand, int ea) {
+static void op_TDC(operand_t operand, ea_t ea) {
    if (DP >= 0) {
       A = DP & 255;
       B = (DP >> 8) & 255;
@@ -1040,7 +1100,7 @@ static void op_TDC(int operand, int ea) {
 }
 
 // Transfer Transfer Stack pointer to C accumulator
-static void op_TSC(int operand, int ea) {
+static void op_TSC(operand_t operand, ea_t ea) {
    if (S >= 0) {
       A = S & 255;
       B = (S >> 8) & 255;
@@ -1053,7 +1113,7 @@ static void op_TSC(int operand, int ea) {
    }
 }
 
-static void op_TXY(int operand, int ea) {
+static void op_TXY(operand_t operand, ea_t ea) {
    if (X >= 0) {
       Y = X;
       set_NZ(Y);
@@ -1063,7 +1123,7 @@ static void op_TXY(int operand, int ea) {
    }
 }
 
-static void op_TYX(int operand, int ea) {
+static void op_TYX(operand_t operand, ea_t ea) {
    if (Y >= 0) {
       X = Y;
       set_NZ(X);
@@ -1074,7 +1134,7 @@ static void op_TYX(int operand, int ea) {
 }
 
 // Exchange A and B
-static void op_XBA(int operand, int ea) {
+static void op_XBA(operand_t operand, ea_t ea) {
    int tmp = A;
    B = A;
    A = tmp;
@@ -1086,20 +1146,18 @@ static void op_XBA(int operand, int ea) {
    }
 }
 
-static void op_XCE(int operand, int ea) {
+static void op_XCE(operand_t operand, ea_t ea) {
    int tmp = C;
    C = E;
    E = tmp;
-   if (E < 0) {
+   if (tmp < 0) {
       MS = -1;
       XS = -1;
-   } else if (E > 0) {
-      MS = 1;
-      XS = 1;
-      X &= 0x00ff;
-      Y &= 0x00ff;
-      S &= 0x00ff;
-      S |= 0x0100;
+      E = -1;
+   } else if (tmp > 0) {
+      emulation_mode_on();
+   } else {
+      emulation_mode_off();
    }
 }
 
@@ -1133,16 +1191,16 @@ static void repsep(int operand, int val) {
 }
 
 // Reset/Set Processor Status Bits
-static void op_REP(int operand, int ea) {
+static void op_REP(operand_t operand, ea_t ea) {
    repsep(operand, 0);
 }
 
-static void op_SEP(int operand, int ea) {
+static void op_SEP(operand_t operand, ea_t ea) {
    repsep(operand, 1);
 }
 
 // Jump to Subroutine Long
-static void op_JSL(int operand, int ea) {
+static void op_JSL(operand_t operand, ea_t ea) {
    // JSR: the operand is the data pushed to the stack (PB, PCH, PCL)
    if (S >= 0) {
       memory_write((operand >> 16) & 255, 0x100 + S); // PB
@@ -1155,7 +1213,7 @@ static void op_JSL(int operand, int ea) {
 }
 
 // Return from Subroutine Long
-static void op_RTL(int operand, int ea) {
+static void op_RTL(operand_t operand, ea_t ea) {
    // RTL: the operand is the data pulled from the stack (PCL, PCH, PB)
    if (S >= 0) {
       S = (S + 1) & 255;
@@ -1174,7 +1232,7 @@ static void op_RTL(int operand, int ea) {
 // 65816/6502 instructions
 // ====================================================================
 
-static void op_ADC(int operand, int ea) {
+static void op_ADC(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    if (A >= 0 && C >= 0) {
       if (D == 1) {
@@ -1224,7 +1282,7 @@ static void op_ADC(int operand, int ea) {
    }
 }
 
-static void op_AND(int operand, int ea) {
+static void op_AND(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    if (A >= 0) {
       A = A & operand;
@@ -1234,7 +1292,7 @@ static void op_AND(int operand, int ea) {
    }
 }
 
-static void op_ASLA(int operand, int ea) {
+static void op_ASLA(operand_t operand, ea_t ea) {
    if (A >= 0) {
       C = (A >> 7) & 1;
       A = (A << 1) & 255;
@@ -1244,7 +1302,7 @@ static void op_ASLA(int operand, int ea) {
    }
 }
 
-static void op_ASL(int operand, int ea) {
+static void op_ASL(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    C = (operand >> 7) & 1;
    int tmp = (operand << 1) & 255;
@@ -1252,7 +1310,7 @@ static void op_ASL(int operand, int ea) {
    memory_write(tmp, ea);
 }
 
-static void op_BCC(int branch_taken, int ea) {
+static void op_BCC(operand_t branch_taken, ea_t ea) {
    if (C >= 0) {
       if (C == branch_taken) {
          failflag = 1;
@@ -1262,7 +1320,7 @@ static void op_BCC(int branch_taken, int ea) {
    }
 }
 
-static void op_BCS(int branch_taken, int ea) {
+static void op_BCS(operand_t branch_taken, ea_t ea) {
    if (C >= 0) {
       if (C != branch_taken) {
          failflag = 1;
@@ -1272,7 +1330,7 @@ static void op_BCS(int branch_taken, int ea) {
    }
 }
 
-static void op_BNE(int branch_taken, int ea) {
+static void op_BNE(operand_t branch_taken, ea_t ea) {
    if (Z >= 0) {
       if (Z == branch_taken) {
          failflag = 1;
@@ -1282,7 +1340,7 @@ static void op_BNE(int branch_taken, int ea) {
    }
 }
 
-static void op_BEQ(int branch_taken, int ea) {
+static void op_BEQ(operand_t branch_taken, ea_t ea) {
    if (Z >= 0) {
       if (Z != branch_taken) {
          failflag = 1;
@@ -1292,7 +1350,7 @@ static void op_BEQ(int branch_taken, int ea) {
    }
 }
 
-static void op_BPL(int branch_taken, int ea) {
+static void op_BPL(operand_t branch_taken, ea_t ea) {
    if (N >= 0) {
       if (N == branch_taken) {
          failflag = 1;
@@ -1302,7 +1360,7 @@ static void op_BPL(int branch_taken, int ea) {
    }
 }
 
-static void op_BMI(int branch_taken, int ea) {
+static void op_BMI(operand_t branch_taken, ea_t ea) {
    if (N >= 0) {
       if (N != branch_taken) {
          failflag = 1;
@@ -1312,7 +1370,7 @@ static void op_BMI(int branch_taken, int ea) {
    }
 }
 
-static void op_BVC(int branch_taken, int ea) {
+static void op_BVC(operand_t branch_taken, ea_t ea) {
    if (V >= 0) {
       if (V == branch_taken) {
          failflag = 1;
@@ -1322,7 +1380,7 @@ static void op_BVC(int branch_taken, int ea) {
    }
 }
 
-static void op_BVS(int branch_taken, int ea) {
+static void op_BVS(operand_t branch_taken, ea_t ea) {
    if (V >= 0) {
       if (V != branch_taken) {
          failflag = 1;
@@ -1332,15 +1390,18 @@ static void op_BVS(int branch_taken, int ea) {
    }
 }
 
-static void op_BRK(int operand, int ea) {
+static void op_BRK(operand_t operand, ea_t ea) {
    // BRK: the operand is the data pushed to the stack (PCH, PCL, P)
    int flags = operand & 0xff;
+   // TODO: extact this from operand
+   // TODO: handle native mode
+   int pb = 0x00;
    int pc = (operand >> 8) & 0xffff;
    int vector = ea;
-   interrupt(flags, pc, vector);
+   interrupt(pb, pc, flags, vector);
 }
 
-static void op_BIT_IMM(int operand, int ea) {
+static void op_BIT_IMM(operand_t operand, ea_t ea) {
    if (A >= 0) {
       Z = (A & operand) == 0;
    } else {
@@ -1348,7 +1409,7 @@ static void op_BIT_IMM(int operand, int ea) {
    }
 }
 
-static void op_BIT(int operand, int ea) {
+static void op_BIT(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    N = (operand >> 7) & 1;
    V = (operand >> 6) & 1;
@@ -1359,23 +1420,23 @@ static void op_BIT(int operand, int ea) {
    }
 }
 
-static void op_CLC(int operand, int ea) {
+static void op_CLC(operand_t operand, ea_t ea) {
    C = 0;
 }
 
-static void op_CLD(int operand, int ea) {
+static void op_CLD(operand_t operand, ea_t ea) {
    D = 0;
 }
 
-static void op_CLI(int operand, int ea) {
+static void op_CLI(operand_t operand, ea_t ea) {
    I = 0;
 }
 
-static void op_CLV(int operand, int ea) {
+static void op_CLV(operand_t operand, ea_t ea) {
    V = 0;
 }
 
-static void op_CMP(int operand, int ea) {
+static void op_CMP(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    if (A >= 0) {
       int tmp = A - operand;
@@ -1386,7 +1447,7 @@ static void op_CMP(int operand, int ea) {
    }
 }
 
-static void op_CPX(int operand, int ea) {
+static void op_CPX(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    if (X >= 0) {
       int tmp = X - operand;
@@ -1397,7 +1458,7 @@ static void op_CPX(int operand, int ea) {
    }
 }
 
-static void op_CPY(int operand, int ea) {
+static void op_CPY(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    if (Y >= 0) {
       int tmp = Y - operand;
@@ -1408,7 +1469,7 @@ static void op_CPY(int operand, int ea) {
    }
 }
 
-static void op_DECA(int operand, int ea) {
+static void op_DECA(operand_t operand, ea_t ea) {
    if (A >= 0) {
       A = (A - 1) & 255;
       set_NZ(A);
@@ -1417,14 +1478,14 @@ static void op_DECA(int operand, int ea) {
    }
 }
 
-static void op_DEC(int operand, int ea) {
+static void op_DEC(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    int tmp = (operand - 1) & 255;
    set_NZ(tmp);
    memory_write(tmp, ea);
 }
 
-static void op_DEX(int operand, int ea) {
+static void op_DEX(operand_t operand, ea_t ea) {
    if (X >= 0) {
       X = (X - 1) & 255;
       set_NZ(X);
@@ -1433,7 +1494,7 @@ static void op_DEX(int operand, int ea) {
    }
 }
 
-static void op_DEY(int operand, int ea) {
+static void op_DEY(operand_t operand, ea_t ea) {
    if (Y >= 0) {
       Y = (Y - 1) & 255;
       set_NZ(Y);
@@ -1442,7 +1503,7 @@ static void op_DEY(int operand, int ea) {
    }
 }
 
-static void op_EOR(int operand, int ea) {
+static void op_EOR(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    if (A >= 0) {
       A = A ^ operand;
@@ -1452,7 +1513,7 @@ static void op_EOR(int operand, int ea) {
    }
 }
 
-static void op_INCA(int operand, int ea) {
+static void op_INCA(operand_t operand, ea_t ea) {
    if (A >= 0) {
       A = (A + 1) & 255;
       set_NZ(A);
@@ -1461,14 +1522,14 @@ static void op_INCA(int operand, int ea) {
    }
 }
 
-static void op_INC(int operand, int ea) {
+static void op_INC(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    int tmp = (operand + 1) & 255;
    set_NZ(tmp);
    memory_write(tmp, ea);
 }
 
-static void op_INX(int operand, int ea) {
+static void op_INX(operand_t operand, ea_t ea) {
    if (X >= 0) {
       X = (X + 1) & 255;
       set_NZ(X);
@@ -1477,7 +1538,7 @@ static void op_INX(int operand, int ea) {
    }
 }
 
-static void op_INY(int operand, int ea) {
+static void op_INY(operand_t operand, ea_t ea) {
    if (Y >= 0) {
       Y = (Y + 1) & 255;
       set_NZ(Y);
@@ -1486,7 +1547,7 @@ static void op_INY(int operand, int ea) {
    }
 }
 
-static void op_JSR(int operand, int ea) {
+static void op_JSR(operand_t operand, ea_t ea) {
    // JSR: the operand is the data pushed to the stack (PCH, PCL)
    if (S >= 0) {
       memory_write((operand >> 8) & 255, 0x100 + S);
@@ -1496,7 +1557,7 @@ static void op_JSR(int operand, int ea) {
    }
 }
 
-static void op_LDA(int operand, int ea) {
+static void op_LDA(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    A = operand;
    if (!MS) {
@@ -1505,19 +1566,19 @@ static void op_LDA(int operand, int ea) {
    set_NZ(A);
 }
 
-static void op_LDX(int operand, int ea) {
+static void op_LDX(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    X = operand;
    set_NZ(X);
 }
 
-static void op_LDY(int operand, int ea) {
+static void op_LDY(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    Y = operand;
    set_NZ(Y);
 }
 
-static void op_LSRA(int operand, int ea) {
+static void op_LSRA(operand_t operand, ea_t ea) {
    if (A >= 0) {
       C = A & 1;
       A = A >> 1;
@@ -1527,7 +1588,7 @@ static void op_LSRA(int operand, int ea) {
    }
 }
 
-static void op_LSR(int operand, int ea) {
+static void op_LSR(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    C = operand & 1;
    int tmp = operand >> 1;
@@ -1535,7 +1596,7 @@ static void op_LSR(int operand, int ea) {
    memory_write(tmp, ea);
 }
 
-static void op_ORA(int operand, int ea) {
+static void op_ORA(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    if (A >= 0) {
       A = A | operand;
@@ -1545,7 +1606,7 @@ static void op_ORA(int operand, int ea) {
    }
 }
 
-static void op_PHA(int operand, int ea) {
+static void op_PHA(operand_t operand, ea_t ea) {
    if (S >= 0) {
       memory_write(operand, 0x100 + S);
       S = (S - 1) & 255;
@@ -1553,7 +1614,7 @@ static void op_PHA(int operand, int ea) {
    op_STA(operand, -1);
 }
 
-static void op_PHP(int operand, int ea) {
+static void op_PHP(operand_t operand, ea_t ea) {
    if (S >= 0) {
       memory_write(operand, 0x100 + S);
       S = (S - 1) & 255;
@@ -1562,7 +1623,7 @@ static void op_PHP(int operand, int ea) {
    set_NVDIZC(operand);
 }
 
-static void op_PHX(int operand, int ea) {
+static void op_PHX(operand_t operand, ea_t ea) {
    if (S >= 0) {
       memory_write(operand, 0x100 + S);
       S = (S - 1) & 255;
@@ -1570,7 +1631,7 @@ static void op_PHX(int operand, int ea) {
    op_STX(operand, -1);
 }
 
-static void op_PHY(int operand, int ea) {
+static void op_PHY(operand_t operand, ea_t ea) {
    if (S >= 0) {
       memory[0x100 + S] = operand;
       S = (S - 1) & 255;
@@ -1578,7 +1639,7 @@ static void op_PHY(int operand, int ea) {
    op_STY(operand, -1);
 }
 
-static void op_PLA(int operand, int ea) {
+static void op_PLA(operand_t operand, ea_t ea) {
    A = operand;
    set_NZ(A);
    if (S >= 0) {
@@ -1587,7 +1648,7 @@ static void op_PLA(int operand, int ea) {
    }
 }
 
-static void op_PLP(int operand, int ea) {
+static void op_PLP(operand_t operand, ea_t ea) {
    set_NVDIZC(operand);
    if (S >= 0) {
       S = (S + 1) & 255;
@@ -1595,7 +1656,7 @@ static void op_PLP(int operand, int ea) {
    }
 }
 
-static void op_PLX(int operand, int ea) {
+static void op_PLX(operand_t operand, ea_t ea) {
    X = operand;
    set_NZ(X);
    if (S >= 0) {
@@ -1604,7 +1665,7 @@ static void op_PLX(int operand, int ea) {
    }
 }
 
-static void op_PLY(int operand, int ea) {
+static void op_PLY(operand_t operand, ea_t ea) {
    Y = operand;
    set_NZ(Y);
    if (S >= 0) {
@@ -1613,7 +1674,7 @@ static void op_PLY(int operand, int ea) {
    }
 }
 
-static void op_ROLA(int operand, int ea) {
+static void op_ROLA(operand_t operand, ea_t ea) {
    if (A >= 0 && C >= 0) {
       int tmp = (A << 1) + C;
       C = (tmp >> 8) & 1;
@@ -1625,7 +1686,7 @@ static void op_ROLA(int operand, int ea) {
    }
 }
 
-static void op_ROL(int operand, int ea) {
+static void op_ROL(operand_t operand, ea_t ea) {
    if (C >= 0) {
       int tmp = (operand << 1) + C;
       C = (tmp >> 8) & 1;
@@ -1637,7 +1698,7 @@ static void op_ROL(int operand, int ea) {
    }
 }
 
-static void op_RORA(int operand, int ea) {
+static void op_RORA(operand_t operand, ea_t ea) {
    if (A >= 0 && C >= 0) {
       int tmp = (A >> 1) + (C << 7);
       C = A & 1;
@@ -1649,7 +1710,7 @@ static void op_RORA(int operand, int ea) {
    }
 }
 
-static void op_ROR(int operand, int ea) {
+static void op_ROR(operand_t operand, ea_t ea) {
    if (C >= 0) {
       int tmp = (operand >> 1) + (C << 7);
       C = operand & 1;
@@ -1660,7 +1721,7 @@ static void op_ROR(int operand, int ea) {
    }
 }
 
-static void op_RTS(int operand, int ea) {
+static void op_RTS(operand_t operand, ea_t ea) {
    // RTS: the operand is the data pulled from the stack (PCL, PCH)
    if (S >= 0) {
       S = (S + 1) & 255;
@@ -1672,10 +1733,14 @@ static void op_RTS(int operand, int ea) {
    PC = operand & 0xffff;
 }
 
-static void op_RTI(int operand, int ea) {
-   // RTI: the operand is the data pulled from the stack (P, PCL, PCH)
+static void op_RTI(operand_t operand, ea_t ea) {
+   // RTI: the operand is the data pulled from the stack (PBR, PCH, PCL, P)
    set_NVDIZC((operand >> 16) & 255);
    if (S >= 0) {
+      if (E == 0) {
+         S = (S + 1) & 255;
+         memory_read((operand >> 24) & 255, 0x100 + S);
+      }
       S = (S + 1) & 255;
       memory_read((operand >> 16) & 255, 0x100 + S);
       S = (S + 1) & 255;
@@ -1685,7 +1750,7 @@ static void op_RTI(int operand, int ea) {
    }
 }
 
-static void op_SBC(int operand, int ea) {
+static void op_SBC(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    if (A >= 0 && C >= 0) {
       if (D == 1) {
@@ -1751,19 +1816,19 @@ static void op_SBC(int operand, int ea) {
    }
 }
 
-static void op_SEC(int operand, int ea) {
+static void op_SEC(operand_t operand, ea_t ea) {
    C = 1;
 }
 
-static void op_SED(int operand, int ea) {
+static void op_SED(operand_t operand, ea_t ea) {
    D = 1;
 }
 
-static void op_SEI(int operand, int ea) {
+static void op_SEI(operand_t operand, ea_t ea) {
    I = 1;
 }
 
-static void op_STA(int operand, int ea) {
+static void op_STA(operand_t operand, ea_t ea) {
    memory_write(operand, ea);
    if (A >= 0) {
       if (operand != A) {
@@ -1773,7 +1838,7 @@ static void op_STA(int operand, int ea) {
    A = operand;
 }
 
-static void op_STX(int operand, int ea) {
+static void op_STX(operand_t operand, ea_t ea) {
    memory_write(operand, ea);
    if (X >= 0) {
       if (operand != X) {
@@ -1783,7 +1848,7 @@ static void op_STX(int operand, int ea) {
    X = operand;
 }
 
-static void op_STY(int operand, int ea) {
+static void op_STY(operand_t operand, ea_t ea) {
    memory_write(operand, ea);
    if (Y >= 0) {
       if (operand != Y) {
@@ -1793,14 +1858,14 @@ static void op_STY(int operand, int ea) {
    Y = operand;
 }
 
-static void op_STZ(int operand, int ea) {
+static void op_STZ(operand_t operand, ea_t ea) {
    memory_write(0, ea);
    if (operand != 0) {
       failflag = 1;
    }
 }
 
-static void op_TAX(int operand, int ea) {
+static void op_TAX(operand_t operand, ea_t ea) {
    if (A >= 0) {
       X = A;
       set_NZ(X);
@@ -1810,7 +1875,7 @@ static void op_TAX(int operand, int ea) {
    }
 }
 
-static void op_TAY(int operand, int ea) {
+static void op_TAY(operand_t operand, ea_t ea) {
    if (A >= 0) {
       Y = A;
       set_NZ(Y);
@@ -1820,7 +1885,7 @@ static void op_TAY(int operand, int ea) {
    }
 }
 
-static void op_TSB(int operand, int ea) {
+static void op_TSB(operand_t operand, ea_t ea) {
    if (A >= 0) {
       Z = (A & operand) == 0;
       if (ea >= 0 && memory[ea] >= 0) {
@@ -1830,7 +1895,7 @@ static void op_TSB(int operand, int ea) {
       Z = -1;
    }
 }
-static void op_TRB(int operand, int ea) {
+static void op_TRB(operand_t operand, ea_t ea) {
    if (A >= 0) {
       Z = (A & operand) == 0;
       if (ea >= 0 && memory[ea] >= 0) {
@@ -1841,7 +1906,7 @@ static void op_TRB(int operand, int ea) {
    }
 }
 
-static void op_TSX(int operand, int ea) {
+static void op_TSX(operand_t operand, ea_t ea) {
    if (S >= 0) {
       X = S;
       set_NZ(X);
@@ -1851,7 +1916,7 @@ static void op_TSX(int operand, int ea) {
    }
 }
 
-static void op_TXA(int operand, int ea) {
+static void op_TXA(operand_t operand, ea_t ea) {
    if (X >= 0) {
       A = X;
       set_NZ(A);
@@ -1861,7 +1926,7 @@ static void op_TXA(int operand, int ea) {
    }
 }
 
-static void op_TXS(int operand, int ea) {
+static void op_TXS(operand_t operand, ea_t ea) {
    if (X >= 0) {
       S = X;
    } else {
@@ -1869,7 +1934,7 @@ static void op_TXS(int operand, int ea) {
    }
 }
 
-static void op_TYA(int operand, int ea) {
+static void op_TYA(operand_t operand, ea_t ea) {
    if (Y >= 0) {
       A = Y;
       set_NZ(A);

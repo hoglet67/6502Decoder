@@ -1037,7 +1037,7 @@ static void op_BRK(int operand, int ea) {
    int flags = operand & 0xff;
    int pc = (operand >> 8) & 0xffff;
    int vector = ea;
-   interrupt(flags, pc, vector);
+   interrupt(pc, flags, vector);
 }
 
 static void op_BIT_IMM(int operand, int ea) {
