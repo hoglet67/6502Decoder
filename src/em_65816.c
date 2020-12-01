@@ -33,8 +33,7 @@ typedef enum {
    ABL,
    ALX,
    IAL,
-   BM,
-   IMM16
+   BM
 } AddrMode ;
 
 typedef enum {
@@ -118,10 +117,10 @@ AddrModeType addr_mode_table[] = {
    {4,    "%1$s %4$02X%3$02X%2$02X"},  // ABL
    {4,    "%1$s %4$02X%3$02X%2$02X,X"},// ABLX
    {3,    "%1$s [%3$02X%2$02X]"},      // IAL
-   {3,    "%1$s %2$02X,%3$02X"},       // BM
-   {3,    "%1$s #%3$02X%2$02X"}        // IMM16
+   {3,    "%1$s %2$02X,%3$02X"}        // BM
 };
 
+static const char *fmt_imm16 = "%1$s #%3$02X%2$02X";
 
 // 6502 registers: -1 means unknown
 static int A = -1;
@@ -494,7 +493,8 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    InstrType *instr = &instr_table[opcode];
 
    int opcount = 0;
-   //Immediate operands can be 16-bit
+   // Immediate operands can be 16-bit
+   // TODO: could also figure this out from the instruction length (num_cycles)
    if (instr->mode == IMM) {
       if (MS == 0 && instr->m_extra) {
          opcount = 1;
@@ -714,7 +714,7 @@ static int em_65816_disassemble(char *buffer, instruction_t *instruction) {
       break;
    case IMM:
       if (opcount == 2) {
-         numchars = sprintf(buffer, addr_mode_table[IMM16].fmt, mnemonic, op1, op2);
+         numchars = sprintf(buffer, fmt_imm16, mnemonic, op1, op2);
       } else {
          numchars = sprintf(buffer, fmt, mnemonic, op1);
       }
