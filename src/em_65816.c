@@ -77,7 +77,8 @@ typedef struct {
 #define OFFSET_A    4
 #define OFFSET_X    9
 #define OFFSET_Y   16
-#define OFFSET_S   24
+#define OFFSET_SH  24
+#define OFFSET_SL  26
 #define OFFSET_N   31
 #define OFFSET_V   35
 #define OFFSET_MS  39
@@ -130,7 +131,10 @@ static const char *fmt_imm16 = "%1$s #%3$02X%2$02X";
 static int A = -1;
 static int X = -1;
 static int Y = -1;
-static int S = 0x1FF;
+
+static int SH = 0x01;
+static int SL = 0xFF;
+
 static int PC = -1;
 
 // 65C816 additional registers: -1 means unknown
@@ -238,7 +242,7 @@ static void memory_write(int data, int ea) {
          printf("memory modelling failed at %04x: illegal write of %02x\n", ea, data);
          failflag |= 1;
       } else {
-         // printf("memory write: %04x = %02x\n", ea, data);
+         printf("memory write: %04x = %02x\n", ea, data);
          memory[ea] = data;
       }
    }
@@ -334,30 +338,57 @@ static void set_NZ(int value) {
    Z = value == 0;
 }
 
-
 static void pop(int value) {
-   if (S >= 0) {
-      if (E < 0) {
-         S = -1;
-      } else if (E == 0) {
-         S = (S + 1) & 0xFFFF;
-      } else {
-         S = 0x0100 | ((S + 1) & 0xFF);
+   // Increment the low byte of SP
+   if (SL >= 0) {
+      SL = (SL + 1) & 0xFF;
+   }
+   // Increment the high byte of SP, in certain cases
+   if (E == 1) {
+      // In emulation mode, force SH to 1
+      SH = 1;
+   } else if (E == 0) {
+      // In native mode, increment SH if SL has wrapped to 0
+      if (SH >= 0) {
+         if (SL < 0) {
+            SH = -1;
+         } else if (SL == 0) {
+            SH = (SH + 1) & 0xFF;
+         }
       }
-      memory_read(value & 0xff, S);
+   } else {
+      SH = -1;
+   }
+   // Handle the memory access
+   if (SL >= 0 && SH >= 0) {
+      memory_read(value & 0xff, (SH << 8) + SL);
    }
 }
 
 static void push(int value) {
-   if (S >= 0) {
-      memory_write(value & 0xff, S);
-      if (E < 0) {
-         S = -1;
-      } else if (E == 0) {
-         S = (S - 1) & 0xFFFF;
-      } else {
-         S = 0x0100 | ((S - 1) & 0xFF);
+   // Handle the memory access
+   if (SL >= 0 && SH >= 0) {
+      memory_write(value & 0xff, (SH << 8) + SL);
+   }
+   // Decrement the low byte of SP
+   if (SL >= 0) {
+      SL = (SL - 1) & 0xFF;
+   }
+   // Decrement the high byte of SP, in certain cases
+   if (E == 1) {
+      // In emulation mode, force SH to 1
+      SH = 1;
+   } else if (E == 0) {
+      // In native mode, increment SH if SL has wrapped to 0
+      if (SH >= 0) {
+         if (SL < 0) {
+            SH = -1;
+         } else if (SL == 0xFF) {
+            SH = (SH - 1) & 0xFF;
+         }
       }
+   } else {
+      SH = -1;
    }
 }
 
@@ -415,10 +446,7 @@ static void emulation_mode_on() {
    if (Y >= 0) {
       Y &= 0x00ff;
    }
-   if (S >= 0) {
-      S &= 0x00ff;
-      S |= 0x0100;
-   }
+   SH = 0x01;
    E = 1;
 }
 
@@ -557,7 +585,8 @@ static void em_65816_reset(sample_t *sample_q, int num_cycles, instruction_t *in
    A = -1;
    X = -1;
    Y = -1;
-   S = -1;
+   SH = -1;
+   SL = -1;
    N = -1;
    V = -1;
    D = -1;
@@ -939,8 +968,11 @@ static char *em_65816_get_state(char *buffer) {
    if (Y >= 0) {
       write_hex4(buffer + OFFSET_Y, Y);
    }
-   if (S >= 0) {
-      write_hex4(buffer + OFFSET_S, S);
+   if (SH >= 0) {
+      write_hex2(buffer + OFFSET_SH, SH);
+   }
+   if (SL >= 0) {
+      write_hex2(buffer + OFFSET_SL, SL);
    }
    if (N >= 0) {
       buffer[OFFSET_N] = '0' + N;
@@ -1137,11 +1169,8 @@ static void op_TCD(operand_t operand, ea_t ea) {
 
 // Transfer Transfer C accumulator to Stack pointer
 static void op_TCS(operand_t operand, ea_t ea) {
-   if (B >= 0 && A >= 0) {
-      S = (B << 8) + A;
-   } else {
-      S = -1;
-   }
+   SH = B;
+   SL = A;
 }
 
 // Transfer Transfer Direct Page register to C accumulator
@@ -1160,14 +1189,12 @@ static void op_TDC(operand_t operand, ea_t ea) {
 
 // Transfer Transfer Stack pointer to C accumulator
 static void op_TSC(operand_t operand, ea_t ea) {
-   if (S >= 0) {
-      A = S & 255;
-      B = (S >> 8) & 255;
-      // TODO: Need to pick the right sign bit
-      set_NZ(S);
+   A = SL;
+   B = SH;
+   // TODO: Need to pick the right sign bit
+   if (A >= 0) {
+      set_NZ(A);
    } else {
-      A = -1;
-      B = -1;
       set_NZ_unknown();
    }
 }
@@ -1918,11 +1945,13 @@ static void op_TRB(operand_t operand, ea_t ea) {
 }
 
 static void op_TSX(operand_t operand, ea_t ea) {
-   if (S >= 0) {
-      X = S;
-      if (XS == 1) {
-         X &= 0xff;
-      }
+   if (SL >= 0 && SH >=0 && XS == 0) {
+      // 16-bit
+      X = (SH << 8) + SL;
+      set_NZ(X); // TODO this need to use bit 15 for n
+   } else if (SL >= 0 && XS == 1) {
+      // 16-bit
+      X = SL;
       set_NZ(X);
    } else {
       X = -1;
@@ -1942,9 +1971,11 @@ static void op_TXA(operand_t operand, ea_t ea) {
 
 static void op_TXS(operand_t operand, ea_t ea) {
    if (X >= 0) {
-      S = X;
+      SH = (X >> 8) & 0xff;
+      SL = (X     ) & 0xff;
    } else {
-      S = -1;
+      SH = -1;
+      SL = -1;
    }
 }
 
