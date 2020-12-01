@@ -1290,8 +1290,8 @@ static void op_TYX(operand_t operand, ea_t ea) {
 // Exchange A and B
 static void op_XBA(operand_t operand, ea_t ea) {
    int tmp = A;
-   B = A;
-   A = tmp;
+   A = B;
+   B = tmp;
    if (A >= 0) {
       // Always based on the 8-bit result of A
       set_NZ(A);
