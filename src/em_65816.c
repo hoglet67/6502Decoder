@@ -530,10 +530,12 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       } else {
          // BRK: E=1 <opcode> <op1> <write pch> <write pcl> <write p> <read rst> <read rsth>
          instruction->pc = (((sample_q[3].data << 8) + sample_q[2].data) - 2) & 0xffff;
+         instruction->pb = PB;
       }
    } else if (opcode == 0x20) {
       // JSR: <opcode> <op1> <op2> <read dummy> <write pch> <write pcl>
       instruction->pc = (((sample_q[4].data << 8) + sample_q[5].data) - 2) & 0xffff;
+      instruction->pb = PB;
    } else if (opcode == 0x22) {
       // JSL: <opcode> <op1> <op2> <write pbr> <read dummy> <op3> <write pch> <write pcl>
       instruction->pc = (((sample_q[6].data << 8) + sample_q[7].data) - 3) & 0xffff;
