@@ -33,6 +33,7 @@ typedef enum {
    ABL,
    ALX,
    IAL,
+   BRL,
    BM
 } AddrMode ;
 
@@ -116,6 +117,7 @@ AddrModeType addr_mode_table[] = {
    {4,    "%1$s %4$02X%3$02X%2$02X"},  // ABL
    {4,    "%1$s %4$02X%3$02X%2$02X,X"},// ABLX
    {3,    "%1$s [%3$02X%2$02X]"},      // IAL
+   {2,    "%1$s %2$s"},                // BRL
    {3,    "%1$s %2$02X,%3$02X"}        // BM
 };
 
@@ -710,6 +712,20 @@ static int em_65816_disassemble(char *buffer, instruction_t *instruction) {
          }
       } else {
          sprintf(target, "%04X", (pc + 2 + offset) & 0xffff);
+      }
+      numchars = sprintf(buffer, fmt, mnemonic, target);
+      break;
+   case BRL:
+      // Calculate branch target using op1 for normal branches
+      offset = (int16_t) ((op2 << 8) + op1);
+      if (pc < 0) {
+         if (offset < 0) {
+            sprintf(target, "pc-%d", -offset);
+         } else {
+            sprintf(target,"pc+%d", offset);
+         }
+      } else {
+         sprintf(target, "%04X", (pc + 3 + offset) & 0xffff);
       }
       numchars = sprintf(buffer, fmt, mnemonic, target);
       break;
@@ -1996,7 +2012,7 @@ static InstrType instr_table_65c816[] = {
    /* 7F */   { "ADC",  0, ALX   , 5, 0, READOP,   op_ADC},
    /* 80 */   { "BRA",  0, BRA   , 3, 0, READOP,   0},
    /* 81 */   { "STA",  0, INDX  , 6, 0, WRITEOP,  op_STA},
-   /* 82 */   { "BRL",  0, BRA   , 4, 0, READOP,   0},
+   /* 82 */   { "BRL",  0, BRL   , 4, 0, READOP,   0},
    /* 83 */   { "STA",  0, SR    , 4, 0, WRITEOP,  op_STA},
    /* 84 */   { "STY",  0, ZP    , 3, 0, WRITEOP,  op_STY},
    /* 85 */   { "STA",  0, ZP    , 3, 0, WRITEOP,  op_STA},
