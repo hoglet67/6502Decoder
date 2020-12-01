@@ -505,12 +505,16 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
 
    int opcode = instruction.opcode;
    int pb = instruction.pb;
-   if (pb >= 0) {
-      if (oldpb >= 0 && oldpb != pb) {
-         printf("pc: prediction failed at %02X old pb was %02X\n", pb, oldpb);
+   int pc = instruction.pc;
+
+   if (c816) {
+      if (pb >= 0) {
+         if (oldpb >= 0 && oldpb != pb) {
+            printf("pb: prediction failed at %02X old pb was %02X\n", pb, oldpb);
+         }
       }
    }
-   int pc = instruction.pc;
+
    if (pc >= 0) {
       if (oldpc >= 0 && oldpc != pc) {
          printf("pc: prediction failed at %04X old pc was %04X\n", pc, oldpc);
