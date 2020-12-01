@@ -93,7 +93,6 @@ static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=
 
 static int c02;
 static int bbctube;
-static int master_nordy;
 
 static InstrType *instr_table;
 
@@ -248,7 +247,7 @@ static void memory_write(int data, int ea) {
    }
 }
 
-static int compare_NVDIZC(int operand) {
+static int compare_NVMXDIZC(int operand) {
    if (N >= 0) {
       if (N != ((operand >> 7) & 1)) {
          return 1;
@@ -256,6 +255,16 @@ static int compare_NVDIZC(int operand) {
    }
    if (V >= 0) {
       if (V != ((operand >> 6) & 1)) {
+         return 1;
+      }
+   }
+   if (MS >= 0) {
+      if (MS != ((operand >> 5) & 1)) {
+         return 1;
+      }
+   }
+   if (XS >= 0) {
+      if (MS != ((operand >> 4) & 1)) {
          return 1;
       }
    }
@@ -282,13 +291,20 @@ static int compare_NVDIZC(int operand) {
    return 0;
 }
 
-static void check_NVDIZC(int operand) {
-   failflag |= compare_NVDIZC(operand);
+static void check_NVMXDIZC(int operand) {
+   failflag |= compare_NVMXDIZC(operand);
 }
 
-static void set_NVDIZC(int operand) {
+static void set_NVMXDIZC(int operand) {
    N = (operand >> 7) & 1;
    V = (operand >> 6) & 1;
+   if (E == 0) {
+      MS = (operand >> 5) & 1;
+      XS = (operand >> 4) & 1;
+   } else {
+      MS = 1;
+      XS = 1;
+   }
    D = (operand >> 3) & 1;
    I = (operand >> 2) & 1;
    Z = (operand >> 1) & 1;
@@ -319,25 +335,45 @@ static void set_NZ(int value) {
 }
 
 
-static void interrupt(int pb, int pc, int flags, int vector) {
+static void pop(int value) {
    if (S >= 0) {
-      // In native mode, push PB
-      if (E == 0) {
-         memory_write(pb & 0xff, 0x100 + S);
-         S = (S - 1) & 255;
+      if (E < 0) {
+         S = -1;
+      } else if (E == 0) {
+         S = (S + 1) & 0xFFFF;
+      } else {
+         S = 0x0100 | ((S + 1) & 0xFF);
       }
-      // Push PCH
-      memory_write((pc >> 8) & 0xff, 0x100 + S);
-      S = (S - 1) & 255;
-      // Push PCL
-      memory_write(pc & 0xff, 0x100 + S);
-      S = (S - 1) & 255;
-      // Push P
-      memory_write(flags, 0x100 + S);
-      S = (S - 1) & 255;
+      memory_read(value & 0xff, S);
    }
-   check_NVDIZC(flags);
-   set_NVDIZC(flags);
+}
+
+static void push(int value) {
+   if (S >= 0) {
+      memory_write(value & 0xff, S);
+      if (E < 0) {
+         S = -1;
+      } else if (E == 0) {
+         S = (S - 1) & 0xFFFF;
+      } else {
+         S = 0x0100 | ((S - 1) & 0xFF);
+      }
+   }
+}
+
+static void interrupt(int pb, int pc, int flags, int vector) {
+   if (E == 0) {
+      // In native mode, push PB
+      push(pb);
+   }
+   // Push PCH
+   push(pc >> 8);
+   // Push PCL
+   push(pc);
+   // Push P
+   push(flags);
+   check_NVMXDIZC(flags);
+   set_NVMXDIZC(flags);
    I = 1;
    D = 0;
    PB = 0x00;
@@ -375,6 +411,8 @@ static void emulation_mode_on() {
    XS = 1;
    if (X >= 0) {
       X &= 0x00ff;
+   }
+   if (Y >= 0) {
       Y &= 0x00ff;
    }
    if (S >= 0) {
@@ -392,11 +430,25 @@ static void emulation_mode_off() {
    E = 0;
 }
 
+static void check_and_set_ms(int val) {
+   if (MS >= 0 &&  MS != val) {
+      failflag = 1;
+   }
+   MS = val;
+}
+
+static void check_and_set_xs(int val) {
+   if (XS >= 0 &&  XS != val) {
+      failflag = 1;
+   }
+   XS = val;
+}
+
 // ====================================================================
 // Public Methods
 // ====================================================================
 
-static void em_65816_init(cpu_t cpu_type, int undocumented, int decode_bbctube, int mast_nordy) {
+static void em_65816_init(cpu_t cpu_type, int mxeinit, int decode_bbctube, int mast_nordy) {
    switch (cpu_type) {
    case CPU_65C816:
       c02 = 1;
@@ -407,7 +459,16 @@ static void em_65816_init(cpu_t cpu_type, int undocumented, int decode_bbctube, 
       exit(1);
    }
    bbctube = decode_bbctube;
-   master_nordy = mast_nordy;
+   if (mxeinit >= 0) {
+      MS = (mxeinit >> 2) & 1;
+      XS = (mxeinit >> 1) & 1;
+      E  = (mxeinit     ) & 1;
+      if (E) {
+         emulation_mode_on();
+      } else {
+         emulation_mode_off();
+      }
+   }
    InstrType *instr = instr_table;
    for (int i = 0; i < 256; i++) {
       // Compute the extra cycles for the 816 when M=0 and/or X=0
@@ -473,7 +534,7 @@ static int em_65816_match_interrupt(sample_t *sample_q, int num_samples) {
          // Now test unused flag is 1, B is 0
          if ((sample_q[4].data & 0x30) == 0x20) {
             // Finally test all other known flags match
-            if (!compare_NVDIZC(sample_q[4].data)) {
+            if (!compare_NVMXDIZC(sample_q[4].data)) {
                // Matched PSW = NV-BDIZC
                return 1;
             }
@@ -550,13 +611,22 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
 
    int opcount = 0;
    // Immediate operands can be 16-bit
-   // TODO: could also figure this out from the instruction length (num_cycles)
    if (instr->mode == IMM) {
-      if (MS == 0 && instr->m_extra) {
-         opcount = 1;
+      if (instr->m_extra) {
+         if (num_cycles == 3) {
+            opcount = 1;
+            check_and_set_ms(0); // infer 16-bit mode for A/M
+         } else {
+            check_and_set_ms(1); // infer 8-bit mode for A/M
+         }
       }
-      if (XS == 0 && instr->x_extra) {
-         opcount = 1;
+      if (instr->x_extra) {
+         if (num_cycles == 3) {
+            opcount = 1;
+            check_and_set_xs(0); // infer 16-bit mode for X/Y
+         } else {
+            check_and_set_xs(1); // infer 8-bit mode for X/Y
+         }
       }
    }
    opcount += instr->len - 1;
@@ -582,7 +652,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          instruction->pb = sample_q[2].data;
       } else {
          // BRK: E=1 <opcode> <op1> <write pch> <write pcl> <write p> <read rst> <read rsth>
-         instruction->pc = (((sample_q[3].data << 8) + sample_q[2].data) - 2) & 0xffff;
+         instruction->pc = (((sample_q[2].data << 8) + sample_q[3].data) - 2) & 0xffff;
          instruction->pb = PB;
       }
    } else if (opcode == 0x20) {
@@ -598,110 +668,119 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       instruction->pb = PB;
    }
 
-   if (instr->emulate) {
-
-      uint32_t operand;
-      if (instr->optype == RMWOP) {
-         // e.g. <opcode> <op1> <op2> <read> <write> <write>
-         // Want to pick off the read
-         operand = sample_q[num_cycles - 3].data;
-      } else if (instr->optype == BRANCHOP) {
-         // the operand is true if branch taken
-         operand = (num_cycles != 2);
-      } else if (opcode == 0x00) {
-         // BRK: the operand is the data pushed to the stack (PCH, PCL, P)
-         // <opcode> <op1> <write pch> <write pcl> <write p> <read rst> <read rsth>
-         operand = (sample_q[2].data << 16) +  (sample_q[3].data << 8) + sample_q[4].data;
-      } else if (opcode == 0x20) {
-         // JSR: the operand is the data pushed to the stack (PCH, PCL)
-         // <opcode> <op1> <op2> <read dummy> <write pch> <write pcl>
-         operand = (sample_q[4].data << 8) + sample_q[5].data;
-      } else if (opcode == 0x22) {
-         // JSL: the operand is the data pushed to the stack (PCB, PCH, PCL)
-         // <opcode> <op1> <op2> <write pbr> <read dummy> <op3> <write pch> <write pcl>
-         operand = (sample_q[3].data << 16) + (sample_q[6].data << 8) + sample_q[7].data;
-      } else if (opcode == 0x40) {
-         // RTI: the operand is the data pulled from the stack (P, PCL, PCH)
-         // E=0: <opcode> <op1> <read dummy> <read p> <read pcl> <read pch> <read pbr>
-         // E=1: <opcode> <op1> <read dummy> <read p> <read pcl> <read pch>
-         operand = (sample_q[5].data << 16) +  (sample_q[4].data << 8) + sample_q[3].data;
-         if (num_cycles == 6) {
-            emulation_mode_on();
-         } else {
-            emulation_mode_off();
-            operand |= (sample_q[5].data << 24);
-         }
-      } else if (opcode == 0x60) {
-         // RTS: the operand is the data pulled from the stack (PCL, PCH)
-         // <opcode> <op1> <read dummy> <read pcl> <read pch> <read dummy>
-         operand = (sample_q[4].data << 8) + sample_q[3].data;
-      } else if (opcode == 0x6B) {
-         // RTL: the operand is the data pulled from the stack (PCL, PCH, PBR)
-         // <opcode> <op1> <read dummy> <read pcl> <read pch> <read pbr>
-         operand = (sample_q[5].data << 16) + (sample_q[4].data << 8) + sample_q[3].data;
-      } else if (instr->mode == IMM) {
-         // Immediate addressing mode: the operand is the 2nd byte of the instruction
-         operand = (op2 << 8) + op1;
-      } else if (instr->decimalcorrect && (D == 1)) {
-         // read operations on the C02 that have an extra cycle added
-         operand = sample_q[num_cycles - 2].data;
-      } else if (instr->optype == TSBTRBOP) {
-         // For TSB/TRB, <opcode> <op1> <read> <dummy> <write> the operand is the <read>
-         operand = sample_q[num_cycles - 3].data;
+   uint32_t operand;
+   if (instr->optype == RMWOP) {
+      // e.g. <opcode> <op1> <op2> <read> <write> <write>
+      // Want to pick off the read
+      operand = sample_q[num_cycles - 3].data;
+   } else if (instr->optype == BRANCHOP) {
+      // the operand is true if branch taken
+      operand = (num_cycles != 2);
+   } else if (opcode == 0x00) {
+      // BRK: the operand is the data pushed to the stack (PCH, PCL, P)
+      // <opcode> <op1> <write pch> <write pcl> <write p> <read rst> <read rsth>
+      operand = (sample_q[2].data << 16) +  (sample_q[3].data << 8) + sample_q[4].data;
+   } else if (opcode == 0x20) {
+      // JSR: the operand is the data pushed to the stack (PCH, PCL)
+      // <opcode> <op1> <op2> <read dummy> <write pch> <write pcl>
+      operand = (sample_q[4].data << 8) + sample_q[5].data;
+   } else if (opcode == 0x22) {
+      // JSL: the operand is the data pushed to the stack (PCB, PCH, PCL)
+      // <opcode> <op1> <op2> <write pbr> <read dummy> <op3> <write pch> <write pcl>
+      operand = (sample_q[3].data << 16) + (sample_q[6].data << 8) + sample_q[7].data;
+   } else if (opcode == 0x40) {
+      // RTI: the operand is the data pulled from the stack (P, PCL, PCH)
+      // E=0: <opcode> <op1> <read dummy> <read p> <read pcl> <read pch> <read pbr>
+      // E=1: <opcode> <op1> <read dummy> <read p> <read pcl> <read pch>
+      operand = (sample_q[5].data << 16) +  (sample_q[4].data << 8) + sample_q[3].data;
+      if (num_cycles == 6) {
+         emulation_mode_on();
       } else {
-         // default to using the last bus cycle as the operand
-         operand = sample_q[num_cycles - 1].data;
+         emulation_mode_off();
+         operand |= (sample_q[6].data << 24);
       }
+   } else if (opcode == 0x60) {
+      // RTS: the operand is the data pulled from the stack (PCL, PCH)
+      // <opcode> <op1> <read dummy> <read pcl> <read pch> <read dummy>
+      operand = (sample_q[4].data << 8) + sample_q[3].data;
+   } else if (opcode == 0x6B) {
+      // RTL: the operand is the data pulled from the stack (PCL, PCH, PBR)
+      // <opcode> <op1> <read dummy> <read pcl> <read pch> <read pbr>
+      operand = (sample_q[5].data << 16) + (sample_q[4].data << 8) + sample_q[3].data;
+   } else if (instr->mode == IMM) {
+      // Immediate addressing mode: the operand is the 2nd byte of the instruction
+      operand = (op2 << 8) + op1;
+   } else if (instr->decimalcorrect && (D == 1)) {
+      // read operations on the C02 that have an extra cycle added
+      operand = sample_q[num_cycles - 2].data;
+   } else if (instr->optype == TSBTRBOP) {
+      // For TSB/TRB, <opcode> <op1> <read> <dummy> <write> the operand is the <read>
+      operand = sample_q[num_cycles - 3].data;
+   } else {
+      // default to using the last bus cycle as the operand
+      operand = sample_q[num_cycles - 1].data;
+   }
 
-      // For instructions that read or write memory, we need to work out the effective address
-      // Note: not needed for stack operations, as S is used directly
-      int ea = -1;
-      int index;
-      switch (instr->mode) {
-      case ZP:
-         ea = op1;
-         break;
-      case ZPX:
-      case ZPY:
-         index = instr->mode == ZPX ? X : Y;
-         if (index >= 0) {
-            ea = (op1 + index) & 0xff;
-         }
-         break;
-      case INDY:
-         // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
-         index = Y;
-         if (index >= 0) {
-            ea = (sample_q[3].data << 8) + sample_q[2].data;
-            ea = (ea + index) & 0xffff;
-         }
-         break;
-      case INDX:
-         // <opcpde> <op1> <dummy> <addrlo> <addrhi> <operand> [ <extra cycle in dec mode> ]
-         ea = (sample_q[4].data << 8) + sample_q[3].data;
-         break;
-      case IND:
-         // <opcpde> <op1> <addrlo> <addrhi> <operand> [ <extra cycle in dec mode> ]
+   // For instructions that read or write memory, we need to work out the effective address
+   // Note: not needed for stack operations, as S is used directly
+   int ea = -1;
+   int index;
+   switch (instr->mode) {
+   case ZP:
+      ea = op1;
+      break;
+   case ZPX:
+   case ZPY:
+      index = instr->mode == ZPX ? X : Y;
+      if (index >= 0) {
+         ea = (op1 + index) & 0xff;
+      }
+      break;
+   case INDY:
+      // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
+      index = Y;
+      if (index >= 0) {
          ea = (sample_q[3].data << 8) + sample_q[2].data;
-         break;
-      case ABS:
-         ea = op2 << 8 | op1;
-         break;
-      case ABSX:
-      case ABSY:
-         index = instr->mode == ABSX ? X : Y;
-         if (index >= 0) {
-            ea = ((op2 << 8 | op1) + index) & 0xffff;
-         }
-         break;
-      default:
-         break;
+         ea = (ea + index) & 0xffff;
       }
-
-      if (opcode == 0x00) {
-         ea = (sample_q[6].data << 8) + sample_q[5].data;
+      break;
+   case INDX:
+      // <opcpde> <op1> <dummy> <addrlo> <addrhi> <operand> [ <extra cycle in dec mode> ]
+      ea = (sample_q[4].data << 8) + sample_q[3].data;
+      break;
+   case IND:
+      // <opcpde> <op1> <addrlo> <addrhi> <operand> [ <extra cycle in dec mode> ]
+      ea = (sample_q[3].data << 8) + sample_q[2].data;
+      break;
+   case ABS:
+      ea = op2 << 8 | op1;
+      break;
+   case ABSX:
+   case ABSY:
+      index = instr->mode == ABSX ? X : Y;
+      if (index >= 0) {
+         ea = ((op2 << 8 | op1) + index) & 0xffff;
       }
+      break;
+   case BRA:
+      if (PC > 0) {
+         ea = (PC + ((int8_t)(op1)) + 2) & 0xffff;
+      }
+      break;
+   case BRL:
+      if (PC > 0) {
+         ea = (PC + ((int16_t)((op2 << 8) + op1)) + 3) & 0xffff;
+      }
+      break;
+   default:
+      break;
+   }
 
+   if (opcode == 0x00) {
+      ea = (sample_q[6].data << 8) + sample_q[5].data;
+   }
+
+   if (instr->emulate) {
       instr->emulate(operand, ea);
    }
 
@@ -721,22 +800,15 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    } else if (PC < 0) {
       // PC value is not known yet, everything below this point is relative
       PC = -1;
-   } else if (opcode == 0x80) {
-      // BRA
-      PC += ((int8_t)(op1)) + 2;
-      PC &= 0xffff;
-   } else if (opcode == 0x82) {
-      // BRL
-      PC += ((int16_t)((op2 << 8) + op1)) + 3;
-      PC &= 0xffff;
+   } else if (opcode == 0x80 || opcode == 0x82) {
+      // BRA / BRL
+      PC = ea;
    } else if ((opcode & 0x1f) == 0x10 && num_cycles != 2) {
-      // BXX: op1 if taken
-      PC += ((int8_t)(op1)) + 2;
-      PC &= 0xffff;
+      // BXX: if taken
+      PC = ea;
    } else {
       // Otherwise, increment pc by length of instuction
-      PC += opcount + 1;
-      PC &= 0xffff;
+      PC = (PC + opcount + 1) & 0xffff;
    }
 }
 
@@ -931,30 +1003,31 @@ static void op_COP(operand_t operand, ea_t ea) {
    I = 0;
 }
 
-// Push Effective Address
+// Push Effective Absolute Address
 static void op_PEA(operand_t operand, ea_t ea) {
-   if (S >= 0) {
-      memory_write((operand >> 8) & 255, 0x100 + S);
-      S = (S - 1) & 255;
-      memory_write(operand & 255, 0x100 + S);
-      S = (S - 1) & 255;
-   }
+   // always pushes a 16-bit value
+   push(ea >> 8);
+   push(ea);
 }
 
-static void op_PEI(operand_t operand, ea_t ea) {
-   // TODO
-}
-
+// Push Effective Relative Address
 static void op_PER(operand_t operand, ea_t ea) {
-   // TODO
+   // always pushes a 16-bit value
+   push(ea >> 8);
+   push(ea);
 }
+
+// Push Effective Immediate
+static void op_PEI(operand_t operand, ea_t ea) {
+   // always pushes a 16-bit value
+   push(operand >> 8);
+   push(operand);
+}
+
 
 // Push Data Bank Register
 static void op_PHB(operand_t operand, ea_t ea) {
-   if (S >= 0) {
-      memory_write(operand, 0x100 + S);
-      S = (S - 1) & 255;
-   }
+   push(operand);
    if (DB >= 0) {
       if (operand != DB) {
          failflag = 1;
@@ -965,10 +1038,7 @@ static void op_PHB(operand_t operand, ea_t ea) {
 
 // Push Program Bank Register
 static void op_PHK(operand_t operand, ea_t ea) {
-   if (S >= 0) {
-      memory_write(operand, 0x100 + S);
-      S = (S - 1) & 255;
-   }
+   push(operand);
    if (PB >= 0) {
       if (operand != PB) {
          failflag = 1;
@@ -979,12 +1049,8 @@ static void op_PHK(operand_t operand, ea_t ea) {
 
 // Push Direct Page Register
 static void op_PHD(operand_t operand, ea_t ea) {
-   if (S >= 0) {
-      memory_write((operand >> 8) & 255, 0x100 + S);
-      S = (S - 1) & 255;
-      memory_write(operand & 255, 0x100 + S);
-      S = (S - 1) & 255;
-   }
+   push(operand >> 8);
+   push(operand);
    if (DP >= 0) {
       if (operand != DP) {
          failflag = 1;
@@ -997,22 +1063,15 @@ static void op_PHD(operand_t operand, ea_t ea) {
 static void op_PLB(operand_t operand, ea_t ea) {
    DB = operand;
    set_NZ(DB);
-   if (S >= 0) {
-      S = (S + 1) & 255;
-      memory_read(operand, 0x100 + S);
-   }
+   pop(operand);
 }
 
 // Pull Direct Page Register
 static void op_PLD(operand_t operand, ea_t ea) {
    DP = operand;
    set_NZ(DP);
-   if (S >= 0) {
-      S = (S + 1) & 255;
-      memory_read((operand >> 8) & 255, 0x100 + S);
-      S = (S + 1) & 255;
-      memory_read(operand & 255, 0x100 + S);
-   }
+   pop(operand);
+   pop(operand >> 8);
 }
 
 
@@ -1202,27 +1261,17 @@ static void op_SEP(operand_t operand, ea_t ea) {
 // Jump to Subroutine Long
 static void op_JSL(operand_t operand, ea_t ea) {
    // JSR: the operand is the data pushed to the stack (PB, PCH, PCL)
-   if (S >= 0) {
-      memory_write((operand >> 16) & 255, 0x100 + S); // PB
-      S = (S - 1) & 255;
-      memory_write((operand >> 8) & 255, 0x100 + S);  // PCH
-      S = (S - 1) & 255;
-      memory_write(operand & 255, 0x100 + S);         // PCL
-      S = (S - 1) & 255;
-   }
+   push(operand >> 16); // PB
+   push(operand >> 8);  // PCH
+   push(operand);       // PCL
 }
 
 // Return from Subroutine Long
 static void op_RTL(operand_t operand, ea_t ea) {
    // RTL: the operand is the data pulled from the stack (PCL, PCH, PB)
-   if (S >= 0) {
-      S = (S + 1) & 255;
-      memory_read(operand & 255, 0x100 + S);           // PCL
-      S = (S + 1) & 255;
-      memory_read((operand >> 8) & 255, 0x100 + S);    // PCH
-      S = (S + 1) & 255;
-      memory_read((operand >> 16) & 255, 0x100 + S);   // PB
-   }
+   pop(operand);       // PCL
+   pop(operand >> 8);  // PCH
+   pop(operand >> 16); // PB
    // The +1 is handled elsewhere
    PC = operand & 0xffff;
    PB = (operand >> 16) & 0xff;
@@ -1549,12 +1598,8 @@ static void op_INY(operand_t operand, ea_t ea) {
 
 static void op_JSR(operand_t operand, ea_t ea) {
    // JSR: the operand is the data pushed to the stack (PCH, PCL)
-   if (S >= 0) {
-      memory_write((operand >> 8) & 255, 0x100 + S);
-      S = (S - 1) & 255;
-      memory_write(operand & 255, 0x100 + S);
-      S = (S - 1) & 255;
-   }
+   push(operand >> 8);  // PCH
+   push(operand);       // PCL
 }
 
 static void op_LDA(operand_t operand, ea_t ea) {
@@ -1607,71 +1652,47 @@ static void op_ORA(operand_t operand, ea_t ea) {
 }
 
 static void op_PHA(operand_t operand, ea_t ea) {
-   if (S >= 0) {
-      memory_write(operand, 0x100 + S);
-      S = (S - 1) & 255;
-   }
+   push(operand);
    op_STA(operand, -1);
 }
 
 static void op_PHP(operand_t operand, ea_t ea) {
-   if (S >= 0) {
-      memory_write(operand, 0x100 + S);
-      S = (S - 1) & 255;
-   }
-   check_NVDIZC(operand);
-   set_NVDIZC(operand);
+   push(operand);
+   check_NVMXDIZC(operand);
+   set_NVMXDIZC(operand);
 }
 
 static void op_PHX(operand_t operand, ea_t ea) {
-   if (S >= 0) {
-      memory_write(operand, 0x100 + S);
-      S = (S - 1) & 255;
-   }
+   push(operand);
    op_STX(operand, -1);
 }
 
 static void op_PHY(operand_t operand, ea_t ea) {
-   if (S >= 0) {
-      memory[0x100 + S] = operand;
-      S = (S - 1) & 255;
-   }
+   push(operand);
    op_STY(operand, -1);
 }
 
 static void op_PLA(operand_t operand, ea_t ea) {
    A = operand;
    set_NZ(A);
-   if (S >= 0) {
-      S = (S + 1) & 255;
-      memory_read(operand, 0x100 + S);
-   }
+   pop(operand);
 }
 
 static void op_PLP(operand_t operand, ea_t ea) {
-   set_NVDIZC(operand);
-   if (S >= 0) {
-      S = (S + 1) & 255;
-      memory_read(operand, 0x100 + S);
-   }
+   set_NVMXDIZC(operand);
+   pop(operand);
 }
 
 static void op_PLX(operand_t operand, ea_t ea) {
    X = operand;
    set_NZ(X);
-   if (S >= 0) {
-      S = (S + 1) & 255;
-      memory_read(operand, 0x100 + S);
-   }
+   pop(operand);
 }
 
 static void op_PLY(operand_t operand, ea_t ea) {
    Y = operand;
    set_NZ(Y);
-   if (S >= 0) {
-      S = (S + 1) & 255;
-      memory_read(operand, 0x100 + S);
-   }
+   pop(operand);
 }
 
 static void op_ROLA(operand_t operand, ea_t ea) {
@@ -1723,30 +1744,20 @@ static void op_ROR(operand_t operand, ea_t ea) {
 
 static void op_RTS(operand_t operand, ea_t ea) {
    // RTS: the operand is the data pulled from the stack (PCL, PCH)
-   if (S >= 0) {
-      S = (S + 1) & 255;
-      memory_read(operand & 255, 0x100 + S);
-      S = (S + 1) & 255;
-      memory_read((operand >> 8) & 255, 0x100 + S);
-   }
+   pop(operand);
+   pop(operand >> 8);
    // The +1 is handled elsewhere
    PC = operand & 0xffff;
 }
 
 static void op_RTI(operand_t operand, ea_t ea) {
-   // RTI: the operand is the data pulled from the stack (PBR, PCH, PCL, P)
-   set_NVDIZC((operand >> 16) & 255);
-   if (S >= 0) {
-      if (E == 0) {
-         S = (S + 1) & 255;
-         memory_read((operand >> 24) & 255, 0x100 + S);
-      }
-      S = (S + 1) & 255;
-      memory_read((operand >> 16) & 255, 0x100 + S);
-      S = (S + 1) & 255;
-      memory_read((operand >> 8) & 255, 0x100 + S);
-      S = (S + 1) & 255;
-      memory_read(operand & 255, 0x100 + S);
+   // RTI: the operand is the data pulled from the stack (P, PCL, PCH, PBR)
+   set_NVMXDIZC(operand);
+   pop(operand);
+   pop(operand >> 8);
+   pop(operand >> 16);
+   if (E == 0) {
+      pop(operand >> 24);
    }
 }
 
@@ -1909,6 +1920,9 @@ static void op_TRB(operand_t operand, ea_t ea) {
 static void op_TSX(operand_t operand, ea_t ea) {
    if (S >= 0) {
       X = S;
+      if (XS == 1) {
+         X &= 0xff;
+      }
       set_NZ(X);
    } else {
       X = -1;

@@ -117,6 +117,7 @@ static struct argp_option options[] = {
    { "bbctube",       8,         0,                   0, "Decode BBC tube protocol"},
    { "vda",           9,  "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for vda, blank if unconnected"},
    { "vpa",          10,  "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for vpa, blank if unconnected"},
+   { "mxeinit",      11,     "HEX", OPTION_ARG_OPTIONAL, "Initial value for M/X/E in 65816 mode"},
    { 0 }
 };
 
@@ -141,6 +142,7 @@ struct arguments {
    int show_something;
    int bbctube;
    int undocumented;
+   int mxeinit;
    int byte;
    int debug;
    int profile;
@@ -217,6 +219,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->idx_vpa = atoi(arg);
       } else {
          arguments->idx_vpa = -1;
+      }
+      break;
+   case  11:
+      if (arg && strlen(arg) > 0) {
+         arguments->mxeinit = atoi(arg);
+      } else {
+         arguments->mxeinit = -1;
       }
       break;
    case 'c':
@@ -989,6 +998,7 @@ int main(int argc, char *argv[]) {
    arguments.bbctube          = 0;
    arguments.cpu_type         = CPU_6502;
    arguments.undocumented     = 0;
+   arguments.mxeinit          = -1;
    arguments.byte             = 0;
    arguments.debug            = 0;
    arguments.profile          = 0;
@@ -1029,19 +1039,20 @@ int main(int argc, char *argv[]) {
       }
    }
 
+   // This flag tells the sync-less cycle count estimation to infer additional cycles on the master
+   // It's needed when rdy is not being explicitely sampled
+   // (not currently supported in the 65816 mode)
+   int mast_nordy = (arguments.machine == MACHINE_MASTER) && (arguments.idx_rdy < 0);
+
    if (arguments.cpu_type == CPU_65C816) {
       c816 = 1;
       em = &em_65816;
+      em->init(arguments.cpu_type, arguments.mxeinit, arguments.bbctube, 0);
    } else {
       em = &em_6502;
       c816 = 0;
+      em->init(arguments.cpu_type, arguments.undocumented, arguments.bbctube, mast_nordy);
    }
-
-   // This flag tells the sync-less cycle count estimation to infer additional cycles on the master
-   // It's needed when rdy is not being explicitely sampled
-   int mast_nordy = (arguments.machine == MACHINE_MASTER) && (arguments.idx_rdy < 0);
-
-   em->init(arguments.cpu_type, arguments.undocumented, arguments.bbctube, mast_nordy);
 
    decode(stream);
    fclose(stream);
