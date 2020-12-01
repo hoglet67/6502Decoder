@@ -69,24 +69,23 @@ typedef struct {
 // Static variables
 // ====================================================================
 
-#define OFFSET_B   2
-#define OFFSET_A   4
-#define OFFSET_X   9
-#define OFFSET_Y  16
-#define OFFSET_S  24
-#define OFFSET_N  31
-#define OFFSET_V  35
-#define OFFSET_MS 39
-#define OFFSET_XS 43
-#define OFFSET_D  47
-#define OFFSET_I  51
-#define OFFSET_Z  55
-#define OFFSET_C  59
-#define OFFSET_E  63
+#define OFFSET_B    2
+#define OFFSET_A    4
+#define OFFSET_X    9
+#define OFFSET_Y   16
+#define OFFSET_S   24
+#define OFFSET_N   31
+#define OFFSET_V   35
+#define OFFSET_MS  39
+#define OFFSET_XS  43
+#define OFFSET_D   47
+#define OFFSET_I   51
+#define OFFSET_Z   55
+#define OFFSET_C   59
+#define OFFSET_E   63
+#define OFFSET_END 64
 
-//static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=? D=? I=? Z=? C=? E=?";
-
-static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=? D=? I=? Z=? C=?";
+static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=? D=? I=? Z=? C=? E=?";
 
 static cpu_t cpu_type;
 static int c02;
@@ -123,8 +122,6 @@ AddrModeType addr_mode_table[] = {
    {3,    "%1$s #%3$02X%2$02X"}        // IMM16
 };
 
-
-static char buffer[80];
 
 // 6502 registers: -1 means unknown
 static int A = -1;
@@ -664,7 +661,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    }
 }
 
-static int em_65816_disassemble(instruction_t *instruction) {
+static int em_65816_disassemble(char *buffer, instruction_t *instruction) {
 
    int numchars;
    int offset;
@@ -685,7 +682,7 @@ static int em_65816_disassemble(instruction_t *instruction) {
    switch (instr->mode) {
    case IMP:
    case IMPA:
-      numchars = printf(fmt, mnemonic);
+      numchars = sprintf(buffer, fmt, mnemonic);
       break;
    case BRA:
       // Calculate branch target using op1 for normal branches
@@ -699,7 +696,7 @@ static int em_65816_disassemble(instruction_t *instruction) {
       } else {
          sprintf(target, "%04X", (pc + 2 + offset) & 0xffff);
       }
-      numchars = printf(fmt, mnemonic, target);
+      numchars = sprintf(buffer, fmt, mnemonic, target);
       break;
    case ZPR:
       // Calculate branch target using op2 for BBR/BBS
@@ -713,13 +710,13 @@ static int em_65816_disassemble(instruction_t *instruction) {
       } else {
          sprintf(target, "%04X", (pc + 3 + offset) & 0xffff);
       }
-      numchars = printf(fmt, mnemonic, op1, target);
+      numchars = sprintf(buffer, fmt, mnemonic, op1, target);
       break;
    case IMM:
       if (opcount == 2) {
-         numchars = printf(addr_mode_table[IMM16].fmt, mnemonic, op1, op2);
+         numchars = sprintf(buffer, addr_mode_table[IMM16].fmt, mnemonic, op1, op2);
       } else {
-         numchars = printf(fmt, mnemonic, op1);
+         numchars = sprintf(buffer, fmt, mnemonic, op1);
       }
       break;
    case ZP:
@@ -732,7 +729,7 @@ static int em_65816_disassemble(instruction_t *instruction) {
    case ISY:
    case IDL:
    case IDLY:
-      numchars = printf(fmt, mnemonic, op1);
+      numchars = sprintf(buffer, fmt, mnemonic, op1);
       break;
    case ABS:
    case ABSX:
@@ -741,11 +738,11 @@ static int em_65816_disassemble(instruction_t *instruction) {
    case IND1X:
    case IAL:
    case BM:
-      numchars = printf(fmt, mnemonic, op1, op2);
+      numchars = sprintf(buffer, fmt, mnemonic, op1, op2);
       break;
    case ABL:
    case ALX:
-      numchars = printf(fmt, mnemonic, op1, op2, op3);
+      numchars = sprintf(buffer, fmt, mnemonic, op1, op2, op3);
       break;
    default:
       numchars = 0;
@@ -763,7 +760,7 @@ static int em_65816_read_memory(int address) {
    return memory[address];
 }
 
-static char *em_65816_get_state() {
+static char *em_65816_get_state(char *buffer) {
    strcpy(buffer, default_state);
    if (B >= 0) {
       write_hex2(buffer + OFFSET_B, B);
@@ -804,12 +801,10 @@ static char *em_65816_get_state() {
    if (C >= 0) {
       buffer[OFFSET_C] = '0' + C;
    }
-#if 0
    if (E >= 0) {
       buffer[OFFSET_E] = '0' + E;
    }
-#endif
-   return buffer;
+   return buffer + OFFSET_END;
 }
 
 static int em_65816_get_and_clear_fail() {

@@ -58,16 +58,17 @@ typedef struct {
 // Static variables
 // ====================================================================
 
-#define OFFSET_A   2
-#define OFFSET_X   7
-#define OFFSET_Y  12
-#define OFFSET_S  18
-#define OFFSET_N  23
-#define OFFSET_V  27
-#define OFFSET_D  31
-#define OFFSET_I  35
-#define OFFSET_Z  39
-#define OFFSET_C  43
+#define OFFSET_A    2
+#define OFFSET_X    7
+#define OFFSET_Y   12
+#define OFFSET_S   18
+#define OFFSET_N   23
+#define OFFSET_V   27
+#define OFFSET_D   31
+#define OFFSET_I   35
+#define OFFSET_Z   39
+#define OFFSET_C   43
+#define OFFSET_END 44
 
 static const char default_state[] = "A=?? X=?? Y=?? SP=?? N=? V=? D=? I=? Z=? C=?";
 
@@ -96,8 +97,6 @@ static AddrModeType addr_mode_table[] = {
    {3,    "%1$s (%3$02X%2$02X,X)"}, // IND1X
    {3,    "%1$s %2$02X,%3$s"}       // ZPR
 };
-
-static char buffer[80];
 
 // 6502 registers: -1 means unknown
 static int A = -1;
@@ -734,7 +733,7 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
    }
 }
 
-static int em_6502_disassemble(instruction_t *instruction) {
+static int em_6502_disassemble(char *buffer, instruction_t *instruction) {
 
    int numchars;
    int offset;
@@ -754,7 +753,7 @@ static int em_6502_disassemble(instruction_t *instruction) {
    switch (instr->mode) {
    case IMP:
    case IMPA:
-      numchars = printf(fmt, mnemonic);
+      numchars = sprintf(buffer, fmt, mnemonic);
       break;
    case BRA:
       // Calculate branch target using op1 for normal branches
@@ -768,7 +767,7 @@ static int em_6502_disassemble(instruction_t *instruction) {
       } else {
          sprintf(target, "%04X", (pc + 2 + offset) & 0xffff);
       }
-      numchars = printf(fmt, mnemonic, target);
+      numchars = sprintf(buffer, fmt, mnemonic, target);
       break;
    case ZPR:
       // Calculate branch target using op2 for BBR/BBS
@@ -782,7 +781,7 @@ static int em_6502_disassemble(instruction_t *instruction) {
       } else {
          sprintf(target, "%04X", (pc + 3 + offset) & 0xffff);
       }
-      numchars = printf(fmt, mnemonic, op1, target);
+      numchars = sprintf(buffer, fmt, mnemonic, op1, target);
       break;
    case IMM:
    case ZP:
@@ -791,14 +790,14 @@ static int em_6502_disassemble(instruction_t *instruction) {
    case INDX:
    case INDY:
    case IND:
-      numchars = printf(fmt, mnemonic, op1);
+      numchars = sprintf(buffer, fmt, mnemonic, op1);
       break;
    case ABS:
    case ABSX:
    case ABSY:
    case IND16:
    case IND1X:
-      numchars = printf(fmt, mnemonic, op1, op2);
+      numchars = sprintf(buffer, fmt, mnemonic, op1, op2);
       break;
    default:
       numchars = 0;
@@ -816,7 +815,7 @@ static int em_6502_read_memory(int address) {
    return memory[address];
 }
 
-static char *em_6502_get_state() {
+static char *em_6502_get_state(char *buffer) {
    strcpy(buffer, default_state);
    if (A >= 0) {
       write_hex2(buffer + OFFSET_A, A);
@@ -848,7 +847,7 @@ static char *em_6502_get_state() {
    if (C >= 0) {
       buffer[OFFSET_C] = '0' + C;
    }
-   return buffer;
+   return buffer + OFFSET_END;
 }
 
 static int em_6502_get_and_clear_fail() {

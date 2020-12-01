@@ -44,6 +44,8 @@ typedef struct {
 void write_hex1(char *buffer, int value);
 void write_hex2(char *buffer, int value);
 void write_hex4(char *buffer, int value);
+void write_hex6(char *buffer, int value);
+int  write_s   (char *buffer, const char *s);
 
 typedef struct {
    void (*init)(cpu_t cpu_type, int undocumented, int decode_bbctube, int mast_nordy);
@@ -52,7 +54,7 @@ typedef struct {
    void (*reset)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
    void (*interrupt)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
    void (*emulate)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
-   int (*disassemble)(instruction_t *instruction);
+   int (*disassemble)(char *bp, instruction_t *instruction);
    int (*get_PC)();
    int (*read_memory)(int address);
    char *(*get_state)();

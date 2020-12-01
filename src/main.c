@@ -40,6 +40,7 @@ const char default_fwa[] = "\?\?-\?\?:\?\?\?\?\?\?\?\?:\?\?:\?\? = \?\?\?\?\?\?\
 #define OFFSET_VALUE    23
 
 static char fwabuf[80];
+static char disbuf[256];
 
 static cpu_emulator_t *em;
 
@@ -364,6 +365,24 @@ void write_hex4(char *buffer, int value) {
    write_hex1(buffer++, (value >> 0) & 15);
 }
 
+void write_hex6(char *buffer, int value) {
+   write_hex1(buffer++, (value >> 20) & 15);
+   write_hex1(buffer++, (value >> 16) & 15);
+   write_hex1(buffer++, (value >> 12) & 15);
+   write_hex1(buffer++, (value >> 8) & 15);
+   write_hex1(buffer++, (value >> 4) & 15);
+   write_hex1(buffer++, (value >> 0) & 15);
+}
+
+int write_s(char *buffer, const char *s) {
+   int i = 0;
+   while (*s) {
+      *buffer++ = *s++;
+      i++;
+   }
+   return i;
+}
+
 static char *get_fwa(int a_sign, int a_exp, int a_mantissa, int a_round, int a_overflow) {
    strcpy(fwabuf, default_fwa);
    int sign     = em->read_memory(a_sign);
@@ -508,82 +527,105 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
 
    int fail = em->get_and_clear_fail();
 
+   // Try to minimise the calls to printf as these are quite expensive
+
+   char *bp = disbuf;
+
    if ((fail | arguments.show_something) && triggered && !skipping_interrupted) {
       int numchars = 0;
       // Show address
       if (fail || arguments.show_address) {
-         if (pc < 0) {
-            printf("???? : ");
+         if (c816) {
+            if (pc < 0) {
+               for (int i = 0; i < 6 ; i++) {
+                  *bp++ = '?';
+               }
+            } else {
+               write_hex6(bp, pc);
+               bp += 6;
+            }
          } else {
-            printf("%04X : ", pc);
+            if (pc < 0) {
+               for (int i = 0; i < 4 ; i++) {
+                  *bp++ = '?';
+               }
+            } else {
+               write_hex4(bp, pc);
+               bp += 4;
+            }
          }
+         *bp++ = ' ';
+         *bp++ = ':';
+         *bp++ = ' ';
       }
       // Show hex bytes
       if (fail || arguments.show_hex) {
-         if (c816) {
-            if (rst_seen || intr_seen) {
-               printf("         : ");
+         for (int i = 0; i < (c816 ? 4 : 3); i++) {
+            if (rst_seen || intr_seen || i > instruction.opcount) {
+               *bp++ = ' ';
+               *bp++ = ' ';
             } else {
-               if (instruction.opcount == 0) {
-                  printf("%02X          : ", opcode);
-               } else if (instruction.opcount == 1) {
-                  printf("%02X %02X       : ", opcode, instruction.op1);
-               } else if (instruction.opcount == 2) {
-                  printf("%02X %02X %02X    : ", opcode, instruction.op1, instruction.op2);
-               } else {
-                  printf("%02X %02X %02X %02X : ", opcode, instruction.op1, instruction.op2, instruction.op3);
+               switch (i) {
+               case 0: write_hex2(bp, opcode         ); break;
+               case 1: write_hex2(bp, instruction.op1); break;
+               case 2: write_hex2(bp, instruction.op2); break;
+               case 3: write_hex2(bp, instruction.op3); break;
                }
+               bp += 2;
             }
-         } else {
-            if (rst_seen || intr_seen) {
-               printf("         : ");
-            } else {
-               if (instruction.opcount == 0) {
-                  printf("%02X       : ", opcode);
-               } else if (instruction.opcount == 1) {
-                  printf("%02X %02X    : ", opcode, instruction.op1);
-               } else {
-                  printf("%02X %02X %02X : ", opcode, instruction.op1, instruction.op2);
-               }
-            }
+            *bp++ = ' ';
          }
+         *bp++ = ':';
+         *bp++ = ' ';
       }
+
       // Show instruction disassembly
       if (fail || arguments.show_something) {
          if (rst_seen) {
-            numchars = printf("RESET !!");
+            numchars = write_s(bp, "RESET !!");
          } else if (intr_seen) {
-            numchars = printf("INTERRUPT !!");
+            numchars = write_s(bp, "INTERRUPT !!");
          } else {
-            numchars = em->disassemble(&instruction);
+            numchars = em->disassemble(bp, &instruction);
          }
+         bp += numchars;
       }
+
       // Pad if there is more to come
       if (fail || arguments.show_cycles || arguments.show_state || arguments.show_bbcfwa) {
          // Pad opcode to 14 characters, to match python
          while (numchars++ < 14) {
-            printf(" ");
+            *bp++ = ' ';
          }
       }
       // Show cycles (don't include with fail as it is inconsistent depending on whether rdy is present)
       if (arguments.show_cycles) {
-         printf(" : %d", num_cycles);
+         *bp++ = ' ';
+         *bp++ = ':';
+         *bp++ = ' ';
+         // No instruction is more then 8 cycles
+         write_hex1(bp++, num_cycles);
       }
       // Show register state
       if (fail || arguments.show_state) {
-         printf(" : %s", em->get_state());
+         *bp++ = ' ';
+         *bp++ = ':';
+         *bp++ = ' ';
+         bp = em->get_state(bp);
       }
       // Show BBC floating point work area FWA, FWB
       if (arguments.show_bbcfwa) {
-         printf(" : FWA %s", get_fwa(0x2e, 0x30, 0x31, 0x35, 0x2f));
-         printf(" : FWB %s", get_fwa(0x3b, 0x3c, 0x3d, 0x41,   -1));
+         bp += sprintf(bp, " : FWA %s", get_fwa(0x2e, 0x30, 0x31, 0x35, 0x2f));
+         bp += sprintf(bp, " : FWB %s", get_fwa(0x3b, 0x3c, 0x3d, 0x41,   -1));
       }
       // Show any errors
       if (fail) {
-         printf(" prediction failed");
+         bp += write_s(bp, " prediction failed");
       }
       // End the line
-      printf("\n");
+      *bp++ = 0;
+      puts(disbuf);
+
    }
 
 
