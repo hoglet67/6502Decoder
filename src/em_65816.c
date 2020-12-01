@@ -555,12 +555,12 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          operand = (sample_q[3].data << 16) +  (sample_q[4].data << 8) + sample_q[5].data;
       } else if (opcode == 0x60) {
          // RTS: the operand is the data pulled from the stack (PCL, PCH)
-         // <opcode> <op1> <read dummy> <read pcl> <read pch>
-         operand = (sample_q[3].data << 8) + sample_q[4].data;
+         // <opcode> <op1> <read dummy> <read pcl> <read pch> <read dummy>
+         operand = (sample_q[4].data << 8) + sample_q[3].data;
       } else if (opcode == 0x6B) {
-         // RTL: the operand is the data pulled from the stack (PCL, PCH)
-         // <opcode> <op1> <read dummy> <read pcl> <read pch>
-         operand = (sample_q[5].data << 16) + (sample_q[4].data << 8) + sample_q[2].data;
+         // RTL: the operand is the data pulled from the stack (PCL, PCH, PBR)
+         // <opcode> <op1> <read dummy> <read pcl> <read pch> <read pbr>
+         operand = (sample_q[5].data << 16) + (sample_q[4].data << 8) + sample_q[3].data;
       } else if (instr->mode == IMM) {
          // Immediate addressing mode: the operand is the 2nd byte of the instruction
          operand = (op2 << 8) + op1;
@@ -1108,17 +1108,31 @@ static void op_SEP(int operand, int ea) {
    repsep(operand, 1);
 }
 
+// Jump to Subroutine Long
+static void op_JSL(int operand, int ea) {
+   // JSR: the operand is the data pushed to the stack (PB, PCH, PCL)
+   if (S >= 0) {
+      memory_write((operand >> 16) & 255, 0x100 + S); // PB
+      S = (S - 1) & 255;
+      memory_write((operand >> 8) & 255, 0x100 + S);  // PCH
+      S = (S - 1) & 255;
+      memory_write(operand & 255, 0x100 + S);         // PCL
+      S = (S - 1) & 255;
+   }
+}
+
 // Return from Subroutine Long
 static void op_RTL(int operand, int ea) {
    // RTL: the operand is the data pulled from the stack (PCL, PCH, PB)
    if (S >= 0) {
       S = (S + 1) & 255;
-      memory_read((operand >> 16) & 255, 0x100 + S);
+      memory_read(operand & 255, 0x100 + S);           // PCL
       S = (S + 1) & 255;
-      memory_read((operand >> 8) & 255, 0x100 + S);
+      memory_read((operand >> 8) & 255, 0x100 + S);    // PCH
       S = (S + 1) & 255;
-      memory_read(operand & 255, 0x100 + S);
+      memory_read((operand >> 16) & 255, 0x100 + S);   // PB
    }
+   PC = operand;
 }
 
 // ====================================================================
@@ -1615,9 +1629,9 @@ static void op_RTS(int operand, int ea) {
    // RTS: the operand is the data pulled from the stack (PCL, PCH)
    if (S >= 0) {
       S = (S + 1) & 255;
-      memory_read((operand >> 8) & 255, 0x100 + S);
-      S = (S + 1) & 255;
       memory_read(operand & 255, 0x100 + S);
+      S = (S + 1) & 255;
+      memory_read((operand >> 8) & 255, 0x100 + S);
    }
 }
 
@@ -1867,7 +1881,7 @@ static InstrType instr_table_65c816[] = {
    /* 1F */   { "ORA",  0, ALX   , 5, 0, READOP,   op_ORA},
    /* 20 */   { "JSR",  0, ABS   , 6, 0, READOP,   op_JSR},
    /* 21 */   { "AND",  0, INDX  , 6, 0, READOP,   op_AND},
-   /* 22 */   { "JSL",  0, ABL   , 8, 0, READOP,   op_JSR},
+   /* 22 */   { "JSL",  0, ABL   , 8, 0, READOP,   op_JSL},
    /* 23 */   { "AND",  0, SR    , 4, 0, READOP,   op_AND},
    /* 24 */   { "BIT",  0, ZP    , 3, 0, READOP,   op_BIT},
    /* 25 */   { "AND",  0, ZP    , 3, 0, READOP,   op_AND},
