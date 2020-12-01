@@ -338,7 +338,7 @@ static void set_NZ(int value) {
    Z = value == 0;
 }
 
-static void pop(int value) {
+static void pop8(int value) {
    // Increment the low byte of SP
    if (SL >= 0) {
       SL = (SL + 1) & 0xFF;
@@ -365,7 +365,7 @@ static void pop(int value) {
    }
 }
 
-static void push(int value) {
+static void push8(int value) {
    // Handle the memory access
    if (SL >= 0 && SH >= 0) {
       memory_write(value & 0xff, (SH << 8) + SL);
@@ -392,17 +392,69 @@ static void push(int value) {
    }
 }
 
+static void pop16(int value) {
+   pop8(value);
+   pop8(value >> 8);
+}
+
+static void push16(int value) {
+   push8(value >> 8);
+   push8(value);
+}
+
+static void popXS(int value) {
+   if (XS < 0) {
+      SL = -1;
+      SH = -1;
+   } else if (XS == 0) {
+      pop16(value);
+   } else {
+      pop8(value);
+   }
+}
+
+static void popMS(int value) {
+   if (MS < 0) {
+      SL = -1;
+      SH = -1;
+   } else if (MS == 0) {
+      pop16(value);
+   } else {
+      pop8(value);
+   }
+}
+
+static void pushXS(int value) {
+   if (XS < 0) {
+      SL = -1;
+      SH = -1;
+   } else if (XS == 0) {
+      push16(value);
+   } else {
+      push8(value);
+   }
+}
+
+static void pushMS(int value) {
+   if (MS < 0) {
+      SL = -1;
+      SH = -1;
+   } else if (MS == 0) {
+      push16(value);
+   } else {
+      push8(value);
+   }
+}
+
 static void interrupt(int pb, int pc, int flags, int vector) {
    if (E == 0) {
       // In native mode, push PB
-      push(pb);
+      push8(pb);
    }
-   // Push PCH
-   push(pc >> 8);
-   // Push PCL
-   push(pc);
+   // Push PC
+   push16(pc >> 8);
    // Push P
-   push(flags);
+   push8(flags);
    check_FLAGS(flags);
    set_FLAGS(flags);
    I = 1;
@@ -746,8 +798,20 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // For TSB/TRB, <opcode> <op1> <read> <dummy> <write> the operand is the <read>
       operand = sample_q[num_cycles - 3].data;
    } else {
-      // default to using the last bus cycle as the operand
-      operand = sample_q[num_cycles - 1].data;
+      // default to using the last bus cycle(s) as the operand
+      if ((instr->m_extra && (MS == 0)) || (instr->x_extra && (XS == 0)))  {
+         // 16-bit operation
+         if (opcode == 0x48 || opcode == 0x5A || opcode == 0xDA) {
+            // PHA/PHX/PHY push high byte followed by low byte
+            operand = sample_q[num_cycles - 1].data + (sample_q[num_cycles - 2].data << 8);
+         } else {
+            // all other 16-bit ops are low byte then high byer
+            operand = sample_q[num_cycles - 2].data + (sample_q[num_cycles - 1].data << 8);
+         }
+      } else {
+         // 8-bit operation
+         operand = sample_q[num_cycles - 1].data;
+      }
    }
 
    // For instructions that read or write memory, we need to work out the effective address
@@ -1038,28 +1102,25 @@ static void op_COP(operand_t operand, ea_t ea) {
 // Push Effective Absolute Address
 static void op_PEA(operand_t operand, ea_t ea) {
    // always pushes a 16-bit value
-   push(ea >> 8);
-   push(ea);
+   push16(ea);
 }
 
 // Push Effective Relative Address
 static void op_PER(operand_t operand, ea_t ea) {
    // always pushes a 16-bit value
-   push(ea >> 8);
-   push(ea);
+   push16(ea);
 }
 
 // Push Effective Immediate
 static void op_PEI(operand_t operand, ea_t ea) {
    // always pushes a 16-bit value
-   push(operand >> 8);
-   push(operand);
+   push16(operand);
 }
 
 
 // Push Data Bank Register
 static void op_PHB(operand_t operand, ea_t ea) {
-   push(operand);
+   push8(operand);
    if (DB >= 0) {
       if (operand != DB) {
          failflag = 1;
@@ -1070,7 +1131,7 @@ static void op_PHB(operand_t operand, ea_t ea) {
 
 // Push Program Bank Register
 static void op_PHK(operand_t operand, ea_t ea) {
-   push(operand);
+   push8(operand);
    if (PB >= 0) {
       if (operand != PB) {
          failflag = 1;
@@ -1081,8 +1142,7 @@ static void op_PHK(operand_t operand, ea_t ea) {
 
 // Push Direct Page Register
 static void op_PHD(operand_t operand, ea_t ea) {
-   push(operand >> 8);
-   push(operand);
+   push16(operand);
    if (DP >= 0) {
       if (operand != DP) {
          failflag = 1;
@@ -1095,15 +1155,14 @@ static void op_PHD(operand_t operand, ea_t ea) {
 static void op_PLB(operand_t operand, ea_t ea) {
    DB = operand;
    set_NZ(DB);
-   pop(operand);
+   pop8(operand);
 }
 
 // Pull Direct Page Register
 static void op_PLD(operand_t operand, ea_t ea) {
    DP = operand;
    set_NZ(DP);
-   pop(operand);
-   pop(operand >> 8);
+   pop16(operand);
 }
 
 
@@ -1288,17 +1347,15 @@ static void op_SEP(operand_t operand, ea_t ea) {
 // Jump to Subroutine Long
 static void op_JSL(operand_t operand, ea_t ea) {
    // JSR: the operand is the data pushed to the stack (PB, PCH, PCL)
-   push(operand >> 16); // PB
-   push(operand >> 8);  // PCH
-   push(operand);       // PCL
+   push8(operand >> 16); // PB
+   push16(operand);      // PC
 }
 
 // Return from Subroutine Long
 static void op_RTL(operand_t operand, ea_t ea) {
    // RTL: the operand is the data pulled from the stack (PCL, PCH, PB)
-   pop(operand);       // PCL
-   pop(operand >> 8);  // PCH
-   pop(operand >> 16); // PB
+   pop16(operand);      // PC
+   pop8(operand >> 16); // PB
    // The +1 is handled elsewhere
    PC = operand & 0xffff;
    PB = (operand >> 16) & 0xff;
@@ -1625,8 +1682,7 @@ static void op_INY(operand_t operand, ea_t ea) {
 
 static void op_JSR(operand_t operand, ea_t ea) {
    // JSR: the operand is the data pushed to the stack (PCH, PCL)
-   push(operand >> 8);  // PCH
-   push(operand);       // PCL
+   push16(operand);  // PC
 }
 
 static void op_LDA(operand_t operand, ea_t ea) {
@@ -1679,47 +1735,52 @@ static void op_ORA(operand_t operand, ea_t ea) {
 }
 
 static void op_PHA(operand_t operand, ea_t ea) {
-   push(operand);
+   pushMS(operand);
    op_STA(operand, -1);
 }
 
 static void op_PHP(operand_t operand, ea_t ea) {
-   push(operand);
+   push8(operand);
    check_FLAGS(operand);
    set_FLAGS(operand);
 }
 
 static void op_PHX(operand_t operand, ea_t ea) {
-   push(operand);
+   pushXS(operand);
    op_STX(operand, -1);
 }
 
 static void op_PHY(operand_t operand, ea_t ea) {
-   push(operand);
+   pushXS(operand);
    op_STY(operand, -1);
 }
 
 static void op_PLA(operand_t operand, ea_t ea) {
-   A = operand;
+   A = operand & 0xff;
+   if (MS < 0) {
+      B = 0;
+   } else if (MS == 0) {
+      B = (operand >> 8);
+   }
    set_NZ(A);
-   pop(operand);
+   popMS(operand);
 }
 
 static void op_PLP(operand_t operand, ea_t ea) {
    set_FLAGS(operand);
-   pop(operand);
+   pop8(operand);
 }
 
 static void op_PLX(operand_t operand, ea_t ea) {
    X = operand;
    set_NZ(X);
-   pop(operand);
+   popXS(operand);
 }
 
 static void op_PLY(operand_t operand, ea_t ea) {
    Y = operand;
    set_NZ(Y);
-   pop(operand);
+   popXS(operand);
 }
 
 static void op_ROLA(operand_t operand, ea_t ea) {
@@ -1771,8 +1832,8 @@ static void op_ROR(operand_t operand, ea_t ea) {
 
 static void op_RTS(operand_t operand, ea_t ea) {
    // RTS: the operand is the data pulled from the stack (PCL, PCH)
-   pop(operand);
-   pop(operand >> 8);
+   pop8(operand);
+   pop8(operand >> 8);
    // The +1 is handled elsewhere
    PC = operand & 0xffff;
 }
@@ -1780,11 +1841,11 @@ static void op_RTS(operand_t operand, ea_t ea) {
 static void op_RTI(operand_t operand, ea_t ea) {
    // RTI: the operand is the data pulled from the stack (P, PCL, PCH, PBR)
    set_FLAGS(operand);
-   pop(operand);
-   pop(operand >> 8);
-   pop(operand >> 16);
+   pop8(operand);
+   pop8(operand >> 8);
+   pop8(operand >> 16);
    if (E == 0) {
-      pop(operand >> 24);
+      pop8(operand >> 24);
    }
 }
 
@@ -1867,6 +1928,7 @@ static void op_SEI(operand_t operand, ea_t ea) {
 }
 
 static void op_STA(operand_t operand, ea_t ea) {
+   // TODO: fix for variable width
    memory_write(operand, ea);
    if (A >= 0) {
       if (operand != A) {
