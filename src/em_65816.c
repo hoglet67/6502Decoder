@@ -247,7 +247,7 @@ static void memory_write(int data, int ea) {
    }
 }
 
-static int compare_NVMXDIZC(int operand) {
+static int compare_FLAGS(int operand) {
    if (N >= 0) {
       if (N != ((operand >> 7) & 1)) {
          return 1;
@@ -258,13 +258,13 @@ static int compare_NVMXDIZC(int operand) {
          return 1;
       }
    }
-   if (MS >= 0) {
+   if (E == 0 && MS >= 0) {
       if (MS != ((operand >> 5) & 1)) {
          return 1;
       }
    }
-   if (XS >= 0) {
-      if (MS != ((operand >> 4) & 1)) {
+   if (E == 0 && XS >= 0) {
+      if (XS != ((operand >> 4) & 1)) {
          return 1;
       }
    }
@@ -291,11 +291,11 @@ static int compare_NVMXDIZC(int operand) {
    return 0;
 }
 
-static void check_NVMXDIZC(int operand) {
-   failflag |= compare_NVMXDIZC(operand);
+static void check_FLAGS(int operand) {
+   failflag |= compare_FLAGS(operand);
 }
 
-static void set_NVMXDIZC(int operand) {
+static void set_FLAGS(int operand) {
    N = (operand >> 7) & 1;
    V = (operand >> 6) & 1;
    if (E == 0) {
@@ -372,8 +372,8 @@ static void interrupt(int pb, int pc, int flags, int vector) {
    push(pc);
    // Push P
    push(flags);
-   check_NVMXDIZC(flags);
-   set_NVMXDIZC(flags);
+   check_FLAGS(flags);
+   set_FLAGS(flags);
    I = 1;
    D = 0;
    PB = 0x00;
@@ -534,7 +534,7 @@ static int em_65816_match_interrupt(sample_t *sample_q, int num_samples) {
          // Now test unused flag is 1, B is 0
          if ((sample_q[4].data & 0x30) == 0x20) {
             // Finally test all other known flags match
-            if (!compare_NVMXDIZC(sample_q[4].data)) {
+            if (!compare_FLAGS(sample_q[4].data)) {
                // Matched PSW = NV-BDIZC
                return 1;
             }
@@ -1658,8 +1658,8 @@ static void op_PHA(operand_t operand, ea_t ea) {
 
 static void op_PHP(operand_t operand, ea_t ea) {
    push(operand);
-   check_NVMXDIZC(operand);
-   set_NVMXDIZC(operand);
+   check_FLAGS(operand);
+   set_FLAGS(operand);
 }
 
 static void op_PHX(operand_t operand, ea_t ea) {
@@ -1679,7 +1679,7 @@ static void op_PLA(operand_t operand, ea_t ea) {
 }
 
 static void op_PLP(operand_t operand, ea_t ea) {
-   set_NVMXDIZC(operand);
+   set_FLAGS(operand);
    pop(operand);
 }
 
@@ -1752,7 +1752,7 @@ static void op_RTS(operand_t operand, ea_t ea) {
 
 static void op_RTI(operand_t operand, ea_t ea) {
    // RTI: the operand is the data pulled from the stack (P, PCL, PCH, PBR)
-   set_NVMXDIZC(operand);
+   set_FLAGS(operand);
    pop(operand);
    pop(operand >> 8);
    pop(operand >> 16);
