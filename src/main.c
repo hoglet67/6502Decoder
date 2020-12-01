@@ -495,6 +495,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
 
    int opcode = instruction.opcode;
    int pc = instruction.pc;
+   int pb = instruction.pb;
    if (pc >= 0) {
       if (oldpc >= 0 && oldpc != pc) {
          printf("pc: prediction failed at %04X old pc was %04X\n", pc, oldpc);
@@ -536,23 +537,22 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
       // Show address
       if (fail || arguments.show_address) {
          if (c816) {
-            if (pc < 0) {
-               for (int i = 0; i < 6 ; i++) {
-                  *bp++ = '?';
-               }
+            if (pb < 0) {
+               *bp++ = '?';
+               *bp++ = '?';
             } else {
-               write_hex6(bp, pc);
-               bp += 6;
+               write_hex2(bp, pb);
+               bp += 2;
             }
+         }
+         if (pc < 0) {
+            *bp++ = '?';
+            *bp++ = '?';
+            *bp++ = '?';
+            *bp++ = '?';
          } else {
-            if (pc < 0) {
-               for (int i = 0; i < 4 ; i++) {
-                  *bp++ = '?';
-               }
-            } else {
-               write_hex4(bp, pc);
-               bp += 4;
-            }
+            write_hex4(bp, pc);
+            bp += 4;
          }
          *bp++ = ' ';
          *bp++ = ':';

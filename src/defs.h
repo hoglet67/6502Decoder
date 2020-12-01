@@ -34,6 +34,7 @@ typedef struct {
 
 typedef struct {
    int           pc;
+   int           pb;
    uint8_t       opcode;
    uint8_t       op1;
    uint8_t       op2;

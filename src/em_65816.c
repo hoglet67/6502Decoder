@@ -86,7 +86,6 @@ typedef struct {
 
 static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=? D=? I=? Z=? C=? E=?";
 
-static cpu_t cpu_type;
 static int c02;
 static int bbctube;
 static int master_nordy;
@@ -130,7 +129,7 @@ static int S = -1;
 static int PC = -1;
 
 // 65C816 additional registers: -1 means unknown
-static int B = -1;  // Accumulator bits 15..8
+static int B  = -1; // Accumulator bits 15..8
 static int DP = -1; // 16-bit Direct Page Register
 static int DB = -1; // 8-bit Data Bank Register
 static int PB = -1; // 8-bit Program Bank Register
@@ -330,9 +329,8 @@ static void interrupt(int pc, int flags, int vector) {
    check_NVDIZC(flags);
    set_NVDIZC(flags);
    I = 1;
-   if (c02) {
-      D = 0;
-   }
+   D = 0;
+   PB = 0x00;
    PC = vector;
 }
 
@@ -467,12 +465,15 @@ static void em_65816_reset(sample_t *sample_q, int num_cycles, instruction_t *in
    C = -1;
    I = 1;
    D = 0;
-   // Extra 816 flags
+   // Extra 816 regs
    B = -1;
    DP = 0;
+   PB = 0;
+   // Extra 816 flags
    E = 1;
    MS = 1;
    XS = 1;
+   // Program Counter
    PC = (sample_q[num_cycles - 1].data << 8) + sample_q[num_cycles - 2].data;
 }
 
@@ -518,13 +519,26 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    instruction->op3     = op3;
    instruction->opcount = opcount;
 
-   // Determine the current PC value
+   // Fill in the current PB/PC value
    if (opcode == 0x00) {
-      instruction->pc = (((sample_q[3].data << 8) + sample_q[4].data) - 2) & 0xffff;
+      if (E == 0) {
+         // BRK: E=0 <opcode> <op1> <write pbr> <write pch> <write pcl> <write p> <read rst> <read rsth>
+         instruction->pc = (((sample_q[3].data << 8) + sample_q[4].data) - 2) & 0xffff;
+         instruction->pb = sample_q[2].data;
+      } else {
+         // BRK: E=1 <opcode> <op1> <write pch> <write pcl> <write p> <read rst> <read rsth>
+         instruction->pc = (((sample_q[3].data << 8) + sample_q[2].data) - 2) & 0xffff;
+      }
    } else if (opcode == 0x20) {
+      // JSR: <opcode> <op1> <op2> <read dummy> <write pch> <write pcl>
       instruction->pc = (((sample_q[4].data << 8) + sample_q[5].data) - 2) & 0xffff;
+   } else if (opcode == 0x22) {
+      // JSL: <opcode> <op1> <op2> <write pbr> <read dummy> <op3> <write pch> <write pcl>
+      instruction->pc = (((sample_q[6].data << 8) + sample_q[7].data) - 3) & 0xffff;
+      instruction->pb = sample_q[3].data;
    } else {
       instruction->pc = PC;
+      instruction->pb = PB;
    }
 
    if (instr->emulate) {
@@ -547,7 +561,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          operand = (sample_q[4].data << 8) + sample_q[5].data;
       } else if (opcode == 0x22) {
          // JSL: the operand is the data pushed to the stack (PCB, PCH, PCL)
-         // <opcode> <op1> <op2> <write pbr> <op3> <read dummy> <write pch> <write pcl>
+         // <opcode> <op1> <op2> <write pbr> <read dummy> <op3> <write pch> <write pcl>
          operand = (sample_q[3].data << 16) + (sample_q[6].data << 8) + sample_q[7].data;
       } else if (opcode == 0x40) {
          // RTI: the operand is the data pulled from the stack (P, PCL, PCH)
@@ -633,12 +647,13 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c) {
       // RTI, BRK, INTR, JMP (ind), JMP (ind, X), IRQ/NMI/RST
       PC = (sample_q[num_cycles - 1].data << 8) | sample_q[num_cycles - 2].data;
-   } else if (opcode == 0x20 || opcode == 0x22 || opcode == 0x4c) {
-      // JSR abs, JSL long, JMP abs
-      PC = (op3 << 16) | (op2 << 8) | op1;
-   } else if (opcode == 0x60) {
-      // RTS
-      PC = (((sample_q[num_cycles - 2].data << 8) | sample_q[num_cycles - 3].data) + 1) & 0xffff;
+   } else if (opcode == 0x20 || opcode == 0x4c) {
+      // JSR abs, JMP abs
+      PC = (op2 << 8) | op1;
+   } else if (opcode == 0x22 || opcode == 0x5c) {
+      // JSL long, JMP long
+      PB = op3;
+      PC = (op2 << 8) | op1;
    } else if (PC < 0) {
       // PC value is not known yet, everything below this point is relative
       PC = -1;
@@ -646,9 +661,9 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // BRA
       PC += ((int8_t)(op1)) + 2;
       PC &= 0xffff;
-   } else if (cpu_type == CPU_65C02_ROCKWELL && ((opcode & 0x0f) == 0x0f) && (num_cycles != 5)) {
-      // BBR/BBS: op2 if taken
-      PC += ((int8_t)(op2)) + 3;
+   } else if (opcode == 0x82) {
+      // BRL
+      PC += ((int16_t)((op2 << 8) + op1)) + 3;
       PC &= 0xffff;
    } else if ((opcode & 0x1f) == 0x10 && num_cycles != 2) {
       // BXX: op1 if taken
@@ -752,7 +767,7 @@ static int em_65816_disassemble(char *buffer, instruction_t *instruction) {
 }
 
 static int em_65816_get_PC() {
-   return PC;
+   return (PB << 24) + PC;
 }
 
 
@@ -1132,7 +1147,9 @@ static void op_RTL(int operand, int ea) {
       S = (S + 1) & 255;
       memory_read((operand >> 16) & 255, 0x100 + S);   // PB
    }
-   PC = operand;
+   // The +1 is handled elsewhere
+   PC = operand & 0xffff;
+   PB = (operand >> 16) & 0xff;
 }
 
 // ====================================================================
@@ -1633,6 +1650,8 @@ static void op_RTS(int operand, int ea) {
       S = (S + 1) & 255;
       memory_read((operand >> 8) & 255, 0x100 + S);
    }
+   // The +1 is handled elsewhere
+   PC = operand & 0xffff;
 }
 
 static void op_RTI(int operand, int ea) {
