@@ -132,8 +132,8 @@ static int A = -1;
 static int X = -1;
 static int Y = -1;
 
-static int SH = 0x01;
-static int SL = 0xFF;
+static int SH = -1;
+static int SL = -1;
 
 static int PC = -1;
 
@@ -515,6 +515,10 @@ static void check_and_set_ms(int val) {
       failflag = 1;
    }
    MS = val;
+   // Evidence of MS = 0 implies E = 0
+   if (MS == 0) {
+      emulation_mode_off();
+   }
 }
 
 static void check_and_set_xs(int val) {
@@ -522,6 +526,10 @@ static void check_and_set_xs(int val) {
       failflag = 1;
    }
    XS = val;
+   // Evidence of XS = 0 implies E = 0
+   if (XS == 0) {
+      emulation_mode_off();
+   }
 }
 
 // ====================================================================
