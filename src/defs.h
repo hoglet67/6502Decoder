@@ -57,6 +57,7 @@ typedef struct {
    void (*emulate)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
    int (*disassemble)(char *bp, instruction_t *instruction);
    int (*get_PC)();
+   int (*get_PB)();
    int (*read_memory)(int address);
    char *(*get_state)();
    int (*get_and_clear_fail)();

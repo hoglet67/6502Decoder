@@ -810,6 +810,9 @@ static int em_6502_get_PC() {
    return PC;
 }
 
+static int em_6502_get_PB() {
+   return 0;
+}
 
 static int em_6502_read_memory(int address) {
    return memory[address];
@@ -865,6 +868,7 @@ cpu_emulator_t em_6502 = {
    .emulate = em_6502_emulate,
    .disassemble = em_6502_disassemble,
    .get_PC = em_6502_get_PC,
+   .get_PB = em_6502_get_PB,
    .read_memory = em_6502_read_memory,
    .get_state = em_6502_get_state,
    .get_and_clear_fail = em_6502_get_and_clear_fail,

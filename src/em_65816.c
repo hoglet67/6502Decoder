@@ -1015,9 +1015,12 @@ static int em_65816_disassemble(char *buffer, instruction_t *instruction) {
 }
 
 static int em_65816_get_PC() {
-   return (PB << 24) + PC;
+   return PC;
 }
 
+static int em_65816_get_PB() {
+   return PB;
+}
 
 static int em_65816_read_memory(int address) {
    return memory[address];
@@ -1088,6 +1091,7 @@ cpu_emulator_t em_65816 = {
    .emulate = em_65816_emulate,
    .disassemble = em_65816_disassemble,
    .get_PC = em_65816_get_PC,
+   .get_PB = em_65816_get_PB,
    .read_memory = em_65816_read_memory,
    .get_state = em_65816_get_state,
    .get_and_clear_fail = em_65816_get_and_clear_fail,
