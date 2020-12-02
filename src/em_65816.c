@@ -217,6 +217,8 @@ static char *m2_ops[] = {
 
 static InstrType instr_table_65c816[];
 
+static void emulation_mode_on();
+static void emulation_mode_off();
 static void op_STA(operand_t operand, ea_t ea);
 static void op_STX(operand_t operand, ea_t ea);
 static void op_STY(operand_t operand, ea_t ea);
@@ -449,17 +451,43 @@ static void pushMS(int value) {
    }
 }
 
-static void interrupt(int pb, int pc, int flags, int vector) {
+static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruction, int pc_offset) {
+   int i;
+   int pb;
+   if (num_cycles == 7) {
+      // We must be in emulation mode
+      emulation_mode_on();
+      i = 2;
+      pb = PB;
+   } else {
+      // We must be in native mode
+      pb = sample_q[2].data;
+      emulation_mode_off();
+      i = 3;
+      pb = sample_q[2].data;
+   }
+   // Parse the bus cycles
+   // E=0 <opcode> <op1> <write pbr> <write pch> <write pcl> <write p> <read rst> <read rsth>
+   // E=1 <opcode> <op1>             <write pch> <write pcl> <write p> <read rst> <read rsth>
+   int pc     = (sample_q[i].data << 8) + sample_q[i + 1].data;
+   int flags  = sample_q[i + 2].data;
+   int vector = (sample_q[i + 4].data << 8) + sample_q[i + 3].data;
+   // Update the address of the interruted instruction
+   if (pb >= 0) {
+      instruction->pb = pb;
+   }
+   instruction->pc = (pc - pc_offset) & 0xffff;
+   // Stack the PB/PC/FLags (for memory modelling)
    if (E == 0) {
-      // In native mode, push PB
       push8(pb);
    }
-   // Push PC
    push16(pc);
-   // Push P
    push8(flags);
+   // Validate the flags
    check_FLAGS(flags);
+   // And make them consistent
    set_FLAGS(flags);
+   // Setup expected state for the ISR
    I = 1;
    D = 0;
    PB = 0x00;
@@ -671,28 +699,7 @@ static void em_65816_reset(sample_t *sample_q, int num_cycles, instruction_t *in
 }
 
 static void em_65816_interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
-   int i;
-   int pb;
-   if (num_cycles == 7) {
-      // We must be in emulation mode
-      emulation_mode_on();
-      i = 2;
-      pb = -1;
-   } else {
-      // We must be in native mode
-      pb = sample_q[2].data;
-      emulation_mode_off();
-      i = 3;
-      pb = sample_q[2].data;
-   }
-   int pc     = (sample_q[i].data << 8) + sample_q[i + 1].data;
-   int flags  = sample_q[i + 2].data;
-   int vector = (sample_q[i + 4].data << 8) + sample_q[i + 3].data;
-   if (pb >= 0) {
-      instruction->pb = pb;
-   }
-   instruction->pc = pc;
-   interrupt(pb, pc, flags, vector);
+   interrupt(sample_q, num_cycles, instruction, 0);
 }
 
 static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
@@ -739,16 +746,12 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    instruction->opcount = opcount;
 
    // Fill in the current PB/PC value
-   if (opcode == 0x00) {
-      if (E == 0) {
-         // BRK: E=0 <opcode> <op1> <write pbr> <write pch> <write pcl> <write p> <read rst> <read rsth>
-         instruction->pc = (((sample_q[3].data << 8) + sample_q[4].data) - 2) & 0xffff;
-         instruction->pb = sample_q[2].data;
-      } else {
-         // BRK: E=1 <opcode> <op1> <write pch> <write pcl> <write p> <read rst> <read rsth>
-         instruction->pc = (((sample_q[2].data << 8) + sample_q[3].data) - 2) & 0xffff;
-         instruction->pb = PB;
-      }
+   if (opcode == 0x00 || opcode == 0x02) {
+      // BRK or COP - handle in the same way as an interrupt
+      // Now just pass BRK onto the interrupt handler
+      interrupt(sample_q, num_cycles, instruction, 2);
+      // And we are done
+      return;
    } else if (opcode == 0x20) {
       // JSR: <opcode> <op1> <op2> <read dummy> <write pch> <write pcl>
       instruction->pc = (((sample_q[4].data << 8) + sample_q[5].data) - 2) & 0xffff;
@@ -773,10 +776,6 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    } else if (instr->optype == BRANCHOP) {
       // the operand is true if branch taken
       operand = (num_cycles != 2);
-   } else if (opcode == 0x00) {
-      // BRK: the operand is the data pushed to the stack (PCH, PCL, P)
-      // <opcode> <op1> <write pch> <write pcl> <write p> <read rst> <read rsth>
-      operand = (sample_q[2].data << 16) +  (sample_q[3].data << 8) + sample_q[4].data;
    } else if (opcode == 0x20) {
       // JSR: the operand is the data pushed to the stack (PCH, PCL)
       // <opcode> <op1> <op2> <read dummy> <write pch> <write pcl>
@@ -889,10 +888,6 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       break;
    default:
       break;
-   }
-
-   if (opcode == 0x00) {
-      ea = (sample_q[6].data << 8) + sample_q[5].data;
    }
 
    if (instr->emulate) {
@@ -1127,13 +1122,6 @@ cpu_emulator_t em_65816 = {
 // 65816 specific instructions
 // ====================================================================
 
-// Coprocessor
-
-static void op_COP(operand_t operand, ea_t ea) {
-   D = 0;
-   I = 0;
-}
-
 // Push Effective Absolute Address
 static void op_PEA(operand_t operand, ea_t ea) {
    // always pushes a 16-bit value
@@ -1146,12 +1134,11 @@ static void op_PER(operand_t operand, ea_t ea) {
    push16(ea);
 }
 
-// Push Effective Immediate
+// Push Effective Indirect Address
 static void op_PEI(operand_t operand, ea_t ea) {
    // always pushes a 16-bit value
    push16(operand);
 }
-
 
 // Push Data Bank Register
 static void op_PHB(operand_t operand, ea_t ea) {
@@ -1556,17 +1543,6 @@ static void op_BVS(operand_t branch_taken, ea_t ea) {
    } else {
       V = branch_taken;
    }
-}
-
-static void op_BRK(operand_t operand, ea_t ea) {
-   // BRK: the operand is the data pushed to the stack (PCH, PCL, P)
-   int flags = operand & 0xff;
-   // TODO: extact this from operand
-   // TODO: handle native mode
-   int pb = 0x00;
-   int pc = (operand >> 8) & 0xffff;
-   int vector = ea;
-   interrupt(pb, pc, flags, vector);
 }
 
 static void op_BIT_IMM(operand_t operand, ea_t ea) {
@@ -2113,9 +2089,9 @@ static void op_TYA(operand_t operand, ea_t ea) {
 // ====================================================================
 
 static InstrType instr_table_65c816[] = {
-   /* 00 */   { "BRK",  0, IMM   , 7, 0, WRITEOP,  op_BRK},
+   /* 00 */   { "BRK",  0, IMM   , 7, 0, WRITEOP,  0},
    /* 01 */   { "ORA",  0, INDX  , 6, 0, READOP,   op_ORA},
-   /* 02 */   { "COP",  0, IMM   , 7, 0, READOP,   op_COP},
+   /* 02 */   { "COP",  0, IMM   , 7, 0, READOP,   0},
    /* 03 */   { "ORA",  0, SR    , 4, 0, READOP,   op_ORA},
    /* 04 */   { "TSB",  0, ZP    , 5, 0, TSBTRBOP, op_TSB},
    /* 05 */   { "ORA",  0, ZP    , 3, 0, READOP,   op_ORA},
