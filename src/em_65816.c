@@ -88,9 +88,12 @@ typedef struct {
 #define OFFSET_Z   55
 #define OFFSET_C   59
 #define OFFSET_E   63
-#define OFFSET_END 64
+#define OFFSET_PB  68
+#define OFFSET_DB  74
+#define OFFSET_DP  80
+#define OFFSET_END 84
 
-static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=? D=? I=? Z=? C=? E=?";
+static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=? D=? I=? Z=? C=? E=? PB=?? DB=?? DP=????";
 
 static int c02;
 static int bbctube;
@@ -812,10 +815,11 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       operand = sample_q[num_cycles - 3].data;
    } else {
       // default to using the last bus cycle(s) as the operand
-      if ((instr->m_extra && (MS == 0)) || (instr->x_extra && (XS == 0)))  {
+      // special case PHD (0B) / PLD (2B) as these are always 16-bit
+      if ((instr->m_extra && (MS == 0)) || (instr->x_extra && (XS == 0)) || opcode == 0x0B || opcode == 0x2B)  {
          // 16-bit operation
-         if (opcode == 0x48 || opcode == 0x5A || opcode == 0xDA) {
-            // PHA/PHX/PHY push high byte followed by low byte
+         if (opcode == 0x48 || opcode == 0x5A || opcode == 0xDA || opcode == 0x0B) {
+            // PHA/PHX/PHY/PHD push high byte followed by low byte
             operand = sample_q[num_cycles - 1].data + (sample_q[num_cycles - 2].data << 8);
          } else {
             // all other 16-bit ops are low byte then high byer
@@ -1085,6 +1089,15 @@ static char *em_65816_get_state(char *buffer) {
    }
    if (E >= 0) {
       buffer[OFFSET_E] = '0' + E;
+   }
+   if (PB >= 0) {
+      write_hex2(buffer + OFFSET_PB, PB);
+   }
+   if (DB >= 0) {
+      write_hex2(buffer + OFFSET_DB, DB);
+   }
+   if (DP >= 0) {
+      write_hex4(buffer + OFFSET_DP, DP);
    }
    return buffer + OFFSET_END;
 }
@@ -2198,7 +2211,7 @@ static InstrType instr_table_65c816[] = {
    /* 5F */   { "EOR",  0, ALX   , 5, 0, READOP,   op_EOR},
    /* 60 */   { "RTS",  0, IMP   , 6, 0, READOP,   op_RTS},
    /* 61 */   { "ADC",  0, INDX  , 6, 1, READOP,   op_ADC},
-   /* 62 */   { "PER",  0, IMP   , 6, 0, WRITEOP,  op_PER},
+   /* 62 */   { "PER",  0, BRL   , 6, 0, WRITEOP,  op_PER},
    /* 63 */   { "ADC",  0, SR    , 4, 0, READOP,   op_ADC},
    /* 64 */   { "STZ",  0, ZP    , 3, 0, WRITEOP,  op_STZ},
    /* 65 */   { "ADC",  0, ZP    , 3, 1, READOP,   op_ADC},
