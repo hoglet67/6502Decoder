@@ -939,8 +939,15 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    }
 
    // Look for control flow changes and update the PC
-   if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c) {
-      // RTI, BRK, INTR, JMP (ind), JMP (ind, X), IRQ/NMI/RST
+   if (opcode == 0x40) {
+      // E=0: <opcode> <op1> <read dummy> <read p> <read pcl> <read pch> <read pbr>
+      // E=1: <opcode> <op1> <read dummy> <read p> <read pcl> <read pch>
+      PC = sample_q[4].data | (sample_q[5].data << 8);
+      if (E == 0) {
+         PB = sample_q[6].data;
+      }
+   } else if (opcode == 0x6c || opcode == 0x7c) {
+      // JMP (ind), JMP (ind, X)
       PC = (sample_q[num_cycles - 1].data << 8) | sample_q[num_cycles - 2].data;
    } else if (opcode == 0x20 || opcode == 0x4c) {
       // JSR abs, JMP abs
