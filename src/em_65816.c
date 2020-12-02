@@ -452,7 +452,7 @@ static void interrupt(int pb, int pc, int flags, int vector) {
       push8(pb);
    }
    // Push PC
-   push16(pc >> 8);
+   push16(pc);
    // Push P
    push8(flags);
    check_FLAGS(flags);
