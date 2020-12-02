@@ -76,7 +76,9 @@ do
 
     echo "  Trace MD5: ${md5}; Prediction fail count: ${fail_count}; Reference diff count: ${diff_count}"
 
-    diff ${ref} ${log}
+    if [ -f ${ref} ]; then
+        diff ${ref} ${log}
+    fi
 
     echo
 
