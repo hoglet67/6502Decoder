@@ -759,9 +759,12 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
 
    uint32_t operand;
    if (instr->optype == RMWOP) {
-      // e.g. <opcode> <op1> <op2> <read> <write> <write>
-      // Want to pick off the read
-      operand = sample_q[num_cycles - 3].data;
+      // e.g. <opcode> <op1> <op2> <read old> <dummy> <write new>
+      // 2/12/2020: on Beeb816 the <read old> cycle seems hard to sample
+      // reliably with the FX2, so lets use the <dummy> instead.
+      // E=0 - Dummy is a read of the same data (albeit with VPA/VDA=00)
+      // E=1 - Dummy is a write of the same data
+      operand = sample_q[num_cycles - 2].data;
    } else if (instr->optype == BRANCHOP) {
       // the operand is true if branch taken
       operand = (num_cycles != 2);
