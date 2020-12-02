@@ -228,7 +228,6 @@ static void op_STY(operand_t operand, ea_t ea);
 // ====================================================================
 
 static void memory_read(int data, int ea) {
-   // TODO: allow memory bounds to be passed in as a command line parameter
    if (ea >= 0 && ea < 0x8000) {
       if (memory[ea] >=0 && memory[ea] != data) {
          printf("memory modelling failed at %04x: expected %02x, actual %02x\n", ea, memory[ea], data);
@@ -338,9 +337,55 @@ static void set_NVZC_unknown() {
    C = -1;
 }
 
-static void set_NZ(int value) {
-   N = (value & 128) > 0;
-   Z = value == 0;
+static void set_NZ8(int value) {
+   N = (value >> 7) & 1;
+   Z = (value & 0xff) == 0;
+}
+
+static void set_NZ16(int value) {
+   N = (value >> 15) & 1;
+   Z = (value & 0xffff) == 0;
+}
+
+static void set_NZ_unknown_width(int value) {
+   // Don't know which bit is the sign bit
+   int s15 = (value >> 15) & 1;
+   int s7 = (value >> 7) & 1;
+   if (s7 == s15) {
+      // both choices of sign bit are the same
+      N = s7;
+   } else {
+      // possible sign bits differ, so N must become undefined
+      N = -1;
+   }
+   // Don't know how many bits to check for any ones
+   if ((value & 0xff00) == 0) {
+      // no high bits set, so base Z on the low bits
+      Z = (value & 0xff) == 0;
+   } else {
+      // some high bits set, so Z must become undefined
+      Z = -1;
+   }
+}
+
+static void set_NZ_XS(int value) {
+   if (XS < 0) {
+      set_NZ_unknown_width(value);
+   } else if (XS == 0) {
+      set_NZ16(value);
+   } else {
+      set_NZ8(value);
+   }
+}
+
+static void set_NZ_MS(int value) {
+   if (MS < 0) {
+      set_NZ_unknown_width(value);
+   } else if (MS == 0) {
+      set_NZ16(value);
+   } else {
+      set_NZ8(value);
+   }
 }
 
 static void pop8(int value) {
@@ -629,7 +674,6 @@ static void em_65816_init(cpu_t cpu_type, int e_flag, int sp_reg, int decode_bbc
    }
 }
 
-
 static int em_65816_match_interrupt(sample_t *sample_q, int num_samples) {
    // Check we have enough valid samples
    if (num_samples < 7) {
@@ -893,8 +937,6 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    if (instr->emulate) {
       instr->emulate(operand, ea);
    }
-
-   // TODO: Push the PC updates into the emulation code
 
    // Look for control flow changes and update the PC
    if (opcode == 0x40 || opcode == 0x00 || opcode == 0x6c || opcode == 0x7c) {
@@ -1176,14 +1218,14 @@ static void op_PHD(operand_t operand, ea_t ea) {
 // Pull Data Bank Register
 static void op_PLB(operand_t operand, ea_t ea) {
    DB = operand;
-   set_NZ(DB);
+   set_NZ8(DB);
    pop8(operand);
 }
 
 // Pull Direct Page Register
 static void op_PLD(operand_t operand, ea_t ea) {
    DP = operand;
-   set_NZ(DP);
+   set_NZ16(DP);
    pop16(operand);
 }
 
@@ -1238,10 +1280,10 @@ static void op_MVN(operand_t operand, ea_t ea) {
 
 // Transfer Transfer C accumulator to Direct Page register
 static void op_TCD(operand_t operand, ea_t ea) {
+   // Always a 16-bit transfer
    if (B >= 0 && A >= 0) {
       DP = (B << 8) + A;
-      // TODO: Need to pick the right sign bit
-      set_NZ(DP);
+      set_NZ16(DP);
    } else {
       DP = -1;
       set_NZ_unknown();
@@ -1256,11 +1298,11 @@ static void op_TCS(operand_t operand, ea_t ea) {
 
 // Transfer Transfer Direct Page register to C accumulator
 static void op_TDC(operand_t operand, ea_t ea) {
+   // Always a 16-bit transfer
    if (DP >= 0) {
       A = DP & 255;
       B = (DP >> 8) & 255;
-      // TODO: Need to pick the right sign bit
-      set_NZ(DP);
+      set_NZ16(DP);
    } else {
       A = -1;
       B = -1;
@@ -1270,20 +1312,21 @@ static void op_TDC(operand_t operand, ea_t ea) {
 
 // Transfer Transfer Stack pointer to C accumulator
 static void op_TSC(operand_t operand, ea_t ea) {
+   // Always a 16-bit transfer
    A = SL;
    B = SH;
-   // TODO: Need to pick the right sign bit
-   if (A >= 0) {
-      set_NZ(A);
+   if (B >= 0 && A >= 0) {
+      set_NZ16((B << 8) + A);
    } else {
       set_NZ_unknown();
    }
 }
 
 static void op_TXY(operand_t operand, ea_t ea) {
+   // Variable size transfer controlled by XS
    if (X >= 0) {
       Y = X;
-      set_NZ(Y);
+      set_NZ_XS(Y);
    } else {
       Y = -1;
       set_NZ_unknown();
@@ -1291,9 +1334,10 @@ static void op_TXY(operand_t operand, ea_t ea) {
 }
 
 static void op_TYX(operand_t operand, ea_t ea) {
+   // Variable size transfer controlled by XS
    if (Y >= 0) {
       X = Y;
-      set_NZ(X);
+      set_NZ_XS(X);
    } else {
       X = -1;
       set_NZ_unknown();
@@ -1307,7 +1351,7 @@ static void op_XBA(operand_t operand, ea_t ea) {
    B = tmp;
    if (A >= 0) {
       // Always based on the 8-bit result of A
-      set_NZ(A);
+      set_NZ8(A);
    } else {
       set_NZ_unknown();
    }
@@ -1388,19 +1432,14 @@ static void op_RTL(operand_t operand, ea_t ea) {
 // ====================================================================
 
 static void op_ADC(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    if (A >= 0 && C >= 0) {
       if (D == 1) {
-         // Decimal mode ADC
+         // Decimal mode ADC - works like a 65C02
          int al;
          int ah;
-         uint8_t tmp;
          ah = 0;
-         Z = N = 0;
-         tmp = A + operand + (C ? 1 : 0);
-         if (!tmp) {
-            Z = 1;
-         }
          al = (A & 0xF) + (operand & 0xF) + (C ? 1 : 0);
          if (al > 9) {
             al -= 10;
@@ -1408,9 +1447,6 @@ static void op_ADC(operand_t operand, ea_t ea) {
             ah = 1;
          }
          ah += ((A >> 4) + (operand >> 4));
-         if (ah & 8) {
-            N = 1;
-         }
          V = (((ah << 4) ^ A) & 128) && !((A ^ operand) & 128);
          C = 0;
          if (ah > 9) {
@@ -1419,18 +1455,14 @@ static void op_ADC(operand_t operand, ea_t ea) {
             ah &= 0xF;
          }
          A = (al & 0xF) | (ah << 4);
-         // On 65C02 ADC, only the NZ flags are different to the 6502
-         if (c02) {
-            set_NZ(A);
-         }
       } else {
          // Normal mode ADC
          int tmp = A + operand + C;
          C = (tmp >> 8) & 1;
          V = (((A ^ operand) & 0x80) == 0) && (((A ^ tmp) & 0x80) != 0);
          A = tmp & 255;
-         set_NZ(A);
       }
+      set_NZ_MS(A);
    } else {
       A = -1;
       set_NVZC_unknown();
@@ -1438,30 +1470,33 @@ static void op_ADC(operand_t operand, ea_t ea) {
 }
 
 static void op_AND(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    if (A >= 0) {
       A = A & operand;
-      set_NZ(A);
+      set_NZ_MS(A);
    } else {
       set_NZ_unknown();
    }
 }
 
 static void op_ASLA(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    if (A >= 0) {
       C = (A >> 7) & 1;
       A = (A << 1) & 255;
-      set_NZ(A);
+      set_NZ_MS(A);
    } else {
       set_NZC_unknown();
    }
 }
 
 static void op_ASL(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    C = (operand >> 7) & 1;
    int tmp = (operand << 1) & 255;
-   set_NZ(tmp);
+   set_NZ_MS(tmp);
    memory_write(tmp, ea);
 }
 
@@ -1546,6 +1581,7 @@ static void op_BVS(operand_t branch_taken, ea_t ea) {
 }
 
 static void op_BIT_IMM(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    if (A >= 0) {
       Z = (A & operand) == 0;
    } else {
@@ -1554,6 +1590,7 @@ static void op_BIT_IMM(operand_t operand, ea_t ea) {
 }
 
 static void op_BIT(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    N = (operand >> 7) & 1;
    V = (operand >> 6) & 1;
@@ -1581,111 +1618,123 @@ static void op_CLV(operand_t operand, ea_t ea) {
 }
 
 static void op_CMP(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    if (A >= 0) {
       int tmp = A - operand;
       C = tmp >= 0;
-      set_NZ(tmp);
+      set_NZ_MS(tmp);
    } else {
       set_NZC_unknown();
    }
 }
 
 static void op_CPX(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    if (X >= 0) {
       int tmp = X - operand;
       C = tmp >= 0;
-      set_NZ(tmp);
+      set_NZ_XS(tmp);
    } else {
       set_NZC_unknown();
    }
 }
 
 static void op_CPY(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    if (Y >= 0) {
       int tmp = Y - operand;
       C = tmp >= 0;
-      set_NZ(tmp);
+      set_NZ_XS(tmp);
    } else {
       set_NZC_unknown();
    }
 }
 
 static void op_DECA(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    if (A >= 0) {
       A = (A - 1) & 255;
-      set_NZ(A);
+      set_NZ_MS(A);
    } else {
       set_NZ_unknown();
    }
 }
 
 static void op_DEC(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    int tmp = (operand - 1) & 255;
-   set_NZ(tmp);
+   set_NZ_MS(tmp);
    memory_write(tmp, ea);
 }
 
 static void op_DEX(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    if (X >= 0) {
       X = (X - 1) & 255;
-      set_NZ(X);
+      set_NZ_XS(X);
    } else {
       set_NZ_unknown();
    }
 }
 
 static void op_DEY(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    if (Y >= 0) {
       Y = (Y - 1) & 255;
-      set_NZ(Y);
+      set_NZ_XS(Y);
    } else {
       set_NZ_unknown();
    }
 }
 
 static void op_EOR(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    if (A >= 0) {
       A = A ^ operand;
-      set_NZ(A);
+      set_NZ_MS(A);
    } else {
       set_NZ_unknown();
    }
 }
 
 static void op_INCA(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    if (A >= 0) {
       A = (A + 1) & 255;
-      set_NZ(A);
+      set_NZ_MS(A);
    } else {
       set_NZ_unknown();
    }
 }
 
 static void op_INC(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    int tmp = (operand + 1) & 255;
-   set_NZ(tmp);
+   set_NZ_MS(tmp);
    memory_write(tmp, ea);
 }
 
 static void op_INX(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    if (X >= 0) {
       X = (X + 1) & 255;
-      set_NZ(X);
+      set_NZ_XS(X);
    } else {
       set_NZ_unknown();
    }
 }
 
 static void op_INY(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    if (Y >= 0) {
       Y = (Y + 1) & 255;
-      set_NZ(Y);
+      set_NZ_XS(Y);
    } else {
       set_NZ_unknown();
    }
@@ -1697,41 +1746,46 @@ static void op_JSR(operand_t operand, ea_t ea) {
 }
 
 static void op_LDA(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    A = operand;
    if (!MS) {
       B = (operand >> 8) & 0xff;
    }
-   set_NZ(A);
+   set_NZ_MS(A);
 }
 
 static void op_LDX(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    X = operand;
-   set_NZ(X);
+   set_NZ_XS(X);
 }
 
 static void op_LDY(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    Y = operand;
-   set_NZ(Y);
+   set_NZ_XS(Y);
 }
 
 static void op_LSRA(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    if (A >= 0) {
       C = A & 1;
       A = A >> 1;
-      set_NZ(A);
+      set_NZ_MS(A);
    } else {
       set_NZC_unknown();
    }
 }
 
 static void op_LSR(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    C = operand & 1;
    int tmp = operand >> 1;
-   set_NZ(tmp);
+   set_NZ_MS(tmp);
    memory_write(tmp, ea);
 }
 
@@ -1739,7 +1793,7 @@ static void op_ORA(operand_t operand, ea_t ea) {
    memory_read(operand, ea);
    if (A >= 0) {
       A = A | operand;
-      set_NZ(A);
+      set_NZ_MS(A);
    } else {
       set_NZ_unknown();
    }
@@ -1769,11 +1823,11 @@ static void op_PHY(operand_t operand, ea_t ea) {
 static void op_PLA(operand_t operand, ea_t ea) {
    A = operand & 0xff;
    if (MS < 0) {
-      B = 0;
+      B = -1;
    } else if (MS == 0) {
       B = (operand >> 8);
    }
-   set_NZ(A);
+   set_NZ_MS(operand);
    popMS(operand);
 }
 
@@ -1784,22 +1838,23 @@ static void op_PLP(operand_t operand, ea_t ea) {
 
 static void op_PLX(operand_t operand, ea_t ea) {
    X = operand;
-   set_NZ(X);
+   set_NZ_XS(X);
    popXS(operand);
 }
 
 static void op_PLY(operand_t operand, ea_t ea) {
    Y = operand;
-   set_NZ(Y);
+   set_NZ_XS(Y);
    popXS(operand);
 }
 
 static void op_ROLA(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    if (A >= 0 && C >= 0) {
       int tmp = (A << 1) + C;
       C = (tmp >> 8) & 1;
       A = tmp & 255;
-      set_NZ(A);
+      set_NZ_MS(A);
    } else {
       A = -1;
       set_NZC_unknown();
@@ -1807,11 +1862,12 @@ static void op_ROLA(operand_t operand, ea_t ea) {
 }
 
 static void op_ROL(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    if (C >= 0) {
       int tmp = (operand << 1) + C;
       C = (tmp >> 8) & 1;
       tmp = tmp & 255;
-      set_NZ(tmp);
+      set_NZ_MS(tmp);
       memory_write(tmp, ea);
    } else {
       set_NZC_unknown();
@@ -1819,11 +1875,12 @@ static void op_ROL(operand_t operand, ea_t ea) {
 }
 
 static void op_RORA(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    if (A >= 0 && C >= 0) {
       int tmp = (A >> 1) + (C << 7);
       C = A & 1;
       A = tmp;
-      set_NZ(A);
+      set_NZ_MS(A);
    } else {
       A = -1;
       set_NZC_unknown();
@@ -1831,10 +1888,11 @@ static void op_RORA(operand_t operand, ea_t ea) {
 }
 
 static void op_ROR(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    if (C >= 0) {
       int tmp = (operand >> 1) + (C << 7);
       C = operand & 1;
-      set_NZ(tmp);
+      set_NZ_MS(tmp);
       memory_write(tmp, ea);
    } else {
       set_NZC_unknown();
@@ -1861,65 +1919,33 @@ static void op_RTI(operand_t operand, ea_t ea) {
 }
 
 static void op_SBC(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_read(operand, ea);
    if (A >= 0 && C >= 0) {
       if (D == 1) {
-         // Decimal mode SBC
-         if (c02) {
-            int al;
-            int tmp;
-            // On 65C02 SBC, both flags and A can be different to the 6502
-            al = (A & 15) - (operand & 15) - ((C) ? 0 : 1);
-            tmp = A - operand - ((C) ? 0 : 1);
-            C = (tmp & 0x100) ? 0 : 1;
-            V = ((A ^ operand) & 0x80) && ((A ^ tmp) & 0x80);
-            if (tmp < 0) {
-               tmp = tmp - 0x60;
-            }
-            if (al < 0) {
-               tmp = tmp - 0x06;
-            }
-            A = tmp & 255;
-            set_NZ(A);
-         } else {
-            int al;
-            int ah;
-            int hc = 0;
-            uint8_t tmp = A - operand - ((C) ? 0 : 1);
-            Z = N = 0;
-            if (!(tmp)) {
-               Z = 1;
-            }
-            al = (A & 15) - (operand & 15) - ((C) ? 0 : 1);
-            if (al & 16) {
-               al -= 6;
-               al &= 0xF;
-               hc = 1;
-            }
-            ah = (A >> 4) - (operand >> 4);
-            if (hc) {
-               ah--;
-            }
-            if ((A - (operand + ((C) ? 0 : 1))) & 0x80) {
-               N = 1;
-            }
-            V = ((A ^ operand) & 0x80) && ((A ^ tmp) & 0x80);
-            C = 1;
-            if (ah & 16) {
-               C = 0;
-               ah -= 6;
-               ah &= 0xF;
-            }
-            A = (al & 0xF) | ((ah & 0xF) << 4);
+         // Decimal mode SBC - works like a 65C02
+         int al;
+         int tmp;
+         // On 65C02 SBC, both flags and A can be different to the 6502
+         al = (A & 15) - (operand & 15) - ((C) ? 0 : 1);
+         tmp = A - operand - ((C) ? 0 : 1);
+         C = (tmp & 0x100) ? 0 : 1;
+         V = ((A ^ operand) & 0x80) && ((A ^ tmp) & 0x80);
+         if (tmp < 0) {
+            tmp = tmp - 0x60;
          }
+         if (al < 0) {
+            tmp = tmp - 0x06;
+         }
+         A = tmp & 255;
       } else {
          // Normal mode SBC
          int tmp = A - operand - (1 - C);
          C = 1 - ((tmp >> 8) & 1);
          V = (((A ^ operand) & 0x80) != 0) && (((A ^ tmp) & 0x80) != 0);
          A = tmp & 255;
-         set_NZ(A);
       }
+      set_NZ_MS(A);
    } else {
       A = -1;
       set_NVZC_unknown();
@@ -1968,6 +1994,7 @@ static void op_STA(operand_t operand, ea_t ea) {
 }
 
 static void op_STX(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_write(operand, ea);
    if (X >= 0) {
       if (operand != X) {
@@ -1978,6 +2005,7 @@ static void op_STX(operand_t operand, ea_t ea) {
 }
 
 static void op_STY(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_write(operand, ea);
    if (Y >= 0) {
       if (operand != Y) {
@@ -1988,29 +2016,10 @@ static void op_STY(operand_t operand, ea_t ea) {
 }
 
 static void op_STZ(operand_t operand, ea_t ea) {
+   // TODO: Make variable size
    memory_write(0, ea);
    if (operand != 0) {
       failflag = 1;
-   }
-}
-
-static void op_TAX(operand_t operand, ea_t ea) {
-   if (A >= 0) {
-      X = A;
-      set_NZ(X);
-   } else {
-      X = -1;
-      set_NZ_unknown();
-   }
-}
-
-static void op_TAY(operand_t operand, ea_t ea) {
-   if (A >= 0) {
-      Y = A;
-      set_NZ(Y);
-   } else {
-      Y = -1;
-      set_NZ_unknown();
    }
 }
 
@@ -2035,29 +2044,70 @@ static void op_TRB(operand_t operand, ea_t ea) {
    }
 }
 
-static void op_TSX(operand_t operand, ea_t ea) {
-   if (SL >= 0 && SH >=0 && XS == 0) {
+// This is used to implement: TAX, TAY, TSX
+static void transfer_88_16(int srchi, int srclo, int *dst) {
+   if (srclo >= 0 && srchi >=0 && XS == 0) {
       // 16-bit
-      X = (SH << 8) + SL;
-      set_NZ(X); // TODO this need to use bit 15 for n
-   } else if (SL >= 0 && XS == 1) {
-      // 16-bit
-      X = SL;
-      set_NZ(X);
+      *dst = (srchi << 8) + srclo;
+      set_NZ16(*dst);
+   } else if (srclo >= 0 && XS == 1) {
+      // 8-bit
+      *dst = srclo;
+      set_NZ8(*dst);
    } else {
-      X = -1;
+      *dst = -1;
       set_NZ_unknown();
    }
 }
 
-static void op_TXA(operand_t operand, ea_t ea) {
-   if (X >= 0) {
-      A = X;
-      set_NZ(A);
+// This is used to implement: TXA, TYA
+static void transfer_16_88(int src, int *dsthi, int *dstlo) {
+   if (MS == 0) {
+      // 16-bit
+      if (src >= 0) {
+         *dsthi = (src >> 8) & 0xff;
+         *dstlo = src & 0xff;
+         set_NZ16(src);
+      } else {
+         *dsthi = -1;
+         *dstlo = -1;
+         set_NZ_unknown();
+      }
+   } if (MS == 1) {
+      // 8-bit
+      if (src >= 0) {
+         *dstlo = src & 0xff;
+         set_NZ8(src);
+      } else {
+         *dstlo = -1;
+         set_NZ_unknown();
+      }
    } else {
-      A = -1;
+      // MS undefined
+      if (src >= 0) {
+         *dstlo = src & 0xff;
+      } else {
+         *dstlo = -1;
+      }
+      *dsthi = -1;
       set_NZ_unknown();
    }
+}
+
+static void op_TAX(operand_t operand, ea_t ea) {
+   transfer_88_16(B, A, &X);
+}
+
+static void op_TAY(operand_t operand, ea_t ea) {
+   transfer_88_16(B, A, &Y);
+}
+
+static void op_TSX(operand_t operand, ea_t ea) {
+   transfer_88_16(SH, SL, &X);
+}
+
+static void op_TXA(operand_t operand, ea_t ea) {
+   transfer_16_88(X, &B, &A);
 }
 
 static void op_TXS(operand_t operand, ea_t ea) {
@@ -2075,13 +2125,7 @@ static void op_TXS(operand_t operand, ea_t ea) {
 }
 
 static void op_TYA(operand_t operand, ea_t ea) {
-   if (Y >= 0) {
-      A = Y;
-      set_NZ(A);
-   } else {
-      A = -1;
-      set_NZ_unknown();
-   }
+   transfer_16_88(Y, &B, &A);
 }
 
 // ====================================================================
