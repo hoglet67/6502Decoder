@@ -2079,6 +2079,10 @@ static void op_TXS(operand_t operand, ea_t ea) {
       SH = -1;
       SL = -1;
    }
+   // Force SH to be 01 in emulation mode
+   if (E == 1) {
+      SH = 0x01;
+   }
 }
 
 static void op_TYA(operand_t operand, ea_t ea) {
