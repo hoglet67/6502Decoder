@@ -536,7 +536,7 @@ static void check_and_set_xs(int val) {
 // Public Methods
 // ====================================================================
 
-static void em_65816_init(cpu_t cpu_type, int mxeinit, int decode_bbctube, int mast_nordy) {
+static void em_65816_init(cpu_t cpu_type, int e_flag, int sp_reg, int decode_bbctube) {
    switch (cpu_type) {
    case CPU_65C816:
       c02 = 1;
@@ -547,15 +547,17 @@ static void em_65816_init(cpu_t cpu_type, int mxeinit, int decode_bbctube, int m
       exit(1);
    }
    bbctube = decode_bbctube;
-   if (mxeinit >= 0) {
-      MS = (mxeinit >> 2) & 1;
-      XS = (mxeinit >> 1) & 1;
-      E  = (mxeinit     ) & 1;
+   if (e_flag >= 0) {
+      E  = e_flag & 1;
       if (E) {
          emulation_mode_on();
       } else {
          emulation_mode_off();
       }
+   }
+   if (sp_reg >= 0) {
+      SL = sp_reg & 0xff;
+      SH = (sp_reg >> 8) & 0xff;
    }
    InstrType *instr = instr_table;
    for (int i = 0; i < 256; i++) {

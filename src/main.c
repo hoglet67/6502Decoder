@@ -117,7 +117,8 @@ static struct argp_option options[] = {
    { "bbctube",       8,         0,                   0, "Decode BBC tube protocol"},
    { "vda",           9,  "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for vda, blank if unconnected"},
    { "vpa",          10,  "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for vpa, blank if unconnected"},
-   { "mxeinit",      11,     "HEX", OPTION_ARG_OPTIONAL, "Initial value for M/X/E in 65816 mode"},
+   { "emul",         11,     "HEX", OPTION_ARG_OPTIONAL, "Initial value E flag in 65816 mode"},
+   { "sp",           12,     "HEX", OPTION_ARG_OPTIONAL, "Initial value SP register in 65816 mode"},
    { 0 }
 };
 
@@ -142,7 +143,8 @@ struct arguments {
    int show_something;
    int bbctube;
    int undocumented;
-   int mxeinit;
+   int e_flag;
+   int sp_reg;
    int byte;
    int debug;
    int profile;
@@ -223,9 +225,16 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       break;
    case  11:
       if (arg && strlen(arg) > 0) {
-         arguments->mxeinit = atoi(arg);
+         arguments->e_flag = strtol(arg, (char **)NULL, 16);
       } else {
-         arguments->mxeinit = -1;
+         arguments->e_flag = -1;
+      }
+      break;
+   case  12:
+      if (arg && strlen(arg) > 0) {
+         arguments->sp_reg = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->sp_reg = -1;
       }
       break;
    case 'c':
@@ -1008,7 +1017,8 @@ int main(int argc, char *argv[]) {
    arguments.bbctube          = 0;
    arguments.cpu_type         = CPU_6502;
    arguments.undocumented     = 0;
-   arguments.mxeinit          = -1;
+   arguments.e_flag           = -1;
+   arguments.sp_reg           = -1;
    arguments.byte             = 0;
    arguments.debug            = 0;
    arguments.profile          = 0;
@@ -1057,7 +1067,7 @@ int main(int argc, char *argv[]) {
    if (arguments.cpu_type == CPU_65C816) {
       c816 = 1;
       em = &em_65816;
-      em->init(arguments.cpu_type, arguments.mxeinit, arguments.bbctube, 0);
+      em->init(arguments.cpu_type, arguments.e_flag, arguments.sp_reg, arguments.bbctube);
    } else {
       em = &em_6502;
       c816 = 0;
