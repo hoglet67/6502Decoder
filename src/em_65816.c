@@ -1697,12 +1697,30 @@ static int op_BIT_IMM(operand_t operand, ea_t ea) {
 }
 
 static int op_BIT(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   N = (operand >> 7) & 1;
-   V = (operand >> 6) & 1;
-   if (A >= 0) {
-      Z = (A & operand) == 0;
+   if (MS > 0) {
+      // 8-bit mode
+      N = (operand >> 7) & 1;
+      V = (operand >> 6) & 1;
+   } else if (MS == 0) {
+      // 16-bit mode
+      N = (operand >> 15) & 1;
+      V = (operand >> 14) & 1;
    } else {
+      // mode undefined
+      N = -1; // could be less pessimistic
+      V = -1; // could be less pessimistic
+   }
+   if (operand == 0) {
+      // This makes the remainder less pessimistic
+      Z = 1;
+   } else  if (MS > 0) {
+      // 8-bit mode
+      Z = (A & operand) == 0;
+   } else if (MS == 0 && A >= 0 && B >= 0) {
+      // 16-bit mode
+      Z = (((B << 8) + A) & operand) == 0;
+   } else {
+      // mode undefined
       Z = -1;
    }
    return -1;
