@@ -244,6 +244,7 @@ static void memory_read(int data, int ea) {
 static void memory_write(int data, int ea) {
    if (ea >= 0) {
       // Data can be negarive, which means the memory becomes undefined again
+      //printf("memory write: %06x = %02x\n", ea, data);
       memory[ea] = data;
    }
    if (bbctube && ea >= 0xfee0 && ea <= 0xfee7) {
@@ -936,13 +937,27 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
 
    if (instr->emulate) {
       // Model memory reads
-      if (instr->optype == READOP || instr->optype == RMWOP || instr->optype == TSBTRBOP) {
+      if (ea >= 0 && (instr->optype == READOP || instr->optype == RMWOP || instr->optype == TSBTRBOP)) {
          memory_read(operand, ea);
       }
       int result = instr->emulate(operand, ea);
       // Model memory writes
-      if (instr->optype == WRITEOP || instr->optype == RMWOP || instr->optype == TSBTRBOP) {
-         memory_write(result, ea);
+      if (ea >= 0 && (instr->optype == WRITEOP || instr->optype == RMWOP || instr->optype == TSBTRBOP)) {
+         // STA STX STY STZ
+         // INC DEX ASL LSR ROL ROR
+         // TSB TRB
+         // (if A is unknown, then TSB/TRB are uiknown)
+         // (if C is unlnown, then ROL/ROR are unknown)
+         // These cases could be eliminated if we snoopedthe result of Read-Modify-Weith
+         int reslo = result < 0 ? -1 : (result & 0xff);
+         int reshi = result < 0 ? -1 : ((result >> 8) & 0xff);
+         int size = instr->x_extra ? XS : instr->x_extra ? MS : 1;
+         if (size == 0) {
+            memory_write(reslo,  ea);
+            memory_write(reshi, (ea + 1) & 0xffff);
+         } else if (size > 0) {
+            memory_write(reslo, ea);
+         }
       }
    }
 
@@ -2080,12 +2095,6 @@ static int op_SEI(operand_t operand, ea_t ea) {
 static int op_STA(operand_t operand, ea_t ea) {
    int oplo = operand & 0xff;
    int ophi = (operand >> 8) & 0xff;
-   if (MS == 0 && ea >= 0) {
-      memory_write(oplo,  ea              );
-      memory_write(ophi, (ea + 1) & 0xffff);
-   } else {
-      memory_write(oplo, ea);
-   }
    // Always write A
    if (A >= 0) {
       if (oplo != A) {
@@ -2104,7 +2113,7 @@ static int op_STA(operand_t operand, ea_t ea) {
       }
       B = ophi;
    }
-   return -1;
+   return operand;
 }
 
 static int op_STX(operand_t operand, ea_t ea) {
@@ -2323,7 +2332,7 @@ static InstrType instr_table_65c816[] = {
    /* 41 */   { "EOR",  0, INDX  , 6, 0, READOP,   op_EOR},
    /* 42 */   { "WDM",  0, IMM   , 2, 0, OTHER,    0},
    /* 43 */   { "EOR",  0, SR    , 4, 0, READOP,   op_EOR},
-   /* 44 */   { "MVP",  0, BM    , 7, 0, WRITEOP,  op_MVP},
+   /* 44 */   { "MVP",  0, BM    , 7, 0, OTHER,    op_MVP}, // TODO: Memory Modelling
    /* 45 */   { "EOR",  0, ZP    , 3, 0, READOP,   op_EOR},
    /* 46 */   { "LSR",  0, ZP    , 5, 0, RMWOP,    op_LSR},
    /* 47 */   { "EOR",  0, IDL   , 6, 0, READOP,   op_EOR},
@@ -2339,7 +2348,7 @@ static InstrType instr_table_65c816[] = {
    /* 51 */   { "EOR",  0, INDY  , 5, 0, READOP,   op_EOR},
    /* 52 */   { "EOR",  0, IND   , 5, 0, READOP,   op_EOR},
    /* 53 */   { "EOR",  0, ISY   , 7, 0, READOP,   op_EOR},
-   /* 54 */   { "MVN",  0, BM    , 7, 0, WRITEOP,  op_MVN},
+   /* 54 */   { "MVN",  0, BM    , 7, 0, OTHER,    op_MVN}, // TODO: Memory Modelling
    /* 55 */   { "EOR",  0, ZPX   , 4, 0, READOP,   op_EOR},
    /* 56 */   { "LSR",  0, ZPX   , 6, 0, RMWOP,    op_LSR},
    /* 57 */   { "EOR",  0, IDLY  , 6, 0, READOP,   op_EOR},
@@ -2353,7 +2362,7 @@ static InstrType instr_table_65c816[] = {
    /* 5F */   { "EOR",  0, ALX   , 5, 0, READOP,   op_EOR},
    /* 60 */   { "RTS",  0, IMP   , 6, 0, OTHER,    op_RTS},
    /* 61 */   { "ADC",  0, INDX  , 6, 1, READOP,   op_ADC},
-   /* 62 */   { "PER",  0, BRL   , 6, 0, WRITEOP,  op_PER},
+   /* 62 */   { "PER",  0, BRL   , 6, 0, OTHER,    op_PER},
    /* 63 */   { "ADC",  0, SR    , 4, 0, READOP,   op_ADC},
    /* 64 */   { "STZ",  0, ZP    , 3, 0, WRITEOP,  op_STZ},
    /* 65 */   { "ADC",  0, ZP    , 3, 1, READOP,   op_ADC},
@@ -2467,7 +2476,7 @@ static InstrType instr_table_65c816[] = {
    /* D1 */   { "CMP",  0, INDY  , 5, 0, READOP,   op_CMP},
    /* D2 */   { "CMP",  0, IND   , 5, 0, READOP,   op_CMP},
    /* D3 */   { "CMP",  0, ISY   , 7, 0, READOP,   op_CMP},
-   /* D4 */   { "PEI",  0, IND   , 6, 0, WRITEOP,  op_PEI},
+   /* D4 */   { "PEI",  0, IND   , 6, 0, OTHER,    op_PEI},
    /* D5 */   { "CMP",  0, ZPX   , 4, 0, READOP,   op_CMP},
    /* D6 */   { "DEC",  0, ZPX   , 6, 0, RMWOP,    op_DEC},
    /* D7 */   { "CMP" , 0, IDLY  , 6, 0, READOP,   op_CMP},
@@ -2499,7 +2508,7 @@ static InstrType instr_table_65c816[] = {
    /* F1 */   { "SBC",  0, INDY  , 5, 1, READOP,   op_SBC},
    /* F2 */   { "SBC",  0, IND   , 5, 1, READOP,   op_SBC},
    /* F3 */   { "SBC",  0, ISY   , 7, 0, READOP,   op_SBC},
-   /* F4 */   { "PEA",  0, ABS   , 5, 0, WRITEOP,  op_PEA},
+   /* F4 */   { "PEA",  0, ABS   , 5, 0, OTHER,    op_PEA},
    /* F5 */   { "SBC",  0, ZPX   , 4, 1, READOP,   op_SBC},
    /* F6 */   { "INC",  0, ZPX   , 6, 0, RMWOP,    op_INC},
    /* F7 */   { "SBC",  0, IDLY  , 6, 0, READOP,   op_SBC},
