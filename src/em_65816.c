@@ -816,7 +816,11 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // reliably with the FX2, so lets use the <dummy> instead.
       // E=0 - Dummy is a read of the same data (albeit with VPA/VDA=00)
       // E=1 - Dummy is a write of the same data
-      operand = sample_q[num_cycles - 2].data;
+      if (E == 1) {
+         operand = sample_q[num_cycles - 2].data;
+      } else {
+         operand = sample_q[num_cycles - 3].data;
+      }
    } else if (instr->optype == BRANCHOP) {
       // the operand is true if branch taken
       operand = (num_cycles != 2);
