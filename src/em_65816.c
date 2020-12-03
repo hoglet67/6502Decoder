@@ -385,6 +385,32 @@ static void set_NZ_MS(int value) {
    }
 }
 
+static void set_NZ_AB(int A, int B) {
+   if (MS > 0) {
+      // 8-bit
+      if (A >= 0) {
+         set_NZ8(A);
+      } else {
+         set_NZ_unknown();
+      }
+   } else if (MS == 0) {
+      // 16-bit
+      if (A >= 0 && B >= 0) {
+         set_NZ16((B << 8) + A);
+      } else {
+         // TODO: the behaviour when A is known and B is unknown could be improved
+         set_NZ_unknown();
+      }
+   } else {
+      // width unknown
+      if (A >= 0 && B >= 0) {
+         set_NZ_unknown_width((B << 8) + A);
+      } else {
+         set_NZ_unknown();
+      }
+   }
+}
+
 static void pop8(int value) {
    // Increment the low byte of SP
    if (SL >= 0) {
@@ -1535,13 +1561,20 @@ static int op_ADC(operand_t operand, ea_t ea) {
 }
 
 static int op_AND(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
+   // A is always updated, regardless of the size
    if (A >= 0) {
       A = A & operand;
-      set_NZ_MS(A);
-   } else {
-      set_NZ_unknown();
    }
+   // B is updated only of the size is 16
+   if (B >= 0) {
+      if (MS == 0) {
+         B = B & (operand >> 8);
+      } else if (MS < 0) {
+         B = -1;
+      }
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
@@ -1790,13 +1823,20 @@ static int op_DEY(operand_t operand, ea_t ea) {
 }
 
 static int op_EOR(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
+   // A is always updated, regardless of the size
    if (A >= 0) {
       A = A ^ operand;
-      set_NZ_MS(A);
-   } else {
-      set_NZ_unknown();
    }
+   // B is updated only of the size is 16
+   if (B >= 0) {
+      if (MS == 0) {
+         B = B ^ (operand >> 8);
+      } else if (MS < 0) {
+         B = -1;
+      }
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
@@ -1908,12 +1948,20 @@ static int op_LSR(operand_t operand, ea_t ea) {
 }
 
 static int op_ORA(operand_t operand, ea_t ea) {
+   // A is always updated, regardless of the size
    if (A >= 0) {
       A = A | operand;
-      set_NZ_MS(A);
-   } else {
-      set_NZ_unknown();
    }
+   // B is updated only of the size is 16
+   if (B >= 0) {
+      if (MS == 0) {
+         B = B | (operand >> 8);
+      } else if (MS < 0) {
+         B = -1;
+      }
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
