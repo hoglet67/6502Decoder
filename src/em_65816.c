@@ -1683,20 +1683,40 @@ static void op_DEC(operand_t operand, ea_t ea) {
 }
 
 static void op_DEX(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
    if (X >= 0) {
-      X = (X - 1) & 255;
-      set_NZ_XS(X);
+      if (XS > 0) {
+         // 8-bit mode
+         X = (X - 1) & 0xff;
+         set_NZ8(X);
+      } else if (XS == 0) {
+         // 16-bit mode
+         X = (X - 1) & 0xffff;
+         set_NZ16(X);
+      } else {
+         // mode undefined
+         X = -1;
+         set_NZ_unknown();
+      }
    } else {
       set_NZ_unknown();
    }
 }
 
 static void op_DEY(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
    if (Y >= 0) {
-      Y = (Y - 1) & 255;
-      set_NZ_XS(Y);
+      if (XS > 0) {
+         // 8-bit mode
+         Y = (Y - 1) & 0xff;
+         set_NZ8(Y);
+      } else if (XS == 0) {
+         // 16-bit mode
+         Y = (Y - 1) & 0xffff;
+         set_NZ16(Y);
+      } else {
+         // mode undefined
+         Y = -1;
+         set_NZ_unknown();
+      }
    } else {
       set_NZ_unknown();
    }
@@ -1732,20 +1752,40 @@ static void op_INC(operand_t operand, ea_t ea) {
 }
 
 static void op_INX(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
    if (X >= 0) {
-      X = (X + 1) & 255;
-      set_NZ_XS(X);
+      if (XS > 0) {
+         // 8-bit mode
+         X = (X + 1) & 0xff;
+         set_NZ8(X);
+      } else if (XS == 0) {
+         // 16-bit mode
+         X = (X + 1) & 0xffff;
+         set_NZ16(X);
+      } else {
+         // mode undefined
+         X = -1;
+         set_NZ_unknown();
+      }
    } else {
       set_NZ_unknown();
    }
 }
 
 static void op_INY(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
    if (Y >= 0) {
-      Y = (Y + 1) & 255;
-      set_NZ_XS(Y);
+      if (XS > 0) {
+         // 8-bit mode
+         Y = (Y + 1) & 0xff;
+         set_NZ8(Y);
+      } else if (XS == 0) {
+         // 16-bit mode
+         Y = (Y + 1) & 0xffff;
+         set_NZ16(Y);
+      } else {
+         // mode undefined
+         Y = -1;
+         set_NZ_unknown();
+      }
    } else {
       set_NZ_unknown();
    }
