@@ -936,11 +936,25 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    }
 
    if (instr->emulate) {
+
+      // Determine memory access size
+      int size = instr->x_extra ? XS : instr->x_extra ? MS : 1;
+
       // Model memory reads
       if (ea >= 0 && (instr->optype == READOP || instr->optype == RMWOP || instr->optype == TSBTRBOP)) {
-         memory_read(operand, ea);
+         int oplo = operand < 0 ? -1 : (operand & 0xff);
+         int ophi = operand < 0 ? -1 : ((operand >> 8) & 0xff);
+         if (size == 0) {
+            memory_read(oplo,  ea);
+            memory_read(ophi, (ea + 1) & 0xffff);
+         } else if (size > 0) {
+            memory_read(oplo, ea);
+         }
       }
+
+      // Execute the instruction specific function
       int result = instr->emulate(operand, ea);
+
       // Model memory writes
       if (ea >= 0 && (instr->optype == WRITEOP || instr->optype == RMWOP || instr->optype == TSBTRBOP)) {
          // STA STX STY STZ
@@ -951,7 +965,6 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          // These cases could be eliminated if we snoopedthe result of Read-Modify-Weith
          int reslo = result < 0 ? -1 : (result & 0xff);
          int reshi = result < 0 ? -1 : ((result >> 8) & 0xff);
-         int size = instr->x_extra ? XS : instr->x_extra ? MS : 1;
          if (size == 0) {
             memory_write(reslo,  ea);
             memory_write(reshi, (ea + 1) & 0xffff);
