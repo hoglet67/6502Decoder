@@ -35,6 +35,7 @@ declare -A test_options
 # Tests to run in emulation mode
 test_options[romcopy_hipoke_17]="--emul=1"
 test_options[reset]="--emul=1"
+test_options[test]="--emul=1"
 test_options[hog816_emu]="--emul=1"
 
 # Tests to run in native mode
@@ -52,13 +53,7 @@ do
 
     log=${data%.data}.log
     ref=${data%.data}.ref
-
-    # If the --ref option is given, then save the current log file as a reference
-    if [ "${REF}" == "1" ]; then
-        if [ -f ${log} ]; then
-            mv ${log} ${ref}
-        fi
-    fi
+    dif=${data%.data}.dif
 
     echo "${DECODE} ${common_options} ${test_options[${name}]} ${data} > ${log}"
     ${DECODE}       ${common_options} ${test_options[${name}]} ${data} > ${log}
@@ -68,17 +63,20 @@ do
     size=$(stat ${STATARGS} "${log}")
 
 
-    if [ -f ${ref} ]; then
-        diff_count=`diff ${ref} ${log} | wc -l`
+    diff_count="-1"
+
+    # If the --ref option is given, then save the current log file as a reference
+    if [ "${REF}" == "1" ]; then
+        mv ${log} ${ref}
     else
-        diff_count="-1"
+        if [ -f ${ref} ]; then
+            diff ${ref} ${log} | head -10000 > ${dif}
+            diff_count=`wc -l <${dif}`
+        fi
     fi
 
     echo "  Trace MD5: ${md5}; Prediction fail count: ${fail_count}; Reference diff count: ${diff_count}"
 
-    if [ -f ${ref} ]; then
-        diff ${ref} ${log}
-    fi
 
     echo
 
