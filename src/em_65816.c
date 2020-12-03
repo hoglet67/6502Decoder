@@ -2436,7 +2436,7 @@ static InstrType instr_table_65c816[] = {
    /* F9 */   { "SBC",  0, ABSY  , 4, 1, READOP,   op_SBC},
    /* FA */   { "PLX",  0, IMP   , 4, 0, READOP,   op_PLX},
    /* FB */   { "XCE",  0, IMP   , 2, 0, READOP,   op_XCE},
-   /* FC */   { "JSR",  0, IND1X , 8, 0, READOP,   0},
+   /* FC */   { "JSR",  0, IND1X , 8, 0, READOP,   op_JSR},
    /* FD */   { "SBC",  0, ABSX  , 4, 1, READOP,   op_SBC},
    /* FE */   { "INC",  0, ABSX  , 7, 0, RMWOP,    op_INC},
    /* FF */   { "SBC",  0, ALX   , 5, 0, READOP,   op_SBC}
