@@ -1591,9 +1591,19 @@ static int op_ASLA(operand_t operand, ea_t ea) {
 }
 
 static int op_ASL(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   C = (operand >> 7) & 1;
-   int tmp = (operand << 1) & 255;
+   // In 8-bit mode the uppwe byte is ignored by the memory write code
+   int tmp = (operand << 1) & 0xffff;
+   if (MS > 0) {
+      // 8-bit mode
+      C = (operand >> 7) & 1;
+      tmp = (operand << 1) & 0xff;
+   } else if (MS == 0) {
+      // 16-bit mode
+      C = (operand >> 15) & 1;
+   } else {
+      // mode unknown
+      C = -1;
+   }
    set_NZ_MS(tmp);
    return tmp;
 }
@@ -1958,7 +1968,7 @@ static int op_LSRA(operand_t operand, ea_t ea) {
 }
 
 static int op_LSR(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
+   // In 8-bit mode the uppwe byte is ignored by the memory write code
    C = operand & 1;
    int tmp = operand >> 1;
    set_NZ_MS(tmp);
