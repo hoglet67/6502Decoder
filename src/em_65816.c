@@ -1708,7 +1708,6 @@ static int op_CMP(operand_t operand, ea_t ea) {
 }
 
 static int op_CPX(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
    if (X >= 0) {
       int tmp = X - operand;
       C = tmp >= 0;
@@ -1720,7 +1719,6 @@ static int op_CPX(operand_t operand, ea_t ea) {
 }
 
 static int op_CPY(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
    if (Y >= 0) {
       int tmp = Y - operand;
       C = tmp >= 0;
@@ -1869,7 +1867,6 @@ static int op_JSR(operand_t operand, ea_t ea) {
 }
 
 static int op_LDA(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
    A = operand;
    if (!MS) {
       B = (operand >> 8) & 0xff;
@@ -1879,14 +1876,12 @@ static int op_LDA(operand_t operand, ea_t ea) {
 }
 
 static int op_LDX(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
    X = operand;
    set_NZ_XS(X);
    return -1;
 }
 
 static int op_LDY(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
    Y = operand;
    set_NZ_XS(Y);
    return -1;
@@ -2130,7 +2125,6 @@ static int op_STA(operand_t operand, ea_t ea) {
 }
 
 static int op_STX(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
    if (X >= 0) {
       if (operand != X) {
          failflag = 1;
@@ -2141,7 +2135,6 @@ static int op_STX(operand_t operand, ea_t ea) {
 }
 
 static int op_STY(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
    if (Y >= 0) {
       if (operand != Y) {
          failflag = 1;
@@ -2152,11 +2145,10 @@ static int op_STY(operand_t operand, ea_t ea) {
 }
 
 static int op_STZ(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
    if (operand != 0) {
       failflag = 1;
    }
-   return 0;
+   return operand;
 }
 
 static int op_TSB(operand_t operand, ea_t ea) {
