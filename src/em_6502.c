@@ -32,7 +32,6 @@ typedef enum {
    READOP,
    WRITEOP,
    RMWOP,
-   TSBTRBOP,
    BRANCHOP
 } OpType;
 
@@ -614,9 +613,10 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
 
       int operand;
       if (instr->optype == RMWOP) {
-         // e.g. <opcode> <op1> <op2> <read> <write> <write>
+         // e.g. <opcode> <op1> <op2> <read old> <write old> <write new>
+         //      <opcode> <op1>       <read old> <write old> <write new>
          // Want to pick off the read
-         operand = sample_q[3].data;
+         operand = sample_q[num_cycles - 3].data;
       } else if (instr->optype == BRANCHOP) {
          // the operand is true if branch taken
          operand = (num_cycles != 2);
@@ -642,9 +642,6 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
       } else if (instr->decimalcorrect && (D == 1)) {
          // read operations on the C02 that have an extra cycle added
          operand = sample_q[num_cycles - 2].data;
-      } else if (instr->optype == TSBTRBOP) {
-         // For TSB/TRB, <opcode> <op1> <read> <dummy> <write> the operand is the <read>
-         operand = sample_q[num_cycles - 3].data;
       } else {
          // default to using the last bus cycle as the operand
          operand = sample_q[num_cycles - 1].data;
@@ -1598,7 +1595,7 @@ static InstrType instr_table_65c02[] = {
    /* 01 */   { "ORA",  0, INDX  , 6, 0, READOP,   op_ORA},
    /* 02 */   { "NOP",  0, IMM   , 2, 0, READOP,   0},
    /* 03 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 04 */   { "TSB",  0, ZP    , 5, 0, TSBTRBOP, op_TSB},
+   /* 04 */   { "TSB",  0, ZP    , 5, 0, RMWOP,    op_TSB},
    /* 05 */   { "ORA",  0, ZP    , 3, 0, READOP,   op_ORA},
    /* 06 */   { "ASL",  0, ZP    , 5, 0, RMWOP,    op_ASL},
    /* 07 */   { "RMB0", 0, ZP    , 5, 0, READOP,   op_RMB},
@@ -1606,7 +1603,7 @@ static InstrType instr_table_65c02[] = {
    /* 09 */   { "ORA",  0, IMM   , 2, 0, READOP,   op_ORA},
    /* 0A */   { "ASL",  0, IMPA  , 2, 0, READOP,   op_ASLA},
    /* 0B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 0C */   { "TSB",  0, ABS   , 6, 0, TSBTRBOP, op_TSB},
+   /* 0C */   { "TSB",  0, ABS   , 6, 0, RMWOP,    op_TSB},
    /* 0D */   { "ORA",  0, ABS   , 4, 0, READOP,   op_ORA},
    /* 0E */   { "ASL",  0, ABS   , 6, 0, RMWOP,    op_ASL},
    /* 0F */   { "BBR0", 0, ZPR   , 5, 0, READOP,   0},
@@ -1614,7 +1611,7 @@ static InstrType instr_table_65c02[] = {
    /* 11 */   { "ORA",  0, INDY  , 5, 0, READOP,   op_ORA},
    /* 12 */   { "ORA",  0, IND   , 5, 0, READOP,   op_ORA},
    /* 13 */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 14 */   { "TRB",  0, ZP    , 5, 0, TSBTRBOP, op_TRB},
+   /* 14 */   { "TRB",  0, ZP    , 5, 0, RMWOP,    op_TRB},
    /* 15 */   { "ORA",  0, ZPX   , 4, 0, READOP,   op_ORA},
    /* 16 */   { "ASL",  0, ZPX   , 6, 0, RMWOP,    op_ASL},
    /* 17 */   { "RMB1", 0, ZP    , 5, 0, READOP,   op_RMB},
@@ -1622,7 +1619,7 @@ static InstrType instr_table_65c02[] = {
    /* 19 */   { "ORA",  0, ABSY  , 4, 0, READOP,   op_ORA},
    /* 1A */   { "INC",  0, IMPA  , 2, 0, READOP,   op_INCA},
    /* 1B */   { "NOP",  0, IMP   , 1, 0, READOP,   0},
-   /* 1C */   { "TRB",  0, ABS   , 6, 0, TSBTRBOP, op_TRB},
+   /* 1C */   { "TRB",  0, ABS   , 6, 0, RMWOP,    op_TRB},
    /* 1D */   { "ORA",  0, ABSX  , 4, 0, READOP,   op_ORA},
    /* 1E */   { "ASL",  0, ABSX  , 6, 0, RMWOP,    op_ASL},
    /* 1F */   { "BBR1", 0, ZPR   , 5, 0, READOP,   0},
