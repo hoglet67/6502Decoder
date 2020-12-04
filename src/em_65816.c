@@ -41,7 +41,6 @@ typedef enum {
    READOP,
    WRITEOP,
    RMWOP,
-   TSBTRBOP,
    BRANCHOP,
    OTHER
 } OpType;
@@ -877,10 +876,6 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    } else if (instr->mode == IMM) {
       // Immediate addressing mode: the operand is the 2nd byte of the instruction
       operand = (op2 << 8) + op1;
-   } else if (instr->optype == TSBTRBOP) {
-      // For TSB/TRB, <opcode> <op1> <read> <dummy> <write> the operand is the <read>
-      // TODO: handle 16-bits
-      operand = sample_q[num_cycles - 3].data;
    } else {
       // default to using the last bus cycle(s) as the operand
       // special case PHD (0B) / PLD (2B) as these are always 16-bit
@@ -965,7 +960,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       int size = instr->x_extra ? XS : instr->x_extra ? MS : 1;
 
       // Model memory reads
-      if (ea >= 0 && (instr->optype == READOP || instr->optype == RMWOP || instr->optype == TSBTRBOP)) {
+      if (ea >= 0 && (instr->optype == READOP || instr->optype == RMWOP)) {
          int oplo = operand < 0 ? -1 : (operand & 0xff);
          int ophi = operand < 0 ? -1 : ((operand >> 8) & 0xff);
          if (size == 0) {
@@ -980,7 +975,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       int result = instr->emulate(operand, ea);
 
       // Model memory writes
-      if (ea >= 0 && (instr->optype == WRITEOP || instr->optype == RMWOP || instr->optype == TSBTRBOP)) {
+      if (ea >= 0 && (instr->optype == WRITEOP || instr->optype == RMWOP)) {
          // STA STX STY STZ
          // INC DEX ASL LSR ROL ROR
          // TSB TRB
@@ -2347,7 +2342,7 @@ static InstrType instr_table_65c816[] = {
    /* 01 */   { "ORA",  0, INDX  , 6, READOP,   op_ORA},
    /* 02 */   { "COP",  0, IMM   , 7, OTHER,    0},
    /* 03 */   { "ORA",  0, SR    , 4, READOP,   op_ORA},
-   /* 04 */   { "TSB",  0, ZP    , 5, TSBTRBOP, op_TSB},
+   /* 04 */   { "TSB",  0, ZP    , 5, RMWOP,    op_TSB},
    /* 05 */   { "ORA",  0, ZP    , 3, READOP,   op_ORA},
    /* 06 */   { "ASL",  0, ZP    , 5, RMWOP,    op_ASL},
    /* 07 */   { "ORA",  0, IDL   , 6, READOP,   op_ORA},
@@ -2355,7 +2350,7 @@ static InstrType instr_table_65c816[] = {
    /* 09 */   { "ORA",  0, IMM   , 2, OTHER,    op_ORA},
    /* 0A */   { "ASL",  0, IMPA  , 2, OTHER,    op_ASLA},
    /* 0B */   { "PHD",  0, IMP   , 4, OTHER,    op_PHD},
-   /* 0C */   { "TSB",  0, ABS   , 6, TSBTRBOP, op_TSB},
+   /* 0C */   { "TSB",  0, ABS   , 6, RMWOP,    op_TSB},
    /* 0D */   { "ORA",  0, ABS   , 4, READOP,   op_ORA},
    /* 0E */   { "ASL",  0, ABS   , 6, RMWOP,    op_ASL},
    /* 0F */   { "ORA",  0, ABL   , 5, READOP,   op_ORA},
@@ -2363,7 +2358,7 @@ static InstrType instr_table_65c816[] = {
    /* 11 */   { "ORA",  0, INDY  , 5, READOP,   op_ORA},
    /* 12 */   { "ORA",  0, IND   , 5, READOP,   op_ORA},
    /* 13 */   { "ORA",  0, ISY   , 7, READOP,   op_ORA},
-   /* 14 */   { "TRB",  0, ZP    , 5, TSBTRBOP, op_TRB},
+   /* 14 */   { "TRB",  0, ZP    , 5, RMWOP,    op_TRB},
    /* 15 */   { "ORA",  0, ZPX   , 4, READOP,   op_ORA},
    /* 16 */   { "ASL",  0, ZPX   , 6, RMWOP,    op_ASL},
    /* 17 */   { "ORA",  0, IDLY  , 6, READOP,   op_ORA},
@@ -2371,7 +2366,7 @@ static InstrType instr_table_65c816[] = {
    /* 19 */   { "ORA",  0, ABSY  , 4, READOP,   op_ORA},
    /* 1A */   { "INC",  0, IMPA  , 2, OTHER,    op_INCA},
    /* 1B */   { "TCS",  0, IMP   , 2, OTHER,    op_TCS},
-   /* 1C */   { "TRB",  0, ABS   , 6, TSBTRBOP, op_TRB},
+   /* 1C */   { "TRB",  0, ABS   , 6, RMWOP,    op_TRB},
    /* 1D */   { "ORA",  0, ABSX  , 4, READOP,   op_ORA},
    /* 1E */   { "ASL",  0, ABSX  , 7, RMWOP,    op_ASL},
    /* 1F */   { "ORA",  0, ALX   , 5, READOP,   op_ORA},
