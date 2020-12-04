@@ -224,13 +224,15 @@ static int op_STY(operand_t operand, ea_t ea);
 // Helper Methods
 // ====================================================================
 
+// Don't model 8000-FFFF as it's ROM or I/O on the Beeb
+
 static void memory_read(int data, int ea) {
    if (ea < 0x8000 || ea >= 0x10000) {
+      printf("memory read: %06x = %02x\n", ea, data);
       if (memory[ea] >=0 && memory[ea] != data) {
-         printf("memory modelling failed at %04x: expected %02x, actual %02x\n", ea, memory[ea], data);
+         printf("memory modelling failed at %06x: expected %02x, actual %02x\n", ea, memory[ea], data);
          failflag |= 1;
       }
-      printf("memory read: %06x = %02x\n", ea, data);
       memory[ea] = data;
    }
    if (bbctube && ea >= 0xfee0 && ea <= 0xfee7) {
@@ -239,8 +241,8 @@ static void memory_read(int data, int ea) {
 }
 
 static void memory_write(int data, int ea) {
-   if (ea >= 0) {
-      // Data can be negarive, which means the memory becomes undefined again
+   if (ea < 0x8000 || ea >= 0x10000) {
+      // Data can be negative, which means the memory becomes undefined again
       printf("memory write: %06x = %02x\n", ea, data);
       memory[ea] = data;
    }
@@ -988,7 +990,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // <opcpde> <op1> <addrlo> <addrhi> <bank> [ <page crossing>] <<operand>
       index = Y;
       if (index >= 0) {
-         ea = (sample_q[3].data << 16) + (sample_q[3].data << 8) + sample_q[2].data;
+         ea = (sample_q[4].data << 16) + (sample_q[3].data << 8) + sample_q[2].data;
          ea = (ea + index) & 0xffffff;
       }
       break;
