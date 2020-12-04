@@ -139,9 +139,9 @@ static int PC = -1;
 
 // 65C816 additional registers: -1 means unknown
 static int B  = -1; // Accumulator bits 15..8
-static int DP = -1; // 16-bit Direct Page Register
-static int DB = -1; // 8-bit Data Bank Register
-static int PB = -1; // 8-bit Program Bank Register
+static int DP =  0; // 16-bit Direct Page Register (default to zero, otherwise ZP addressing is broken)
+static int DB =  0; // 8-bit Data Bank Register
+static int PB =  0; // 8-bit Program Bank Register
 
 // 6502 flags: -1 means unknown
 static int N = -1;
@@ -797,7 +797,8 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
 
    int op1 = (opcount < 1) ? 0 : sample_q[1].data;
 
-   int op2 = (opcount < 2) ? 0 : sample_q[2].data;
+   // Special case JSR (IND16, X)
+   int op2 = (opcount < 2) ? 0 : (opcode == 0xFC) ? sample_q[4].data : sample_q[2].data;
 
    int op3 = (opcount < 3) ? 0 : sample_q[(opcode == 0x22) ? 5 : 3].data;
 
@@ -876,10 +877,10 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       operand = (op2 << 8) + op1;
    } else {
       // default to using the last bus cycle(s) as the operand
-      // special case PHD (0B) / PLD (2B) as these are always 16-bit
-      if ((instr->m_extra && (MS == 0)) || (instr->x_extra && (XS == 0)) || opcode == 0x0B || opcode == 0x2B)  {
+      // special case PHD (0B) / PLD (2B) / PEI (D4) as these are always 16-bit
+      if ((instr->m_extra && (MS == 0)) || (instr->x_extra && (XS == 0)) || opcode == 0x0B || opcode == 0x2B || opcode == 0xD4)  {
          // 16-bit operation
-         if (opcode == 0x48 || opcode == 0x5A || opcode == 0xDA || opcode == 0x0B) {
+         if (opcode == 0x48 || opcode == 0x5A || opcode == 0xDA || opcode == 0x0B || opcode == 0xD4) {
             // PHA/PHX/PHY/PHD push high byte followed by low byte
             operand = sample_q[num_cycles - 1].data + (sample_q[num_cycles - 2].data << 8);
          } else {
@@ -900,17 +901,24 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    // TODO: need to use the direct page and data bank registers
    // TODO: need to rename ZP to DP
 
+   // TODO: DP page wrapping should only happen in Emulation Mode, and only for old instructions
+   int wrap = E && !(DP & 0xFF);
+
    int ea = -1;
    int index;
    switch (instr->mode) {
    case ZP:
-      ea = op1;
+      ea = (DP + op1);
       break;
    case ZPX:
    case ZPY:
       index = instr->mode == ZPX ? X : Y;
       if (index >= 0) {
-         ea = (op1 + index) & 0xff;
+         if (wrap) {
+            ea = (DP & 0xFF00) + ((op1 + index) & 0xff);
+         } else {
+            ea = DP + op1 + index;
+         }
       }
       break;
    case INDY:
@@ -918,25 +926,29 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       index = Y;
       if (index >= 0) {
          ea = (sample_q[3].data << 8) + sample_q[2].data;
-         ea = (ea + index) & 0xffff;
+         ea = (DB << 16) + ((ea + index) & 0xffff);
       }
       break;
    case INDX:
       // <opcpde> <op1> <dummy> <addrlo> <addrhi> <operand>
-      ea = (sample_q[4].data << 8) + sample_q[3].data;
+      ea = (DB << 16) + (sample_q[4].data << 8) + sample_q[3].data;
       break;
    case IND:
       // <opcpde> <op1> <addrlo> <addrhi> <operand>
-      ea = (sample_q[3].data << 8) + sample_q[2].data;
+      ea = (DB << 16) + (sample_q[3].data << 8) + sample_q[2].data;
       break;
    case ABS:
-      ea = (op2 << 8) | op1;
+      if (opcode == 0x20 || opcode == 0x4c) {
+         ea = (PB << 16) + (op2 << 8) + op1;
+      } else {
+         ea = (DB << 16) + (op2 << 8) + op1;
+      }
       break;
    case ABSX:
    case ABSY:
       index = instr->mode == ABSX ? X : Y;
       if (index >= 0) {
-         ea = ((op2 << 8 | op1) + index) & 0xffff;
+         ea = (DB << 16) + (((op2 << 8 | op1) + index) & 0xffff);
       }
       break;
    case BRA:
@@ -988,7 +1000,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    case IAL:
       // e.g. JMP [$1234] (this is the only one)
       // <opcode> <op1> <op2> <addrlo> <addrhi> <bank>
-      ea = (sample_q[5].data << 16) + (sample_q[8].data << 8) + sample_q[3].data;
+      ea = (sample_q[5].data << 16) + (sample_q[4].data << 8) + sample_q[3].data;
       break;
    case BRL:
       // e.g. PER 1234 or BRL 1234
@@ -1048,12 +1060,12 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       if (E == 0) {
          PB = sample_q[6].data;
       }
-   } else if (opcode == 0x6c || opcode == 0x7c) {
-      // JMP (ind), JMP (ind, X)
+   } else if (opcode == 0x6c || opcode == 0x7c || opcode == 0xfc ) {
+      // JMP (ind), JMP (ind, X), JSR (ind, X)
       PC = (sample_q[num_cycles - 1].data << 8) | sample_q[num_cycles - 2].data;
    } else if (opcode == 0x20 || opcode == 0x4c) {
       // JSR abs, JMP abs
-      PC = ea;
+      PC = ea & 0xffff;
    } else if (opcode == 0x22 || opcode == 0x5c || opcode == 0xdc) {
       // JSL long, JML long
       PB = (ea >> 16) & 0xff;
