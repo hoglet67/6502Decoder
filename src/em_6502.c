@@ -72,7 +72,7 @@ typedef struct {
 
 static const char default_state[] = "A=?? X=?? Y=?? SP=?? N=? V=? D=? I=? Z=? C=?";
 
-static cpu_t cpu_type;
+static int rockwell;
 static int c02;
 static int bbctube;
 static int master_nordy;
@@ -315,7 +315,7 @@ static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
    // 6          (<page crossed penalty>)
    //
 
-   if (cpu_type == CPU_65C02_ROCKWELL && (opcode & 0x0f) == 0x0f) {
+   if (rockwell && (opcode & 0x0f) == 0x0f) {
       int operand = sample_q[2].data;
       // invert operand for BBR
       if (opcode <= 0x80) {
@@ -465,9 +465,12 @@ static void em_6502_init(cpu_t cpu_type, int undocumented, int decode_bbctube, i
    case CPU_6502:
       instr_table = instr_table_6502;
       c02 = 0;
+      rockwell = 0;
       break;
-   case CPU_65C02:
    case CPU_65C02_ROCKWELL:
+      rockwell = 1;
+      // fall through to
+   case CPU_65C02:
       c02 = 1;
       instr_table = instr_table_65c02;
       break;
@@ -718,7 +721,7 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
       // BRA
       PC += ((int8_t)(op1)) + 2;
       PC &= 0xffff;
-   } else if (cpu_type == CPU_65C02_ROCKWELL && ((opcode & 0x0f) == 0x0f) && (num_cycles != 5)) {
+   } else if (rockwell && ((opcode & 0x0f) == 0x0f) && (num_cycles != 5)) {
       // BBR/BBS: op2 if taken
       PC += ((int8_t)(op2)) + 3;
       PC &= 0xffff;
