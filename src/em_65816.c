@@ -894,6 +894,12 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
 
    // For instructions that read or write memory, we need to work out the effective address
    // Note: not needed for stack operations, as S is used directly
+
+   // TODO: need to account for optional extra cycle for direct register low (DL) not equal 0.
+   // TODO: could do additional memory modelling of pointer accesses
+   // TODO: need to use the direct page and data bank registers
+   // TODO: need to rename ZP to DP
+
    int ea = -1;
    int index;
    switch (instr->mode) {
@@ -908,7 +914,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       }
       break;
    case INDY:
-      // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
+      // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand>
       index = Y;
       if (index >= 0) {
          ea = (sample_q[3].data << 8) + sample_q[2].data;
@@ -916,15 +922,15 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       }
       break;
    case INDX:
-      // <opcpde> <op1> <dummy> <addrlo> <addrhi> <operand> [ <extra cycle in dec mode> ]
+      // <opcpde> <op1> <dummy> <addrlo> <addrhi> <operand>
       ea = (sample_q[4].data << 8) + sample_q[3].data;
       break;
    case IND:
-      // <opcpde> <op1> <addrlo> <addrhi> <operand> [ <extra cycle in dec mode> ]
+      // <opcpde> <op1> <addrlo> <addrhi> <operand>
       ea = (sample_q[3].data << 8) + sample_q[2].data;
       break;
    case ABS:
-      ea = op2 << 8 | op1;
+      ea = (op2 << 8) | op1;
       break;
    case ABSX:
    case ABSY:
@@ -938,17 +944,60 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          ea = (PC + ((int8_t)(op1)) + 2) & 0xffff;
       }
       break;
-   case BRL:
-      if (PC > 0) {
-         ea = (PC + ((int16_t)((op2 << 8) + op1)) + 3) & 0xffff;
-      }
-      break;
+
+
    case SR:
+      // e.g. LDA 08,S
       if (SL >= 0 && SH >= 0) {
          ea = ((SH << 8) + SL + op1) & 0xffff;
       }
       break;
+   case ISY:
+      // e.g. LDA (08, S),Y
+      // <opcode> <op1> <internal> <addrlo> <addrhi> <internal> <operand>
+      index = Y;
+      if (index >= 0 && DB >= 0) {
+         ea = (DB << 16) + (sample_q[4].data << 8) + sample_q[3].data;
+         ea = (ea + index) & 0xffffff;
+      }
+      break;
+   case IDL:
+      // e.g. LDA [80]
+      // <opcpde> <op1> <addrlo> <addrhi> <bank> <operand>
+      ea = (sample_q[3].data << 16) + (sample_q[3].data << 8) + sample_q[2].data;
+      break;
+   case IDLY:
+      // e.g. LDA [80],Y
+      // <opcpde> <op1> <addrlo> <addrhi> <bank> [ <page crossing>] <<operand>
+      index = Y;
+      if (index >= 0) {
+         ea = (sample_q[3].data << 16) + (sample_q[3].data << 8) + sample_q[2].data;
+         ea = (ea + index) & 0xffffff;
+      }
+      break;
+   case ABL:
+      // e.g. LDA EE0080
+      ea = (op3 << 16) + (op2 << 8) + op1;
+      break;
+   case ALX:
+      // e.g. LDA EE0080,X
+      if (X >= 0) {
+         ea = ((op3 << 16) + (op2 << 8) + op1 + X) & 0xffffff;
+      }
+      break;
+   case IAL:
+      // e.g. JMP [$1234] (this is the only one)
+      // <opcode> <op1> <op2> <addrlo> <addrhi> <bank>
+      ea = (sample_q[5].data << 16) + (sample_q[8].data << 8) + sample_q[3].data;
+      break;
+   case BRL:
+      // e.g. PER 1234 or BRL 1234
+      if (PC > 0) {
+         ea = (PC + ((int16_t)((op2 << 8) + op1)) + 3) & 0xffff;
+      }
+      break;
    default:
+      // covers IMM, IMP, IMPA, IND16, IND1X, BM
       break;
    }
 
@@ -1004,11 +1053,11 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       PC = (sample_q[num_cycles - 1].data << 8) | sample_q[num_cycles - 2].data;
    } else if (opcode == 0x20 || opcode == 0x4c) {
       // JSR abs, JMP abs
-      PC = (op2 << 8) | op1;
-   } else if (opcode == 0x22 || opcode == 0x5c) {
-      // JSL long, JMP long
-      PB = op3;
-      PC = (op2 << 8) | op1;
+      PC = ea;
+   } else if (opcode == 0x22 || opcode == 0x5c || opcode == 0xdc) {
+      // JSL long, JML long
+      PB = (ea >> 16) & 0xff;
+      PC = (ea & 0xffff);
    } else if (PC < 0) {
       // PC value is not known yet, everything below this point is relative
       PC = -1;
@@ -1283,9 +1332,9 @@ static int op_PLD(operand_t operand, ea_t ea) {
    return -1;
 }
 
-
 // Block Move (Decrementing)
 static int op_MVP(operand_t operand, ea_t ea) {
+   // TODO: Add memory modelling
    if (A >= 0 && B >= 0) {
       int C = (((B << 8) | A) - 1) & 0xffff;
       A = C & 0xff;
@@ -2542,7 +2591,7 @@ static InstrType instr_table_65c816[] = {
    /* D9 */   { "CMP",  0, ABSY  , 4, READOP,   op_CMP},
    /* DA */   { "PHX",  0, IMP   , 3, OTHER,    op_PHX},
    /* DB */   { "STP",  0, IMP   , 1, OTHER,    0},        // WD65C02=3
-   /* DC */   { "JMP",  0, IAL   , 6, OTHER,    0},
+   /* DC */   { "JML",  0, IAL   , 6, OTHER,    0},
    /* DD */   { "CMP",  0, ABSX  , 4, READOP,   op_CMP},
    /* DE */   { "DEC",  0, ABSX  , 7, RMWOP,    op_DEC},
    /* DF */   { "CMP",  0, ALX   , 5, READOP,   op_CMP},
