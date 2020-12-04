@@ -983,7 +983,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    case IDL:
       // e.g. LDA [80]
       // <opcpde> <op1> <addrlo> <addrhi> <bank> <operand>
-      ea = (sample_q[3].data << 16) + (sample_q[3].data << 8) + sample_q[2].data;
+      ea = (sample_q[4].data << 16) + (sample_q[3].data << 8) + sample_q[2].data;
       break;
    case IDLY:
       // e.g. LDA [80],Y
