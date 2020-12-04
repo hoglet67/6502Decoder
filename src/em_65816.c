@@ -25,7 +25,6 @@ typedef enum {
    ABSY,
    IND16,
    IND1X,
-   ZPR,
    SR,
    ISY,
    IDL,
@@ -115,7 +114,6 @@ AddrModeType addr_mode_table[] = {
    {3,    "%1$s %3$02X%2$02X,Y"},      // ABSY
    {3,    "%1$s (%3$02X%2$02X)"},      // IND1
    {3,    "%1$s (%3$02X%2$02X,X)"},    // IND1X
-   {3,    "%1$s %2$02X,%3$s"},         // ZPR
    {2,    "%1$s %2$02X,S"},            // SR
    {2,    "%1$s (%2$02X,S),Y"},        // ISY
    {2,    "%1$s [%2$02X]"},            // IDL
@@ -1076,20 +1074,6 @@ static int em_65816_disassemble(char *buffer, instruction_t *instruction) {
          sprintf(target, "%04X", (pc + 3 + offset) & 0xffff);
       }
       numchars = sprintf(buffer, fmt, mnemonic, target);
-      break;
-   case ZPR:
-      // Calculate branch target using op2 for BBR/BBS
-      offset = (int8_t) op2;
-      if (pc < 0) {
-         if (offset < 0) {
-            sprintf(target, "pc-%d", -offset);
-         } else {
-            sprintf(target,"pc+%d", offset);
-         }
-      } else {
-         sprintf(target, "%04X", (pc + 3 + offset) & 0xffff);
-      }
-      numchars = sprintf(buffer, fmt, mnemonic, op1, target);
       break;
    case IMM:
       if (opcount == 2) {
