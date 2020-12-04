@@ -225,11 +225,12 @@ static int op_STY(operand_t operand, ea_t ea);
 // ====================================================================
 
 static void memory_read(int data, int ea) {
-   if (ea >= 0 && ea < 0x8000) {
+   if (ea < 0x8000 || ea >= 0x10000) {
       if (memory[ea] >=0 && memory[ea] != data) {
          printf("memory modelling failed at %04x: expected %02x, actual %02x\n", ea, memory[ea], data);
          failflag |= 1;
       }
+      printf("memory read: %06x = %02x\n", ea, data);
       memory[ea] = data;
    }
    if (bbctube && ea >= 0xfee0 && ea <= 0xfee7) {
@@ -240,7 +241,7 @@ static void memory_read(int data, int ea) {
 static void memory_write(int data, int ea) {
    if (ea >= 0) {
       // Data can be negarive, which means the memory becomes undefined again
-      //printf("memory write: %06x = %02x\n", ea, data);
+      printf("memory write: %06x = %02x\n", ea, data);
       memory[ea] = data;
    }
    if (bbctube && ea >= 0xfee0 && ea <= 0xfee7) {
@@ -846,9 +847,13 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // the operand is true if branch taken
       operand = (num_cycles != 2);
    } else if (opcode == 0x20) {
-      // JSR: the operand is the data pushed to the stack (PCH, PCL)
+      // JSR abs: the operand is the data pushed to the stack (PCH, PCL)
       // <opcode> <op1> <op2> <read dummy> <write pch> <write pcl>
       operand = (sample_q[4].data << 8) + sample_q[5].data;
+   } else if (opcode == 0xfc) {
+      // JSR (IND, X): the operand is the data pushed to the stack (PCH, PCL)
+      // <opcode> <op1> <write pch> <write pcl> <op2> <internal> <read new pcl> <read new pcl>
+      operand = (sample_q[2].data << 8) + sample_q[3].data;
    } else if (opcode == 0x22) {
       // JSL: the operand is the data pushed to the stack (PCB, PCH, PCL)
       // <opcode> <op1> <op2> <write pbr> <read dummy> <op3> <write pch> <write pcl>
