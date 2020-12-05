@@ -701,6 +701,12 @@ static int em_65816_match_interrupt(sample_t *sample_q, int num_samples) {
    if (num_samples < 7) {
       return 0;
    }
+   // Check the cycle has the right structure
+   for (int i = 1; i < 7; i++) {
+      if (sample_q[i].type == OPCODE) {
+         return 0;
+      }
+   }
    // In emulation mode an interupt will write PCH, PCL, PSW in bus cycles 2,3,4
    // In native mode an interupt will write PBR, PCH, PCL, PSW in bus cycles 2,3,4,5
    //
