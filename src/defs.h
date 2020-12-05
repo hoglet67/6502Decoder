@@ -63,5 +63,38 @@ typedef struct {
    int (*get_and_clear_fail)();
 } cpu_emulator_t;
 
+typedef struct {
+   cpu_t cpu_type;
+   int idx_data;
+   int idx_rnw;
+   int idx_sync;
+   int idx_rdy;
+   int idx_phi2;
+   int idx_rst;
+   int idx_vda;
+   int idx_vpa;
+   int vec_rst;
+   int machine;
+   int show_address;
+   int show_hex;
+   int show_instruction;
+   int show_state;
+   int show_bbcfwa;
+   int show_cycles;
+   int show_something;
+   int bbctube;
+   int undocumented;
+   int e_flag;
+   int sp_reg;
+   int byte;
+   int debug;
+   int profile;
+   int trigger_start;
+   int trigger_stop;
+   int trigger_skipint;
+   char *filename;
+} arguments_t;
+
+extern arguments_t arguments;
 
 #endif

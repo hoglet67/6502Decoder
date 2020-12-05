@@ -4,6 +4,7 @@
 #include <inttypes.h>
 #include "tube_decode.h"
 #include "em_65816.h"
+#include "defs.h"
 
 // ====================================================================
 // Type Defs
@@ -228,7 +229,9 @@ static int op_STY(operand_t operand, ea_t ea);
 
 static void memory_read(int data, int ea) {
    if (ea < 0x8000 || ea >= 0x10000) {
-      printf("memory read: %06x = %02x\n", ea, data);
+      if (arguments.debug & 2) {
+         printf("memory  read: %06x = %02x\n", ea, data);
+      }
       if (memory[ea] >=0 && memory[ea] != data) {
          printf("memory modelling failed at %06x: expected %02x, actual %02x\n", ea, memory[ea], data);
          failflag |= 1;
@@ -243,7 +246,9 @@ static void memory_read(int data, int ea) {
 static void memory_write(int data, int ea) {
    if (ea < 0x8000 || ea >= 0x10000) {
       // Data can be negative, which means the memory becomes undefined again
-      printf("memory write: %06x = %02x\n", ea, data);
+      if (arguments.debug & 2) {
+         printf("memory write: %06x = %02x\n", ea, data);
+      }
       memory[ea] = data;
    }
    if (bbctube && ea >= 0xfee0 && ea <= 0xfee7) {

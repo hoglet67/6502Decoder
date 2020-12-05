@@ -46,6 +46,9 @@ static cpu_emulator_t *em;
 
 static int c816;
 
+// This is a global, so it's visible to the emulator functions
+arguments_t arguments;
+
 // ====================================================================
 // Argp processing
 // ====================================================================
@@ -103,7 +106,7 @@ static struct argp_option options[] = {
    { "rockwell",     'r',        0,                   0, "Enable additional rockwell instructions."},
    { "undocumented", 'u',        0,                   0, "Enable undocumented 6502 opcodes (currently incomplete)"},
    { "byte",         'b',        0,                   0, "Byte samples"},
-   { "debug",        'd',  "LEVEL",                   0, "Sets debug level (0 1 or 2)"},
+   { "debug",        'd',  "LEVEL",                   0, "Sets debug level (bitmask)"},
 // Output options
    { "quiet",        'q',        0,                   0, "Set all the show options to off."},
    { "address",      'a',        0,                   0, "Show address of instruction."},
@@ -122,41 +125,9 @@ static struct argp_option options[] = {
    { 0 }
 };
 
-struct arguments {
-   cpu_t cpu_type;
-   int idx_data;
-   int idx_rnw;
-   int idx_sync;
-   int idx_rdy;
-   int idx_phi2;
-   int idx_rst;
-   int idx_vda;
-   int idx_vpa;
-   int vec_rst;
-   int machine;
-   int show_address;
-   int show_hex;
-   int show_instruction;
-   int show_state;
-   int show_bbcfwa;
-   int show_cycles;
-   int show_something;
-   int bbctube;
-   int undocumented;
-   int e_flag;
-   int sp_reg;
-   int byte;
-   int debug;
-   int profile;
-   int trigger_start;
-   int trigger_stop;
-   int trigger_skipint;
-   char *filename;
-} arguments;
-
 static error_t parse_opt(int key, char *arg, struct argp_state *state) {
    int i;
-   struct arguments *arguments = state->input;
+   arguments_t *arguments = state->input;
 
    // First, pass argument to the profiler moduler
    profiler_parse_opt(key, arg, state);
@@ -489,7 +460,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
       return num_samples;
    }
 
-   if (arguments.debug >= 1) {
+   if (arguments.debug & 1) {
       dump_samples(sample_q, num_cycles);
    }
 
@@ -849,9 +820,9 @@ void decode(FILE *stream) {
             sample       = *sampleptr++;
 
             // TODO: fix the hard coded values!!!
-            if (arguments.debug >= 2) {
-               printf("%d %02x %x %x %x %x\n", sample_count, sample&255, (sample >> 8)&1,  (sample >> 9)&1,  (sample >> 10)&1,  (sample >> 11)&1  );
-            }
+            //if (arguments.debug & 4) {
+            //   printf("%d %02x %x %x %x %x\n", sample_count, sample&255, (sample >> 8)&1,  (sample >> 9)&1,  (sample >> 10)&1,  (sample >> 11)&1  );
+            //}
             sample_count++;
 
             // Phi2 is optional
