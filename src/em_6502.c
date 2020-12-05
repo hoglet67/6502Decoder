@@ -459,8 +459,9 @@ static int count_cycles_with_sync(sample_t *sample_q) {
 // Public Methods
 // ====================================================================
 
-static void em_6502_init(cpu_t cpu_type, int undocumented, int decode_bbctube, int mast_nordy) {
-   switch (cpu_type) {
+static void em_6502_init(arguments_t *args) {
+
+   switch (args->cpu_type) {
    case CPU_6502:
       instr_table = instr_table_6502;
       c02 = 0;
@@ -474,13 +475,17 @@ static void em_6502_init(cpu_t cpu_type, int undocumented, int decode_bbctube, i
       instr_table = instr_table_65c02;
       break;
    default:
-      printf("em_6502_init called with unsupported cpu_type (%d)\n", cpu_type);
+      printf("em_6502_init called with unsupported cpu_type (%d)\n", args->cpu_type);
       exit(1);
    }
-   bbctube = decode_bbctube;
-   master_nordy = mast_nordy;
+   bbctube = args->bbctube;
+
+   // This flag tells the sync-less cycle count estimation to infer additional cycles on the master
+   // It's needed when rdy is not being explicitely sampled
+   master_nordy = (args->machine == MACHINE_MASTER) && (args->idx_rdy < 0);
+
    // If not supporting the Rockwell C02 extensions, tweak the cycle countes
-   if (cpu_type == CPU_65C02) {
+   if (args->cpu_type == CPU_65C02) {
       // x7 (RMB/SMB): 5 cycles -> 1 cycles
       // xF (BBR/BBS): 5 cycles -> 1 cycles
       for (int i = 0x07; i <= 0xff; i+= 0x08) {
@@ -494,7 +499,7 @@ static void em_6502_init(cpu_t cpu_type, int undocumented, int decode_bbctube, i
    InstrType *instr = instr_table;
    for (int i = 0; i < 256; i++) {
       // Remove the undocumented instructions, if not supported
-      if (instr->undocumented && !undocumented) {
+      if (instr->undocumented && !args->undocumented) {
          instr->mnemonic = ILLEGAL;
          instr->mode     = IMP;
          instr->cycles   = 1;

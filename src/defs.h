@@ -3,6 +3,10 @@
 
 #include <inttypes.h>
 
+#define MACHINE_DEFAULT 0
+#define MACHINE_MASTER  1
+#define MACHINE_ELK  2
+
 typedef enum {
    CPU_6502,
    CPU_65C02,
@@ -49,21 +53,6 @@ void write_hex6(char *buffer, int value);
 int  write_s   (char *buffer, const char *s);
 
 typedef struct {
-   void (*init)(cpu_t cpu_type, int undocumented, int decode_bbctube, int mast_nordy);
-   int (*match_interrupt)(sample_t *sample_q, int num_samples);
-   int (*count_cycles)(sample_t *sample_q, int intr_seen);
-   void (*reset)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
-   void (*interrupt)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
-   void (*emulate)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
-   int (*disassemble)(char *bp, instruction_t *instruction);
-   int (*get_PC)();
-   int (*get_PB)();
-   int (*read_memory)(int address);
-   char *(*get_state)();
-   int (*get_and_clear_fail)();
-} cpu_emulator_t;
-
-typedef struct {
    cpu_t cpu_type;
    int idx_data;
    int idx_rnw;
@@ -86,6 +75,9 @@ typedef struct {
    int undocumented;
    int e_flag;
    int sp_reg;
+   int pb_reg;
+   int db_reg;
+   int dp_reg;
    int byte;
    int debug;
    int profile;
@@ -95,6 +87,22 @@ typedef struct {
    char *filename;
 } arguments_t;
 
+typedef struct {
+   void (*init)(arguments_t *args);
+   int (*match_interrupt)(sample_t *sample_q, int num_samples);
+   int (*count_cycles)(sample_t *sample_q, int intr_seen);
+   void (*reset)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
+   void (*interrupt)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
+   void (*emulate)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
+   int (*disassemble)(char *bp, instruction_t *instruction);
+   int (*get_PC)();
+   int (*get_PB)();
+   int (*read_memory)(int address);
+   char *(*get_state)();
+   int (*get_and_clear_fail)();
+} cpu_emulator_t;
+
 extern arguments_t arguments;
+
 
 #endif

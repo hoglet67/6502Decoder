@@ -140,9 +140,9 @@ static int PC = -1;
 
 // 65C816 additional registers: -1 means unknown
 static int B  = -1; // Accumulator bits 15..8
-static int DP =  0; // 16-bit Direct Page Register (default to zero, otherwise ZP addressing is broken)
-static int DB =  0; // 8-bit Data Bank Register
-static int PB =  0; // 8-bit Program Bank Register
+static int DP = -1; // 16-bit Direct Page Register (default to zero, otherwise ZP addressing is broken)
+static int DB = -1; // 8-bit Data Bank Register
+static int PB = -1; // 8-bit Program Bank Register
 
 // 6502 flags: -1 means unknown
 static int N = -1;
@@ -639,28 +639,37 @@ static void check_and_set_xs(int val) {
 // Public Methods
 // ====================================================================
 
-static void em_65816_init(cpu_t cpu_type, int e_flag, int sp_reg, int decode_bbctube) {
-   switch (cpu_type) {
+static void em_65816_init(arguments_t *args) {
+   switch (args->cpu_type) {
    case CPU_65C816:
       c02 = 1;
       instr_table = instr_table_65c816;
       break;
    default:
-      printf("em_65816_init called with unsupported cpu_type (%d)\n", cpu_type);
+      printf("em_65816_init called with unsupported cpu_type (%d)\n", args->cpu_type);
       exit(1);
    }
-   bbctube = decode_bbctube;
-   if (e_flag >= 0) {
-      E  = e_flag & 1;
+   bbctube = args->bbctube;
+   if (args->e_flag >= 0) {
+      E  = args->e_flag & 1;
       if (E) {
          emulation_mode_on();
       } else {
          emulation_mode_off();
       }
    }
-   if (sp_reg >= 0) {
-      SL = sp_reg & 0xff;
-      SH = (sp_reg >> 8) & 0xff;
+   if (args->sp_reg >= 0) {
+      SL = args->sp_reg & 0xff;
+      SH = (args->sp_reg >> 8) & 0xff;
+   }
+   if (args->pb_reg >= 0) {
+      PB = args->pb_reg & 0xff;
+   }
+   if (args->db_reg >= 0) {
+      DB = args->db_reg & 0xff;
+   }
+   if (args->dp_reg >= 0) {
+      DP = args->dp_reg & 0xffff;
    }
    InstrType *instr = instr_table;
    for (int i = 0; i < 256; i++) {

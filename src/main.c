@@ -18,10 +18,6 @@ uint8_t buffer8[BUFSIZE];
 
 uint16_t buffer[BUFSIZE];
 
-#define MACHINE_DEFAULT 0
-#define MACHINE_MASTER  1
-#define MACHINE_ELK  2
-
 const char *machine_names[] = {
    "default",
    "master",
@@ -121,7 +117,10 @@ static struct argp_option options[] = {
    { "vda",           9,  "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for vda, blank if unconnected"},
    { "vpa",          10,  "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for vpa, blank if unconnected"},
    { "emul",         11,     "HEX", OPTION_ARG_OPTIONAL, "Initial value E flag in 65816 mode"},
-   { "sp",           12,     "HEX", OPTION_ARG_OPTIONAL, "Initial value SP register in 65816 mode"},
+   { "sp",           12,     "HEX", OPTION_ARG_OPTIONAL, "Initial value Stack Pointer register (65816)"},
+   { "pb",           13,     "HEX", OPTION_ARG_OPTIONAL, "Initial value Program Bank register (65816)"},
+   { "db",           14,     "HEX", OPTION_ARG_OPTIONAL, "Initial value Data Bank register (65816)"},
+   { "dp",           15,     "HEX", OPTION_ARG_OPTIONAL, "Initial value Direct Page register (65816)"},
    { 0 }
 };
 
@@ -206,6 +205,27 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->sp_reg = strtol(arg, (char **)NULL, 16);
       } else {
          arguments->sp_reg = -1;
+      }
+      break;
+   case  13:
+      if (arg && strlen(arg) > 0) {
+         arguments->pb_reg = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->pb_reg = -1;
+      }
+      break;
+   case  14:
+      if (arg && strlen(arg) > 0) {
+         arguments->db_reg = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->db_reg = -1;
+      }
+      break;
+   case  15:
+      if (arg && strlen(arg) > 0) {
+         arguments->dp_reg = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->dp_reg = -1;
       }
       break;
    case 'c':
@@ -990,6 +1010,9 @@ int main(int argc, char *argv[]) {
    arguments.undocumented     = 0;
    arguments.e_flag           = -1;
    arguments.sp_reg           = -1;
+   arguments.pb_reg           = -1;
+   arguments.db_reg           = -1;
+   arguments.dp_reg           = -1;
    arguments.byte             = 0;
    arguments.debug            = 0;
    arguments.profile          = 0;
@@ -1030,20 +1053,14 @@ int main(int argc, char *argv[]) {
       }
    }
 
-   // This flag tells the sync-less cycle count estimation to infer additional cycles on the master
-   // It's needed when rdy is not being explicitely sampled
-   // (not currently supported in the 65816 mode)
-   int mast_nordy = (arguments.machine == MACHINE_MASTER) && (arguments.idx_rdy < 0);
-
    if (arguments.cpu_type == CPU_65C816) {
       c816 = 1;
       em = &em_65816;
-      em->init(arguments.cpu_type, arguments.e_flag, arguments.sp_reg, arguments.bbctube);
    } else {
-      em = &em_6502;
       c816 = 0;
-      em->init(arguments.cpu_type, arguments.undocumented, arguments.bbctube, mast_nordy);
+      em = &em_6502;
    }
+   em->init(&arguments);
 
    decode(stream);
    fclose(stream);
