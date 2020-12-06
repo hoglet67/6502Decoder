@@ -3,7 +3,7 @@
 /config.log
 /config.status
 /firmware/fx2pipe.asm
-/firmware/fx2pipe.ihx
+#/firmware/fx2pipe.ihx
 /firmware/fx2pipe.lk
 /firmware/fx2pipe.lst
 /firmware/fx2pipe.map
