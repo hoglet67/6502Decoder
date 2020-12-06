@@ -886,23 +886,25 @@ void decode(FILE *stream) {
 
                if (pin_phi2) {
                   // sample control signals just after rising edge of Phi2
-                  if (idx_rnw >= 0) {
-                     pin_rnw = (sample >> idx_rnw ) & 1;
-                  }
-                  if (c816) {
-                     if (idx_vda >= 0) {
-                        pin_vda = (sample >> idx_vda) & 1;
+                  if (!c816) {
+                     if (idx_rnw >= 0) {
+                        pin_rnw = (sample >> idx_rnw ) & 1;
                      }
-                     if (idx_vpa >= 0) {
-                        pin_vpa = (sample >> idx_vpa) & 1;
+                     if (c816) {
+                        if (idx_vda >= 0) {
+                           pin_vda = (sample >> idx_vda) & 1;
+                        }
+                        if (idx_vpa >= 0) {
+                           pin_vpa = (sample >> idx_vpa) & 1;
+                        }
+                     } else {
+                        if (idx_sync >= 0) {
+                           pin_sync = (sample >> idx_sync) & 1;
+                        }
                      }
-                  } else {
-                     if (idx_sync >= 0) {
-                        pin_sync = (sample >> idx_sync) & 1;
+                     if (idx_rst >= 0) {
+                        pin_rst = (sample >> idx_rst) & 1;
                      }
-                  }
-                  if (idx_rst >= 0) {
-                     pin_rst = (sample >> idx_rst) & 1;
                   }
                   // continue for more samples
                   continue;
@@ -910,16 +912,24 @@ void decode(FILE *stream) {
                   if (idx_rdy >= 0) {
                      pin_rdy = (last_sample >> idx_rdy) & 1;
                   }
-                  // TODO: try to rationalize this!
-                  if (arguments.machine == MACHINE_ELK) {
-                     // Data bus sampling for the Elk
-                     if (idx_rnw < 0 || pin_rnw) {
-                        // sample read data just before falling edge of Phi2
-                        bus_data = last_sample & 255;
-                     } else {
-                        // sample write data one cycle earlier
-                        bus_data = last_sample & 255;
+                  if (c816) {
+                     if (idx_rnw >= 0) {
+                        pin_rnw = (last_sample >> idx_rnw ) & 1;
                      }
+                     if (idx_vda >= 0) {
+                        pin_vda = (last_sample >> idx_vda) & 1;
+                     }
+                     if (idx_vpa >= 0) {
+                        pin_vpa = (last_sample >> idx_vpa) & 1;
+                     }
+                     if (idx_rst >= 0) {
+                        pin_rst = (last_sample >> idx_rst) & 1;
+                     }
+                     // sample data just before falling edge of Phi2
+                     bus_data = last_sample & 255;
+                  } else if (arguments.machine == MACHINE_ELK) {
+                     // sample data just before falling edge of Phi2
+                     bus_data = last_sample & 255;
                   } else if (arguments.machine == MACHINE_MASTER) {
                      // Data bus sampling for the Master
                      if (idx_rnw < 0 || pin_rnw) {
