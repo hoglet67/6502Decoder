@@ -934,10 +934,11 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
 
    // TODO: need to account for optional extra cycle for direct register low (DL) not equal 0.
    // TODO: could do additional memory modelling of pointer accesses
-   // TODO: need to use the direct page and data bank registers
-   // TODO: need to rename ZP to DP
 
-   // DP page wrapping should only happen in Emulation Mode, and only for old instructions
+   // DP page wrapping only happens:
+   // - in Emulation Mode (E=1), and
+   // - if DPL == 00, and
+   // - only for old instructions
    int wrap = E && !(DP & 0xFF) && !(instr->newop);
 
    int ea = -1;
@@ -2491,7 +2492,7 @@ static InstrType instr_table_65c816[] = {
    /* 41 */   { "EOR",  0, INDX  , 6, 0, READOP,   op_EOR},
    /* 42 */   { "WDM",  0, IMM   , 2, 1, OTHER,    0},
    /* 43 */   { "EOR",  0, SR    , 4, 1, READOP,   op_EOR},
-   /* 44 */   { "MVP",  0, BM    , 7, 1, OTHER,    op_MVP}, // TODO: Memory Modelling
+   /* 44 */   { "MVP",  0, BM    , 7, 1, OTHER,    op_MVP},
    /* 45 */   { "EOR",  0, ZP    , 3, 0, READOP,   op_EOR},
    /* 46 */   { "LSR",  0, ZP    , 5, 0, RMWOP,    op_LSR},
    /* 47 */   { "EOR",  0, IDL   , 6, 1, READOP,   op_EOR},
@@ -2507,7 +2508,7 @@ static InstrType instr_table_65c816[] = {
    /* 51 */   { "EOR",  0, INDY  , 5, 0, READOP,   op_EOR},
    /* 52 */   { "EOR",  0, IND   , 5, 0, READOP,   op_EOR},
    /* 53 */   { "EOR",  0, ISY   , 7, 1, READOP,   op_EOR},
-   /* 54 */   { "MVN",  0, BM    , 7, 1, OTHER,    op_MVN}, // TODO: Memory Modelling
+   /* 54 */   { "MVN",  0, BM    , 7, 1, OTHER,    op_MVN},
    /* 55 */   { "EOR",  0, ZPX   , 4, 0, READOP,   op_EOR},
    /* 56 */   { "LSR",  0, ZPX   , 6, 0, RMWOP,    op_LSR},
    /* 57 */   { "EOR",  0, IDLY  , 6, 1, READOP,   op_EOR},
