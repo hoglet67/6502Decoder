@@ -935,12 +935,14 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    int index;
    switch (instr->mode) {
    case ZP:
-      ea = (DP + op1);
+      if (DP >= 0) {
+         ea = (DP + op1);
+      }
       break;
    case ZPX:
    case ZPY:
       index = instr->mode == ZPX ? X : Y;
-      if (index >= 0) {
+      if (index >= 0 && DP >= 0) {
          if (wrap) {
             ea = (DP & 0xFF00) + ((op1 + index) & 0xff);
          } else {
@@ -951,30 +953,32 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    case INDY:
       // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand>
       index = Y;
-      if (index >= 0) {
+      if (index >= 0 && DB >= 0) {
          ea = (sample_q[3].data << 8) + sample_q[2].data;
          ea = (DB << 16) + ((ea + index) & 0xffff);
       }
       break;
    case INDX:
       // <opcpde> <op1> <dummy> <addrlo> <addrhi> <operand>
-      ea = (DB << 16) + (sample_q[4].data << 8) + sample_q[3].data;
+      if (DB >= 0) {
+         ea = (DB << 16) + (sample_q[4].data << 8) + sample_q[3].data;
+      }
       break;
    case IND:
       // <opcpde> <op1> <addrlo> <addrhi> <operand>
-      ea = (DB << 16) + (sample_q[3].data << 8) + sample_q[2].data;
+      if (DB >= 0) {
+         ea = (DB << 16) + (sample_q[3].data << 8) + sample_q[2].data;
+      }
       break;
    case ABS:
-      if (opcode == 0x20 || opcode == 0x4c) {
-         ea = (PB << 16) + (op2 << 8) + op1;
-      } else {
+      if (DB >= 0) {
          ea = (DB << 16) + (op2 << 8) + op1;
       }
       break;
    case ABSX:
    case ABSY:
       index = instr->mode == ABSX ? X : Y;
-      if (index >= 0) {
+      if (index >= 0 && DB >= 0) {
          ea = (DB << 16) + (((op2 << 8 | op1) + index) & 0xffff);
       }
       break;
@@ -1092,7 +1096,8 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       PC = (sample_q[num_cycles - 1].data << 8) | sample_q[num_cycles - 2].data;
    } else if (opcode == 0x20 || opcode == 0x4c) {
       // JSR abs, JMP abs
-      PC = ea & 0xffff;
+      // Don't use ea here as it includes PB which may be unknown
+      PC = (op2 << 8) + op1;
    } else if (opcode == 0x22 || opcode == 0x5c || opcode == 0xdc) {
       // JSL long, JML long
       PB = (ea >> 16) & 0xff;
@@ -2136,7 +2141,6 @@ static int op_ROL(operand_t operand, ea_t ea) {
       C = (tmp >> 8) & 1;
       tmp = tmp & 255;
       set_NZ_MS(tmp);
-      memory_write(tmp, ea);
       return tmp;
    } else {
       set_NZC_unknown();
