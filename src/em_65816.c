@@ -2089,7 +2089,7 @@ static int op_LDA(operand_t operand, ea_t ea) {
    if (MS == 0) {
       B = (operand >> 8) & 0xff;
    }
-   set_NZ_MS(A);
+   set_NZ_AB(A, B);
    return -1;
 }
 
