@@ -644,6 +644,20 @@ static void check_and_set_xs(int val) {
    }
 }
 
+// Helper to return the variable size accumulator
+static int get_accumulator() {
+   if (MS > 0 && A >= 0) {
+      // 8-bit mode
+      return A;
+   } else if (MS == 0 && A >= 0 && B >= 0) {
+      // 16-bit mode
+      return (B << 8) + A;
+   } else {
+      // unknown width
+      return -1;
+   }
+}
+
 // ====================================================================
 // Public Methods
 // ====================================================================
@@ -1888,9 +1902,18 @@ static int op_DECA(operand_t operand, ea_t ea) {
 }
 
 static int op_DEC(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   int tmp = (operand - 1) & 0xff;
-   set_NZ_MS(tmp);
+   int tmp = -1;
+   if (MS > 0) {
+      // 8-bit mode
+      tmp = (operand - 1) & 0xff;
+      set_NZ8(tmp);
+   } else if (MS == 0) {
+      // 16-bit mode
+      tmp = (operand - 1) & 0xffff;
+      set_NZ16(tmp);
+   } else {
+      set_NZ_unknown();
+   }
    return tmp;
 }
 
@@ -1966,9 +1989,18 @@ static int op_INCA(operand_t operand, ea_t ea) {
 }
 
 static int op_INC(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   int tmp = (operand + 1) & 0xff;
-   set_NZ_MS(tmp);
+   int tmp = -1;
+   if (MS > 0) {
+      // 8-bit mode
+      tmp = (operand + 1) & 0xff;
+      set_NZ8(tmp);
+   } else if (MS == 0) {
+      // 16-bit mode
+      tmp = (operand + 1) & 0xffff;
+      set_NZ16(tmp);
+   } else {
+      set_NZ_unknown();
+   }
    return tmp;
 }
 
@@ -2312,36 +2344,27 @@ static int op_STZ(operand_t operand, ea_t ea) {
    return operand;
 }
 
-static int op_TSBTRB(operand_t operand, ea_t ea, int set) {
-   int tmp;
-   if (MS > 0 && A >= 0) {
-      // 8-bit mode
-      tmp = A;
-   } else if (MS == 0 && A >= 0 && B >= 0) {
-      // 16-bit mode
-      tmp = (B << 8) + A;
-   } else {
-      // unknown width
-      tmp = -1;
-   }
-   if (tmp >= 0) {
-      Z = ((tmp & operand) == 0);
-      if (set) {
-         return operand | tmp;
-      } else {
-         return operand & ~tmp;
-      }
-   }
-   Z = -1;
-   return -1;
-}
 
 static int op_TSB(operand_t operand, ea_t ea) {
-   return op_TSBTRB(operand, ea, 1);
+   int tmp = get_accumulator();
+   if (tmp >= 0) {
+      Z = ((tmp & operand) == 0);
+      return operand | tmp;
+   } else {
+      Z = -1;
+      return -1;
+   }
 }
 
 static int op_TRB(operand_t operand, ea_t ea) {
-   return op_TSBTRB(operand, ea, 0);
+   int tmp = get_accumulator();
+   if (tmp >= 0) {
+      Z = ((tmp & operand) == 0);
+      return operand &~ tmp;
+   } else {
+      Z = -1;
+      return -1;
+   }
 }
 
 // This is used to implement: TAX, TAY, TSX
