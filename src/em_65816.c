@@ -1104,8 +1104,8 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          // (if A is unknown, then TSB/TRB are uiknown)
          // (if C is unlnown, then ROL/ROR are unknown)
          // These cases could be eliminated if we snoopedthe result of Read-Modify-Weith
-         int reslo = result < 0 ? -1 : (result & 0xff);
-         int reshi = result < 0 ? -1 : ((result >> 8) & 0xff);
+         int reslo = (result < 0) ? -1 : (result & 0xff);
+         int reshi = (result < 0) ? -1 : ((result >> 8) & 0xff);
          memory_write(reslo,  ea);
          if (size == 0) {
             memory_write(reshi, (ea + 1) & 0xffff);
@@ -1710,20 +1710,23 @@ static int op_ASLA(operand_t operand, ea_t ea) {
 }
 
 static int op_ASL(operand_t operand, ea_t ea) {
-   // In 8-bit mode the upper byte is ignored by the memory write code
-   int tmp = (operand << 1) & 0xffff;
+   int tmp;
    if (MS > 0) {
       // 8-bit mode
       C = (operand >> 7) & 1;
       tmp = (operand << 1) & 0xff;
+      set_NZ8(tmp);
    } else if (MS == 0) {
       // 16-bit mode
       C = (operand >> 15) & 1;
+      tmp = (operand << 1) & 0xffff;
+      set_NZ16(tmp);
    } else {
       // mode unknown
       C = -1;
+      tmp = -1;
+      set_NZ_unknown();
    }
-   set_NZ_MS(tmp);
    return tmp;
 }
 
@@ -2137,10 +2140,21 @@ static int op_LSRA(operand_t operand, ea_t ea) {
 }
 
 static int op_LSR(operand_t operand, ea_t ea) {
-   // In 8-bit mode the uppwe byte is ignored by the memory write code
+   int tmp;
    C = operand & 1;
-   int tmp = operand >> 1;
-   set_NZ_MS(tmp);
+   if (MS > 0) {
+      // 8-bit mode
+      tmp = (operand >> 1) & 0xff;
+      set_NZ8(tmp);
+   } else if (MS == 0) {
+      // 16-bit mode
+      tmp = (operand >> 1) & 0xffff;
+      set_NZ16(tmp);
+   } else {
+      // mode unknown
+      tmp = -1;
+      set_NZ_unknown();
+   }
    return tmp;
 }
 
@@ -2257,17 +2271,24 @@ static int op_ROLA(operand_t operand, ea_t ea) {
 }
 
 static int op_ROL(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (C >= 0) {
-      int tmp = (operand << 1) + C;
-      C = (tmp >> 8) & 1;
-      tmp = tmp & 0xff;
-      set_NZ_MS(tmp);
-      return tmp;
+   int oldC = C;
+   int tmp;
+   if (MS > 0) {
+      // 8-bit mode
+      C = (operand >> 7) & 1;
+      tmp = ((operand << 1) | oldC) & 0xff;
+      set_NZ8(tmp);
+   } else if (MS == 0) {
+      // 16-bit mode
+      C = (operand >> 15) & 1;
+      tmp = ((operand << 1) | oldC) & 0xffff;
+      set_NZ16(tmp);
    } else {
-      set_NZC_unknown();
+      C = -1;
+      tmp = -1;
+      set_NZ_unknown();
    }
-   return -1;
+   return tmp;
 }
 
 static int op_RORA(operand_t operand, ea_t ea) {
@@ -2299,16 +2320,24 @@ static int op_RORA(operand_t operand, ea_t ea) {
 }
 
 static int op_ROR(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (C >= 0) {
-      int tmp = (operand >> 1) + (C << 7);
-      C = operand & 1;
-      set_NZ_MS(tmp);
-      return tmp;
+   int oldC = C;
+   int tmp;
+   C = operand & 1;
+   if (MS > 0) {
+      // 8-bit mode
+      tmp = ((operand >> 1) | (oldC << 7)) & 0xff;
+      set_NZ8(tmp);
+   } else if (MS == 0) {
+      // 16-bit mode
+      C = (operand >> 15) & 1;
+      tmp = ((operand >> 1) | (oldC << 15)) & 0xffff;
+      set_NZ16(tmp);
    } else {
-      set_NZC_unknown();
+      C = -1;
+      tmp = -1;
+      set_NZ_unknown();
    }
-   return -1;
+   return tmp;
 }
 
 static int op_RTS(operand_t operand, ea_t ea) {
