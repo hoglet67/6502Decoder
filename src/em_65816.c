@@ -1063,7 +1063,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    if (instr->emulate) {
 
       // Determine memory access size
-      int size = instr->x_extra ? XS : instr->x_extra ? MS : 1;
+      int size = instr->x_extra ? XS : instr->m_extra ? MS : 1;
 
       // Model memory reads
       if (ea >= 0 && (instr->optype == READOP || instr->optype == RMWOP)) {
