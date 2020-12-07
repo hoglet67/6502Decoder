@@ -1910,13 +1910,22 @@ static int op_CPY(operand_t operand, ea_t ea) {
 }
 
 static int op_DECA(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
+   // Compute the new A
    if (A >= 0) {
       A = (A - 1) & 0xff;
-      set_NZ_MS(A);
-   } else {
-      set_NZ_unknown();
    }
+   // Compute the new B
+   if (MS == 0 && B >= 0) {
+      if (A == 0xff) {
+         B = (B - 1) & 0xff;
+      } else if (A < 0) {
+         B = -1;
+      }
+   } else if (MS < 0) {
+      B = -1;
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
@@ -1997,13 +2006,22 @@ static int op_EOR(operand_t operand, ea_t ea) {
 }
 
 static int op_INCA(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
+   // Compute the new A
    if (A >= 0) {
       A = (A + 1) & 0xff;
-      set_NZ_MS(A);
-   } else {
-      set_NZ_unknown();
    }
+   // Compute the new B
+   if (MS == 0 && B >= 0) {
+      if (A == 0x00) {
+         B = (B + 1) & 0xff;
+      } else if (A < 0) {
+         B = -1;
+      }
+   } else if (MS < 0) {
+      B = -1;
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
