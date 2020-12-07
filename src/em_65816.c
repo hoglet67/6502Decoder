@@ -423,7 +423,7 @@ static void set_NZ_AB(int A, int B) {
 static void pop8(int value) {
    // Increment the low byte of SP
    if (SL >= 0) {
-      SL = (SL + 1) & 0xFF;
+      SL = (SL + 1) & 0xff;
    }
    // Increment the high byte of SP, in certain cases
    if (E == 1) {
@@ -435,7 +435,7 @@ static void pop8(int value) {
          if (SL < 0) {
             SH = -1;
          } else if (SL == 0) {
-            SH = (SH + 1) & 0xFF;
+            SH = (SH + 1) & 0xff;
          }
       }
    } else {
@@ -458,7 +458,7 @@ static void push8(int value) {
    }
    // Decrement the low byte of SP
    if (SL >= 0) {
-      SL = (SL - 1) & 0xFF;
+      SL = (SL - 1) & 0xff;
    }
    // Decrement the high byte of SP, in certain cases
    if (E == 1) {
@@ -469,8 +469,8 @@ static void push8(int value) {
       if (SH >= 0) {
          if (SL < 0) {
             SH = -1;
-         } else if (SL == 0xFF) {
-            SH = (SH - 1) & 0xFF;
+         } else if (SL == 0xff) {
+            SH = (SH - 1) & 0xff;
          }
       }
    } else {
@@ -939,7 +939,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    // - in Emulation Mode (E=1), and
    // - if DPL == 00, and
    // - only for old instructions
-   int wrap = E && !(DP & 0xFF) && !(instr->newop);
+   int wrap = E && !(DP & 0xff) && !(instr->newop);
 
    int ea = -1;
    int index;
@@ -954,7 +954,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       index = instr->mode == ZPX ? X : Y;
       if (index >= 0 && DP >= 0) {
          if (wrap) {
-            ea = (DP & 0xFF00) + ((op1 + index) & 0xff);
+            ea = (DP & 0xff00) + ((op1 + index) & 0xff);
          } else {
             ea = DP + op1 + index;
          }
@@ -1394,12 +1394,12 @@ static int op_MVP(operand_t operand, ea_t ea) {
       A = C & 0xff;
       B = (C >> 8) & 0xff;
       if (X >= 0) {
-         X = (X - 1) & 0xFFFF;
+         X = (X - 1) & 0xffff;
       }
       if (Y >= 0) {
-         Y = (Y - 1) & 0xFFFF;
+         Y = (Y - 1) & 0xffff;
       }
-      if (PC >= 0 && C != 0xFFFF) {
+      if (PC >= 0 && C != 0xffff) {
          PC -= 3;
       }
    } else {
@@ -1419,12 +1419,12 @@ static int op_MVN(operand_t operand, ea_t ea) {
       A = C & 0xff;
       B = (C >> 8) & 0xff;
       if (X >= 0) {
-         X = (X + 1) & 0xFFFF;
+         X = (X + 1) & 0xffff;
       }
       if (Y >= 0) {
-         Y = (Y + 1) & 0xFFFF;
+         Y = (Y + 1) & 0xffff;
       }
-      if (PC >= 0 && C != 0xFFFF) {
+      if (PC >= 0 && C != 0xffff) {
          PC -= 3;
       }
    } else {
@@ -1461,8 +1461,8 @@ static int op_TCS(operand_t operand, ea_t ea) {
 static int op_TDC(operand_t operand, ea_t ea) {
    // Always a 16-bit transfer
    if (DP >= 0) {
-      A = DP & 255;
-      B = (DP >> 8) & 255;
+      A = DP & 0xff;
+      B = (DP >> 8) & 0xff;
       set_NZ16(DP);
    } else {
       A = -1;
@@ -1630,7 +1630,7 @@ static int op_ADC(operand_t operand, ea_t ea) {
          int tmp = A + operand + C;
          C = (tmp >> 8) & 1;
          V = (((A ^ operand) & 0x80) == 0) && (((A ^ tmp) & 0x80) != 0);
-         A = tmp & 255;
+         A = tmp & 0xff;
       }
       set_NZ_MS(A);
    } else {
@@ -1643,7 +1643,7 @@ static int op_ADC(operand_t operand, ea_t ea) {
 static int op_AND(operand_t operand, ea_t ea) {
    // A is always updated, regardless of the size
    if (A >= 0) {
-      A = A & (operand & 255);
+      A = A & (operand & 0xff);
    }
    // B is updated only of the size is 16
    if (B >= 0) {
@@ -1662,7 +1662,7 @@ static int op_ASLA(operand_t operand, ea_t ea) {
    // TODO: Make variable size
    if (A >= 0) {
       C = (A >> 7) & 1;
-      A = (A << 1) & 255;
+      A = (A << 1) & 0xff;
       set_NZ_MS(A);
    } else {
       set_NZC_unknown();
@@ -1873,7 +1873,7 @@ static int op_CPY(operand_t operand, ea_t ea) {
 static int op_DECA(operand_t operand, ea_t ea) {
    // TODO: Make variable size
    if (A >= 0) {
-      A = (A - 1) & 255;
+      A = (A - 1) & 0xff;
       set_NZ_MS(A);
    } else {
       set_NZ_unknown();
@@ -1883,7 +1883,7 @@ static int op_DECA(operand_t operand, ea_t ea) {
 
 static int op_DEC(operand_t operand, ea_t ea) {
    // TODO: Make variable size
-   int tmp = (operand - 1) & 255;
+   int tmp = (operand - 1) & 0xff;
    set_NZ_MS(tmp);
    return tmp;
 }
@@ -1933,7 +1933,7 @@ static int op_DEY(operand_t operand, ea_t ea) {
 static int op_EOR(operand_t operand, ea_t ea) {
    // A is always updated, regardless of the size
    if (A >= 0) {
-      A = A ^ (operand & 255);
+      A = A ^ (operand & 0xff);
    }
    // B is updated only of the size is 16
    if (B >= 0) {
@@ -1951,7 +1951,7 @@ static int op_EOR(operand_t operand, ea_t ea) {
 static int op_INCA(operand_t operand, ea_t ea) {
    // TODO: Make variable size
    if (A >= 0) {
-      A = (A + 1) & 255;
+      A = (A + 1) & 0xff;
       set_NZ_MS(A);
    } else {
       set_NZ_unknown();
@@ -1961,7 +1961,7 @@ static int op_INCA(operand_t operand, ea_t ea) {
 
 static int op_INC(operand_t operand, ea_t ea) {
    // TODO: Make variable size
-   int tmp = (operand + 1) & 255;
+   int tmp = (operand + 1) & 0xff;
    set_NZ_MS(tmp);
    return tmp;
 }
@@ -2015,7 +2015,7 @@ static int op_JSR(operand_t operand, ea_t ea) {
 }
 
 static int op_LDA(operand_t operand, ea_t ea) {
-   A = operand & 255;
+   A = operand & 0xff;
    if (MS == 0) {
       B = (operand >> 8) & 0xff;
    }
@@ -2058,7 +2058,7 @@ static int op_LSR(operand_t operand, ea_t ea) {
 static int op_ORA(operand_t operand, ea_t ea) {
    // A is always updated, regardless of the size
    if (A >= 0) {
-      A = A | (operand & 255);
+      A = A | (operand & 0xff);
    }
    // B is updated only of the size is 16
    if (B >= 0) {
@@ -2135,7 +2135,7 @@ static int op_ROLA(operand_t operand, ea_t ea) {
    if (A >= 0 && C >= 0) {
       int tmp = (A << 1) + C;
       C = (tmp >> 8) & 1;
-      A = tmp & 255;
+      A = tmp & 0xff;
       set_NZ_MS(A);
    } else {
       A = -1;
@@ -2149,7 +2149,7 @@ static int op_ROL(operand_t operand, ea_t ea) {
    if (C >= 0) {
       int tmp = (operand << 1) + C;
       C = (tmp >> 8) & 1;
-      tmp = tmp & 255;
+      tmp = tmp & 0xff;
       set_NZ_MS(tmp);
       return tmp;
    } else {
@@ -2224,13 +2224,13 @@ static int op_SBC(operand_t operand, ea_t ea) {
          if (al < 0) {
             tmp = tmp - 0x06;
          }
-         A = tmp & 255;
+         A = tmp & 0xff;
       } else {
          // Normal mode SBC
          int tmp = A - operand - (1 - C);
          C = 1 - ((tmp >> 8) & 1);
          V = (((A ^ operand) & 0x80) != 0) && (((A ^ tmp) & 0x80) != 0);
-         A = tmp & 255;
+         A = tmp & 0xff;
       }
       set_NZ_MS(A);
    } else {
