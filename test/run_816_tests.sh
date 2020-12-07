@@ -28,7 +28,7 @@ done
 
 DECODE=../decode6502
 
-common_options="-d3 -8 -a -h -i -y -s --sp=01FD --phi2= --rdy= --rst="
+common_options="-d0 -8 -a -h -i -y -s --sp=01FD --phi2= --rdy= --rst="
 
 declare -A test_options
 
@@ -37,6 +37,8 @@ test_options[romcopy_hipoke_17]="--emul=1 --pb=00 --db=00 --dp=0000"
             test_options[reset]="--emul=1 --pb=00 --db=00 --dp=0000"
              test_options[test]="--emul=1 --pb=00 --db=00 --dp=0000"
        test_options[hog816_emu]="--emul=1 --pb=00 --db=00 --dp=0000"
+    test_options[dormann_d6502]="--emul=1 --pb=00 --db=00 --dp=0000 --sp= --quiet"
+
 
 # Tests to run in native mode
  test_options[hog816_interrupt]="--emul=0 --pb=01 --db=01 --dp=1900"
