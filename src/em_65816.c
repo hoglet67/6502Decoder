@@ -2271,16 +2271,30 @@ static int op_ROL(operand_t operand, ea_t ea) {
 }
 
 static int op_RORA(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (A >= 0 && C >= 0) {
-      int tmp = (A >> 1) + (C << 7);
+   // Save the old carry
+   int oldC = C;
+   // Compute the new carry
+   if (A >= 0) {
       C = A & 1;
-      A = tmp;
-      set_NZ_MS(A);
+   } else {
+      C = -1;
+   }
+   // Compute the new A
+   if (MS > 0 && A >= 0) {
+      A = ((A >> 1) | (oldC << 7)) & 0xff;
+   } else if (MS == 0 && A >= 0 && B >= 0) {
+      A = ((A >> 1) | (B << 7)) & 0xff;
    } else {
       A = -1;
-      set_NZC_unknown();
    }
+   // Compute the new B
+   if (MS == 0 && B >= 0 && oldC >= 0) {
+      B = ((B >> 1) | (oldC << 7)) & 0xff;
+   } else if (MS < 0) {
+      B = -1;
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
