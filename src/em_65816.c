@@ -825,6 +825,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          }
       }
    }
+   // TODO: Infer MS and XS where possible in other addressing modes
    opcount += instr->len - 1;
 
    int op1 = (opcount < 1) ? 0 : sample_q[1].data;
@@ -863,15 +864,20 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
 
    uint32_t operand;
    if (instr->optype == RMWOP) {
-      // e.g. <opcode> <op1> <op2> <read old> <dummy> <write new>
       // 2/12/2020: on Beeb816 the <read old> cycle seems hard to sample
       // reliably with the FX2, so lets use the <dummy> instead.
-      // E=0 - Dummy is a read of the same data (albeit with VPA/VDA=00)
       // E=1 - Dummy is a write of the same data
-      // TODO: handle 16-bits
+      // <opcode> <op1> <op2> <read old> <write old> <write new>
+      // E=0 - Dummy is an internal cycle (with VPA/VDA=00)
+      // MS == 1:       <opcode> <op1> <op2> <read lo> <read hi> <dummy> <write hi> <write lo>
+      // MS == 0:       <opcode> <op1> <op2> <read> <dummy> <write>
       if (E == 1) {
          operand = sample_q[num_cycles - 2].data;
+      } else if (MS == 0) {
+         // 16-bit mode
+         operand = (sample_q[num_cycles - 4].data << 8) + sample_q[num_cycles - 5].data;
       } else {
+         // 8-bit mode
          operand = sample_q[num_cycles - 3].data;
       }
    } else if (instr->optype == BRANCHOP) {
