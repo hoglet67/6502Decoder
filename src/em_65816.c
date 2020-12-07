@@ -2331,7 +2331,6 @@ static int op_ROR(operand_t operand, ea_t ea) {
       set_NZ8(tmp);
    } else if (MS == 0) {
       // 16-bit mode
-      C = (operand >> 15) & 1;
       tmp = ((operand >> 1) | (oldC << 15)) & 0xffff;
       set_NZ16(tmp);
    } else {
