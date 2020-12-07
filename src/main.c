@@ -45,6 +45,9 @@ static int c816;
 // This is a global, so it's visible to the emulator functions
 arguments_t arguments;
 
+// This is a global, so it's visible to the emulator functions
+int triggered = 0;
+
 // ====================================================================
 // Argp processing
 // ====================================================================
@@ -463,7 +466,6 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
 
    static int interrupt_depth = 0;
    static int skipping_interrupted = 0;
-   static int triggered = 0;
 
    int intr_seen = em->match_interrupt(sample_q, num_samples);
 
@@ -521,7 +523,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
       }
    }
 
-   if (arguments.trigger_start < 0 || (pc >= 0 && pc == arguments.trigger_start)) {
+   if (pc >= 0 && pc == arguments.trigger_start) {
       triggered = 1;
    } else if (pc >= 0 && pc == arguments.trigger_stop) {
       triggered = 0;
@@ -1032,6 +1034,10 @@ int main(int argc, char *argv[]) {
    arguments.filename         = NULL;
 
    argp_parse(&argp, argc, argv, 0, 0, &arguments);
+
+   if (arguments.trigger_start < 0) {
+      triggered = 1;
+   }
 
    arguments.show_something = arguments.show_address | arguments.show_hex | arguments.show_instruction | arguments.show_state | arguments.show_bbcfwa | arguments.show_cycles;
 
