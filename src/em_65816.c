@@ -1819,13 +1819,13 @@ static int op_BVS(operand_t branch_taken, ea_t ea) {
 }
 
 static int op_BIT_IMM(operand_t operand, ea_t ea) {
-   int tmp = get_accumulator();
+   int acc = get_accumulator();
    if (operand == 0) {
       // This makes the remainder less pessimistic
       Z = 1;
-   } else if (tmp >= 0) {
-      // both tmp and operand will be the correct width
-      Z = (tmp & operand) == 0;
+   } else if (acc >= 0) {
+      // both acc and operand will be the correct width
+      Z = (acc & operand) == 0;
    } else {
       Z = -1;
    }
@@ -1871,9 +1871,9 @@ static int op_CLV(operand_t operand, ea_t ea) {
 }
 
 static int op_CMP(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (A >= 0) {
-      int tmp = A - operand;
+   int acc = get_accumulator();
+   if (acc >= 0) {
+      int tmp = acc - operand;
       C = tmp >= 0;
       set_NZ_MS(tmp);
    } else {
@@ -2455,10 +2455,10 @@ static int op_STZ(operand_t operand, ea_t ea) {
 
 
 static int op_TSB(operand_t operand, ea_t ea) {
-   int tmp = get_accumulator();
-   if (tmp >= 0) {
-      Z = ((tmp & operand) == 0);
-      return operand | tmp;
+   int acc = get_accumulator();
+   if (acc >= 0) {
+      Z = ((acc & operand) == 0);
+      return operand | acc;
    } else {
       Z = -1;
       return -1;
@@ -2466,10 +2466,10 @@ static int op_TSB(operand_t operand, ea_t ea) {
 }
 
 static int op_TRB(operand_t operand, ea_t ea) {
-   int tmp = get_accumulator();
-   if (tmp >= 0) {
-      Z = ((tmp & operand) == 0);
-      return operand &~ tmp;
+   int acc = get_accumulator();
+   if (acc >= 0) {
+      Z = ((acc & operand) == 0);
+      return operand &~ acc;
    } else {
       Z = -1;
       return -1;
