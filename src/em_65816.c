@@ -1679,19 +1679,38 @@ static int op_AND(operand_t operand, ea_t ea) {
 }
 
 static int op_ASLA(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (A >= 0) {
+   // Compute the new carry
+   if (MS > 0 && A >= 0) {
+      // 8-bit mode
       C = (A >> 7) & 1;
-      A = (A << 1) & 0xff;
-      set_NZ_MS(A);
+   } else if (MS == 0 && B >= 0) {
+      // 16-bit mode
+      C = (B >> 7) & 1;
    } else {
-      set_NZC_unknown();
+      // width unknown
+      C = -1;
    }
+   // Compute the new B
+   if (MS == 0 && B >= 0) {
+      if (A >= 0) {
+         B = ((B << 1) & 0xfe) | ((A >> 7) & 1);
+      } else {
+         B = -1;
+      }
+   } else if (MS < 0) {
+      B = -1;
+   }
+   // Compute the new A
+   if (A >= 0) {
+      A = (A << 1) & 0xff;
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
 static int op_ASL(operand_t operand, ea_t ea) {
-   // In 8-bit mode the uppwe byte is ignored by the memory write code
+   // In 8-bit mode the upper byte is ignored by the memory write code
    int tmp = (operand << 1) & 0xffff;
    if (MS > 0) {
       // 8-bit mode
