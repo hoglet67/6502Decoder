@@ -1643,7 +1643,7 @@ static int op_ADC(operand_t operand, ea_t ea) {
 static int op_AND(operand_t operand, ea_t ea) {
    // A is always updated, regardless of the size
    if (A >= 0) {
-      A = A & operand;
+      A = A & (operand & 255);
    }
    // B is updated only of the size is 16
    if (B >= 0) {
@@ -1933,7 +1933,7 @@ static int op_DEY(operand_t operand, ea_t ea) {
 static int op_EOR(operand_t operand, ea_t ea) {
    // A is always updated, regardless of the size
    if (A >= 0) {
-      A = A ^ operand;
+      A = A ^ (operand & 255);
    }
    // B is updated only of the size is 16
    if (B >= 0) {
@@ -2015,8 +2015,8 @@ static int op_JSR(operand_t operand, ea_t ea) {
 }
 
 static int op_LDA(operand_t operand, ea_t ea) {
-   A = operand;
-   if (!MS) {
+   A = operand & 255;
+   if (MS == 0) {
       B = (operand >> 8) & 0xff;
    }
    set_NZ_MS(A);
@@ -2058,7 +2058,7 @@ static int op_LSR(operand_t operand, ea_t ea) {
 static int op_ORA(operand_t operand, ea_t ea) {
    // A is always updated, regardless of the size
    if (A >= 0) {
-      A = A | operand;
+      A = A | (operand & 255);
    }
    // B is updated only of the size is 16
    if (B >= 0) {
