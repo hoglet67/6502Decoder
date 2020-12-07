@@ -2312,27 +2312,36 @@ static int op_STZ(operand_t operand, ea_t ea) {
    return operand;
 }
 
-static int op_TSB(operand_t operand, ea_t ea) {
-   if (A >= 0) {
-      Z = (A & operand) == 0;
-      if (ea >= 0 && memory[ea] >= 0) {
-         return memory[ea] | A;
-      }
+static int op_TSBTRB(operand_t operand, ea_t ea, int set) {
+   int tmp;
+   if (MS > 0 && A >= 0) {
+      // 8-bit mode
+      tmp = A;
+   } else if (MS == 0 && A >= 0 && B >= 0) {
+      // 16-bit mode
+      tmp = (B << 8) + A;
    } else {
-      Z = -1;
+      // unknown width
+      tmp = -1;
    }
+   if (tmp >= 0) {
+      Z = ((tmp & operand) == 0);
+      if (set) {
+         return operand | tmp;
+      } else {
+         return operand & ~tmp;
+      }
+   }
+   Z = -1;
    return -1;
 }
+
+static int op_TSB(operand_t operand, ea_t ea) {
+   return op_TSBTRB(operand, ea, 1);
+}
+
 static int op_TRB(operand_t operand, ea_t ea) {
-   if (A >= 0) {
-      Z = (A & operand) == 0;
-      if (ea >= 0 && memory[ea] >= 0) {
-         return (memory[ea] & ~A);
-      }
-   } else {
-      Z = -1;
-   }
-   return -1;
+   return op_TSBTRB(operand, ea, 0);
 }
 
 // This is used to implement: TAX, TAY, TSX
