@@ -480,7 +480,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
       return num_samples;
    }
 
-   if (arguments.debug & 1) {
+   if (triggered && arguments.debug & 1) {
       dump_samples(sample_q, num_cycles);
    }
 
