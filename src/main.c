@@ -463,7 +463,7 @@ static char *get_fwa(int a_sign, int a_exp, int a_mantissa, int a_round, int a_o
 
 
 static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen) {
-
+   static int total_cycles = 0;
    static int interrupt_depth = 0;
    static int skipping_interrupted = 0;
 
@@ -525,8 +525,10 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
 
    if (pc >= 0 && pc == arguments.trigger_start) {
       triggered = 1;
+      printf("start trigger hit at cycle %d\n", total_cycles);
    } else if (pc >= 0 && pc == arguments.trigger_stop) {
       triggered = 0;
+      printf("stop trigger hit at cycle %d\n", total_cycles);
    }
 
    // Exclude interrupts from profiling
@@ -649,7 +651,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
 
    }
 
-
+   total_cycles += num_cycles;
    return num_cycles;
 }
 
