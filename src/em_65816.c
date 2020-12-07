@@ -2206,16 +2206,39 @@ static int op_PLY(operand_t operand, ea_t ea) {
 }
 
 static int op_ROLA(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (A >= 0 && C >= 0) {
-      int tmp = (A << 1) + C;
-      C = (tmp >> 8) & 1;
-      A = tmp & 0xff;
-      set_NZ_MS(A);
+   // Save the old carry
+   int oldC = C;
+   // Compute the new carry
+   if (MS > 0 && A >= 0) {
+      // 8-bit mode
+      C = (A >> 7) & 1;
+   } else if (MS == 0 && B >= 0) {
+      // 16-bit mode
+      C = (B >> 7) & 1;
    } else {
-      A = -1;
-      set_NZC_unknown();
+      // width unknown
+      C = -1;
    }
+   // Compute the new B
+   if (MS == 0 && B >= 0) {
+      if (A >= 0) {
+         B = ((B << 1) & 0xfe) | ((A >> 7) & 1);
+      } else {
+         B = -1;
+      }
+   } else if (MS < 0) {
+      B = -1;
+   }
+   // Compute the new A
+   if (A >= 0) {
+      if (oldC >= 0) {
+         A = ((A << 1) | oldC) & 0xff;
+      } else {
+         A = -1;
+      }
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
