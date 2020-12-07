@@ -1623,9 +1623,10 @@ static int op_RTL(operand_t operand, ea_t ea) {
 // ====================================================================
 
 static int op_ADC(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (A >= 0 && C >= 0) {
+   int acc = get_accumulator();
+   if (acc >= 0 && C >= 0) {
       if (D == 1) {
+         // TODO: Fix for 16-bits!
          // Decimal mode ADC - works like a 65C02
          int al;
          int ah;
@@ -1647,12 +1648,21 @@ static int op_ADC(operand_t operand, ea_t ea) {
          A = (al & 0xF) | (ah << 4);
       } else {
          // Normal mode ADC
-         int tmp = A + operand + C;
-         C = (tmp >> 8) & 1;
-         V = (((A ^ operand) & 0x80) == 0) && (((A ^ tmp) & 0x80) != 0);
-         A = tmp & 0xff;
+         int tmp = acc + operand + C;
+         if (MS > 0) {
+            // 8-bit mode
+            A = tmp & 0xff;
+            C = (tmp >> 8) & 1;
+            V = (((acc ^ operand) & 0x80) == 0) && (((acc ^ tmp) & 0x80) != 0);
+         } else {
+            // 16-bit mode
+            A = tmp & 0xff;
+            B = (tmp >> 8) & 0xff;
+            C = (tmp >> 16) & 1;
+            V = (((acc ^ operand) & 0x8000) == 0) && (((acc ^ tmp) & 0x8000) != 0);
+         }
       }
-      set_NZ_MS(A);
+      set_NZ_AB(A, B);
    } else {
       A = -1;
       set_NVZC_unknown();
@@ -2354,9 +2364,10 @@ static int op_RTI(operand_t operand, ea_t ea) {
 }
 
 static int op_SBC(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (A >= 0 && C >= 0) {
+   int acc = get_accumulator();
+   if (acc >= 0 && C >= 0) {
       if (D == 1) {
+         // TODO: Fix for 16-bits!
          // Decimal mode SBC - works like a 65C02
          int al;
          int tmp;
@@ -2374,12 +2385,21 @@ static int op_SBC(operand_t operand, ea_t ea) {
          A = tmp & 0xff;
       } else {
          // Normal mode SBC
-         int tmp = A - operand - (1 - C);
-         C = 1 - ((tmp >> 8) & 1);
-         V = (((A ^ operand) & 0x80) != 0) && (((A ^ tmp) & 0x80) != 0);
-         A = tmp & 0xff;
+         int tmp = acc - operand - (1 - C);
+         if (MS > 0) {
+            // 8-bit mode
+            A = tmp & 0xff;
+            C = 1 - ((tmp >> 8) & 1);
+            V = (((acc ^ operand) & 0x80) != 0) && (((acc ^ tmp) & 0x80) != 0);
+         } else {
+            // 16-bit mode
+            A = tmp & 0xff;
+            B = (tmp >> 8) & 0xff;
+            C = 1 - ((tmp >> 16) & 1);
+            V = (((acc ^ operand) & 0x8000) != 0) && (((acc ^ tmp) & 0x8000) != 0);
+         }
       }
-      set_NZ_MS(A);
+      set_NZ_AB(A, B);
    } else {
       A = -1;
       set_NVZC_unknown();
