@@ -1081,6 +1081,8 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       int result = instr->emulate(operand, ea);
 
       // Model memory writes
+      //
+      // TODO: we should check the result what is actually written
       if (ea >= 0 && (instr->optype == WRITEOP || instr->optype == RMWOP)) {
          // STA STX STY STZ
          // INC DEX ASL LSR ROL ROR
@@ -1090,11 +1092,9 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          // These cases could be eliminated if we snoopedthe result of Read-Modify-Weith
          int reslo = result < 0 ? -1 : (result & 0xff);
          int reshi = result < 0 ? -1 : ((result >> 8) & 0xff);
+         memory_write(reslo,  ea);
          if (size == 0) {
-            memory_write(reslo,  ea);
             memory_write(reshi, (ea + 1) & 0xffff);
-         } else if (size > 0) {
-            memory_write(reslo, ea);
          }
       }
    }
