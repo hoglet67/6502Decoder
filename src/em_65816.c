@@ -2111,14 +2111,28 @@ static int op_LDY(operand_t operand, ea_t ea) {
 }
 
 static int op_LSRA(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
+   // Compute the new carry
    if (A >= 0) {
       C = A & 1;
-      A = A >> 1;
-      set_NZ_MS(A);
    } else {
-      set_NZC_unknown();
+      C = -1;
    }
+   // Compute the new A
+   if (MS > 0 && A >= 0) {
+      A = A >> 1;
+   } else if (MS == 0 && A >= 0 && B >= 0) {
+      A = ((A >> 1) | (B << 7)) & 0xff;
+   } else {
+      A = -1;
+   }
+   // Compute the new B
+   if (MS == 0 && B >= 0) {
+      B = (B >> 1) & 0xff;
+   } else if (MS < 0) {
+      B = -1;
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
