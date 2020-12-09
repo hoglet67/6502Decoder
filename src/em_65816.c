@@ -167,10 +167,6 @@ static int memory[0x1000000];
 static char *x1_ops[] = {
    "CPX",
    "CPY",
-   "DEX",
-   "DEY",
-   "INX",
-   "INY",
    "LDX",
    "LDY",
    "PHX",
@@ -575,6 +571,167 @@ static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruc
    PC = vector;
 }
 
+static int get_num_cycles(sample_t *sample_q) {
+   int opcode = sample_q[0].data;
+   int op1    = sample_q[1].data;
+   int op2    = sample_q[2].data;
+   InstrType *instr = &instr_table[opcode];
+   int cycle_count = instr->cycles;
+
+   // E MS    Correction:
+   // ?  ?    ?
+   // ?  0    ?
+   // 0  ?    ?
+   // 0  0    1
+   // ?  1    0
+   // 0  1    0
+   // 1  ?    0
+   // 1  0    0
+   // 1  1    0
+
+   if (instr->m_extra) {
+      if (E == 0 && MS == 0) {
+         cycle_count += instr->m_extra;
+      } else if (!(E > 0 || MS > 0)) {
+         return -1;
+      }
+   }
+
+   if (instr->x_extra) {
+      if (E == 0 && XS == 0) {
+         cycle_count += instr->x_extra;
+      } else if (!(E > 0 || XS > 0)) {
+         return -1;
+      }
+   }
+
+   // RTI takes one extra cycle in native mode
+   if (opcode == 0x40) {
+      if (E == 0) {
+         cycle_count++;
+      } else if (E < 0) {
+         return -1;
+      }
+   }
+
+   // Account for extra cycle in a page crossing in (indirect), Y (not stores)
+   // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
+   if ((instr->mode == INDY) && (instr->optype != WRITEOP) && Y >= 0) {
+      int base = (sample_q[3].data << 8) + sample_q[2].data;
+      if ((base & 0xff00) != ((base + Y) & 0xff00)) {
+         cycle_count++;
+      }
+   }
+
+   // Account for extra cycle in a page crossing in absolute indexed (not stores or rmw) in emulated mode
+   if (((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype == READOP)) {
+      int correction = -1;
+      int index = (instr->mode == ABSX) ? X : Y;
+      if (index >= 0) {
+         int base = op1 + (op2 << 8);
+         if ((base & 0xff00) != ((base + index) & 0xff00)) {
+            correction = 1;
+         } else {
+            correction = 0;
+         }
+      }
+      // E  C
+      // 1  1    1
+      // ?  ?    ?
+      // ?  1    ?
+      // 1  ?    ?
+      // ?  0    0
+      // 0  ?    0
+      // 0  0    0
+      // 0  1    0
+      // 1  0    0
+      if (E > 0 && correction > 0) {
+         cycle_count++;
+      } else if (!(E == 0 || correction == 0)) {
+         return -1;
+      }
+   }
+
+   // Account for extra cycles in a branch
+   if (((opcode & 0x1f) == 0x10) || (opcode == 0x80)) {
+      // Default to backards branches taken, forward not taken
+      // int taken = ((int8_t)op1) < 0;
+      int taken = -1;
+      switch (opcode) {
+      case 0x10: // BPL
+         if (N >= 0) {
+            taken = !N;
+         }
+         break;
+      case 0x30: // BMI
+         if (N >= 0) {
+            taken = N;
+         }
+         break;
+      case 0x50: // BVC
+         if (V >= 0) {
+            taken = !V;
+         }
+         break;
+      case 0x70: // BVS
+         if (V >= 0) {
+            taken = V;
+         }
+         break;
+      case 0x80: // BRA
+         taken = 1;
+         cycle_count--; // instr table contains 3 for cycle count
+         break;
+      case 0x90: // BCC
+         if (C >= 0) {
+            taken = !C;
+         }
+         break;
+      case 0xB0: // BCS
+         if (C >= 0) {
+            taken = C;
+         }
+         break;
+      case 0xD0: // BNE
+         if (Z >= 0) {
+            taken = !Z;
+         }
+         break;
+      case 0xF0: // BEQ
+         if (Z >= 0) {
+            taken = Z;
+         }
+         break;
+      }
+      if (taken < 0) {
+         return -1;
+      } else if (taken) {
+         // A taken branch is 3 cycles, not 2
+         cycle_count++;
+         // In emulation node, a taken branch that crosses a page boundary is 4 cycle
+         int page_cross = -1;
+         if (E > 0 && PC >= 0) {
+            int target =  (PC + 2) + ((int8_t)(op1));
+            if ((target & 0xFF00) != ((PC + 2) & 0xff00)) {
+               page_cross = 1;
+            } else {
+               page_cross = 0;
+            }
+         } else if (E == 0) {
+            page_cross = 0;
+         }
+         if (page_cross < 0) {
+            return -1;
+         } else {
+            cycle_count += page_cross;
+         }
+      }
+   }
+
+   return cycle_count;
+}
+
+
 static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
 
    printf("VPA/VDA must be connected in 65816 mode\n");
@@ -721,6 +878,10 @@ static void em_65816_init(arguments_t *args) {
                break;
             }
          }
+         // if ABSX ot ABXY add
+         if (instr->mode == ABSX || instr->mode == ABSY) {
+            instr->x_extra++;
+         }
       }
       // Copy the length and format from the address mode, for efficiency
       instr->len = addr_mode_table[instr->mode].len;
@@ -812,6 +973,17 @@ static void em_65816_interrupt(sample_t *sample_q, int num_cycles, instruction_t
 }
 
 static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
+
+   // Validate the num_cycles passed in
+   int expected = get_num_cycles(sample_q);
+   if (expected >= 0) {
+      if (expected != num_cycles) {
+         printf ("cycle prediction fail: expected %d actual %d\n", expected, num_cycles);
+      }
+   }
+   //   else {
+   //      printf ("cycle prediction unknown\n");
+   //  }
 
    // Unpack the instruction bytes
    int opcode = sample_q[0].data;
@@ -2588,6 +2760,7 @@ static int op_TYA(operand_t operand, ea_t ea) {
 // ====================================================================
 // Opcode Tables
 // ====================================================================
+
 
 static InstrType instr_table_65c816[] = {
    /* 00 */   { "BRK",  0, IMM   , 7, 0, OTHER,    0},
