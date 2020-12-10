@@ -1121,6 +1121,26 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       }
    }
 
+   // Operand 2 is the value written back in a store or read-modify-write
+   // See RMW comment above for bus cycles
+   uint32_t operand2 = operand;
+   if (instr->optype == RMWOP) {
+      if (E == 0 && MS == 0) {
+         // 16-bit - byte ordering is high then low
+         operand2 = (sample_q[num_cycles - 2].data << 8) + sample_q[num_cycles - 1].data;
+      } else {
+         // 8-bit
+         operand2 = sample_q[num_cycles - 1].data;
+      }
+   } else if (instr->optype == WRITEOP) {
+      if (E == 0 && MS == 0) {
+         // 16-bit - byte ordering is low then high
+         operand2 = (sample_q[num_cycles - 1].data << 8) + sample_q[num_cycles - 2].data;
+      } else {
+         operand2 = sample_q[num_cycles - 1].data;
+      }
+   }
+
    // For instructions that read or write memory, we need to work out the effective address
    // Note: not needed for stack operations, as S is used directly
 
@@ -1264,23 +1284,26 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       }
 
       // Execute the instruction specific function
+      // (This returns -1 if the result is unknown or invalid)
       int result = instr->emulate(operand, ea);
 
-      // Model memory writes
-      //
-      // TODO: we should check the result what is actually written
-      if (ea >= 0 && (instr->optype == WRITEOP || instr->optype == RMWOP)) {
+      if (instr->optype == WRITEOP || instr->optype == RMWOP) {
+
          // STA STX STY STZ
          // INC DEX ASL LSR ROL ROR
          // TSB TRB
-         // (if A is unknown, then TSB/TRB are uiknown)
-         // (if C is unlnown, then ROL/ROR are unknown)
-         // These cases could be eliminated if we snoopedthe result of Read-Modify-Weith
-         int reslo = (result < 0) ? -1 : (result & 0xff);
-         int reshi = (result < 0) ? -1 : ((result >> 8) & 0xff);
-         memory_write(reslo,  ea);
-         if (size == 0) {
-            memory_write(reshi, (ea + 1) & 0xffff);
+
+         // Check result of instruction against bye
+         if (result >= 0 && result != operand2) {
+            failflag |= 1;
+         }
+
+         // Model memory writes based on result seen on bus
+         if (ea >= 0) {
+            memory_write(operand2 & 0xff,  ea);
+            if (size == 0) {
+               memory_write((operand2 >> 8) & 0xff, (ea + 1) & 0xffff);
+            }
          }
       }
    }
