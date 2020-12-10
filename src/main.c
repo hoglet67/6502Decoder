@@ -119,11 +119,13 @@ static struct argp_option options[] = {
    { "bbctube",       8,         0,                   0, "Decode BBC tube protocol"},
    { "vda",           9,  "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for vda, blank if unconnected"},
    { "vpa",          10,  "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for vpa, blank if unconnected"},
-   { "emul",         11,     "HEX", OPTION_ARG_OPTIONAL, "Initial value E flag in 65816 mode"},
-   { "sp",           12,     "HEX", OPTION_ARG_OPTIONAL, "Initial value Stack Pointer register (65816)"},
-   { "pb",           13,     "HEX", OPTION_ARG_OPTIONAL, "Initial value Program Bank register (65816)"},
-   { "db",           14,     "HEX", OPTION_ARG_OPTIONAL, "Initial value Data Bank register (65816)"},
-   { "dp",           15,     "HEX", OPTION_ARG_OPTIONAL, "Initial value Direct Page register (65816)"},
+   { "emul",         11,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the E flag in 65816 mode"},
+   { "sp",           12,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register (65816)"},
+   { "pb",           13,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Program Bank register (65816)"},
+   { "db",           14,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Data Bank register (65816)"},
+   { "dp",           15,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Direct Page register (65816)"},
+   { "ms",           16,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the M flag (65816)"},
+   { "xs",           17,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the X flag (65816)"},
    { 0 }
 };
 
@@ -229,6 +231,20 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->dp_reg = strtol(arg, (char **)NULL, 16);
       } else {
          arguments->dp_reg = -1;
+      }
+      break;
+   case  16:
+      if (arg && strlen(arg) > 0) {
+         arguments->ms_flag = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->ms_flag = -1;
+      }
+      break;
+   case  17:
+      if (arg && strlen(arg) > 0) {
+         arguments->xs_flag = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->xs_flag = -1;
       }
       break;
    case 'c':
@@ -1027,6 +1043,8 @@ int main(int argc, char *argv[]) {
    arguments.pb_reg           = -1;
    arguments.db_reg           = -1;
    arguments.dp_reg           = -1;
+   arguments.ms_flag          = -1;
+   arguments.xs_flag          = -1;
    arguments.byte             = 0;
    arguments.debug            = 0;
    arguments.profile          = 0;

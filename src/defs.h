@@ -74,6 +74,8 @@ typedef struct {
    int bbctube;
    int undocumented;
    int e_flag;
+   int ms_flag;
+   int xs_flag;
    int sp_reg;
    int pb_reg;
    int db_reg;

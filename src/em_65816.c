@@ -864,6 +864,12 @@ static void em_65816_init(arguments_t *args) {
    if (args->dp_reg >= 0) {
       DP = args->dp_reg & 0xffff;
    }
+   if (args->ms_flag >= 0) {
+      MS = args->ms_flag & 1;
+   }
+   if (args->xs_flag >= 0) {
+      XS = args->xs_flag & 1;
+   }
    InstrType *instr = instr_table;
    for (int i = 0; i < 256; i++) {
       // Compute the extra cycles for the 816 when M=0 and/or X=0
