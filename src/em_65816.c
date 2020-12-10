@@ -1100,6 +1100,9 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // RTL: the operand is the data pulled from the stack (PCL, PCH, PBR)
       // <opcode> <op1> <read dummy> <read pcl> <read pch> <read pbr>
       operand = (sample_q[5].data << 16) + (sample_q[4].data << 8) + sample_q[3].data;
+   } else if (instr->mode == BM) {
+      // Block Move
+      operand = sample_q[3].data;
    } else if (instr->mode == IMM) {
       // Immediate addressing mode: the operand is the 2nd byte of the instruction
       operand = (op2 << 8) + op1;
@@ -1261,6 +1264,9 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          ea = (PC + ((int16_t)((op2 << 8) + op1)) + 3) & 0xffff;
       }
       break;
+   case BM:
+      // e.g. MVN 0, 2
+      ea = (op2 << 8) + op1;
    default:
       // covers IMM, IMP, IMPA, IND16, IND1X, BM
       break;
@@ -1601,18 +1607,24 @@ static int op_PLD(operand_t operand, ea_t ea) {
    return -1;
 }
 
-// Block Move (Decrementing)
-static int op_MVP(operand_t operand, ea_t ea) {
-   // TODO: Add memory modelling
+static int op_MV(int data, int sba, int dba, int dir) {
+   // operand is the data byte (from the bus read)
+   // ea = (op2 << 8) + op1 == (srcbank << 8) + dstbank;
+   if (X >= 0) {
+      memory_read(data, (sba << 16) + X);
+   }
+   if (Y >= 0) {
+      memory_write(data, (dba << 16) + Y);
+   }
    if (A >= 0 && B >= 0) {
       int C = (((B << 8) | A) - 1) & 0xffff;
       A = C & 0xff;
       B = (C >> 8) & 0xff;
       if (X >= 0) {
-         X = (X - 1) & 0xffff;
+         X = (X + dir) & 0xffff;
       }
       if (Y >= 0) {
-         Y = (Y - 1) & 0xffff;
+         Y = (Y + dir) & 0xffff;
       }
       if (PC >= 0 && C != 0xffff) {
          PC -= 3;
@@ -1627,29 +1639,14 @@ static int op_MVP(operand_t operand, ea_t ea) {
    return -1;
 }
 
+// Block Move (Decrementing)
+static int op_MVP(operand_t operand, ea_t ea) {
+   return op_MV(operand, (ea >> 8) & 0xff, ea & 0xff, -1);
+}
+
 // Block Move (Incrementing)
 static int op_MVN(operand_t operand, ea_t ea) {
-   if (A >= 0 && B >= 0) {
-      int C = (((B << 8) | A) - 1) & 0xffff;
-      A = C & 0xff;
-      B = (C >> 8) & 0xff;
-      if (X >= 0) {
-         X = (X + 1) & 0xffff;
-      }
-      if (Y >= 0) {
-         Y = (Y + 1) & 0xffff;
-      }
-      if (PC >= 0 && C != 0xffff) {
-         PC -= 3;
-      }
-   } else {
-      A = -1;
-      B = -1;
-      X = -1;
-      Y = -1;
-      PC = -1;
-   }
-   return -1;
+   return op_MV(operand, (ea >> 8) & 0xff, ea & 0xff, 1);
 }
 
 // Transfer Transfer C accumulator to Direct Page register
