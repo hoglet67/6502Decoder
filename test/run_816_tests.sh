@@ -28,7 +28,7 @@ done
 
 DECODE=../decode6502
 
-common_options="-d0 -8 -a -h -i -y -s --sp=01E0 --phi2= --rdy= --rst="
+common_options="-d2 -8 -a -h -i -y -s --sp=01E0 --phi2= --rdy= --rst="
 
 declare -A test_options
 
