@@ -733,11 +733,17 @@ static int get_num_cycles(sample_t *sample_q) {
 
 
 static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
-
-   printf("VPA/VDA must be connected in 65816 mode\n");
-   exit(1);
-
-   return 0;
+   //printf("VPA/VDA must be connected in 65816 mode\n");
+   //exit(1);
+   if (intr_seen) {
+      return (E == 0) ? 8 : 7;
+   }
+   int num_cycles = get_num_cycles(sample_q);
+   if (num_cycles >= 0) {
+      return num_cycles;
+   }
+   printf ("cycle prediction unknown\n");
+   return 1;
 }
 
 static int count_cycles_with_sync(sample_t *sample_q) {
@@ -747,6 +753,13 @@ static int count_cycles_with_sync(sample_t *sample_q) {
             return 0;
          }
          if (sample_q[i].type == OPCODE) {
+            // Validate the num_cycles passed in
+            int expected = get_num_cycles(sample_q);
+            if (expected >= 0) {
+               if (i != expected) {
+                  printf ("cycle prediction fail: expected %d actual %d\n", expected, i);
+               }
+            }
             return i;
          }
       }
@@ -973,17 +986,6 @@ static void em_65816_interrupt(sample_t *sample_q, int num_cycles, instruction_t
 }
 
 static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
-
-   // Validate the num_cycles passed in
-   int expected = get_num_cycles(sample_q);
-   if (expected >= 0) {
-      if (expected != num_cycles) {
-         printf ("cycle prediction fail: expected %d actual %d\n", expected, num_cycles);
-      }
-   }
-   //   else {
-   //      printf ("cycle prediction unknown\n");
-   //  }
 
    // Unpack the instruction bytes
    int opcode = sample_q[0].data;
