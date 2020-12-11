@@ -129,10 +129,10 @@ static void Initialize(void)
 		// To be sure, clear and reset all FIFOs although
 		// this is probably not strictly required.
 		FIFORESET = 0x80;  SYNCDELAY;  // NAK all requests from host.
-		FIFORESET = 0x82;  SYNCDELAY;  // Reset individual EP (2,4,6,8)
-		FIFORESET = 0x84;  SYNCDELAY;
-		FIFORESET = 0x86;  SYNCDELAY;
-		FIFORESET = 0x88;  SYNCDELAY;
+		FIFORESET = 0x02;  SYNCDELAY;  // Reset individual EP (2,4,6,8)
+		FIFORESET = 0x04;  SYNCDELAY;
+		FIFORESET = 0x06;  SYNCDELAY;
+		FIFORESET = 0x08;  SYNCDELAY;
 		FIFORESET = 0x00;  SYNCDELAY;  // Resume normal operation.
 
 		// EP6FIFOCFG:
