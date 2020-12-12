@@ -571,12 +571,16 @@ static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruc
    PC = vector;
 }
 
-static int get_num_cycles(sample_t *sample_q) {
+static int get_num_cycles(sample_t *sample_q, int intr_seen) {
    int opcode = sample_q[0].data;
    int op1    = sample_q[1].data;
    int op2    = sample_q[2].data;
    InstrType *instr = &instr_table[opcode];
    int cycle_count = instr->cycles;
+
+   if (intr_seen) {
+      return (E == 0) ? 8 : 7;
+   }
 
    // E MS    Correction:
    // ?  ?    ?
@@ -615,7 +619,7 @@ static int get_num_cycles(sample_t *sample_q) {
    }
 
    // Account for extra cycle in a page crossing in (indirect), Y (not stores)
-   // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
+   // <opcode> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
    if ((instr->mode == INDY) && (instr->optype != WRITEOP) && Y >= 0) {
       int base = (sample_q[3].data << 8) + sample_q[2].data;
       if ((base & 0xff00) != ((base + Y) & 0xff00)) {
@@ -735,10 +739,7 @@ static int get_num_cycles(sample_t *sample_q) {
 static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
    //printf("VPA/VDA must be connected in 65816 mode\n");
    //exit(1);
-   if (intr_seen) {
-      return (E == 0) ? 8 : 7;
-   }
-   int num_cycles = get_num_cycles(sample_q);
+   int num_cycles = get_num_cycles(sample_q, intr_seen);
    if (num_cycles >= 0) {
       return num_cycles;
    }
@@ -746,7 +747,7 @@ static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
    return 1;
 }
 
-static int count_cycles_with_sync(sample_t *sample_q) {
+static int count_cycles_with_sync(sample_t *sample_q, int intr_seen) {
    if (sample_q[0].type == OPCODE) {
       for (int i = 1; i < DEPTH; i++) {
          if (sample_q[i].type == LAST) {
@@ -754,7 +755,7 @@ static int count_cycles_with_sync(sample_t *sample_q) {
          }
          if (sample_q[i].type == OPCODE) {
             // Validate the num_cycles passed in
-            int expected = get_num_cycles(sample_q);
+            int expected = get_num_cycles(sample_q, intr_seen);
             if (expected >= 0) {
                if (i != expected) {
                   printf ("cycle prediction fail: expected %d actual %d\n", expected, i);
@@ -958,7 +959,7 @@ static int em_65816_count_cycles(sample_t *sample_q, int intr_seen) {
    if (sample_q[0].type == UNKNOWN) {
       return count_cycles_without_sync(sample_q, intr_seen);
    } else {
-      return count_cycles_with_sync(sample_q);
+      return count_cycles_with_sync(sample_q, intr_seen);
    }
 }
 
@@ -1083,7 +1084,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       operand = (sample_q[4].data << 8) + sample_q[5].data;
    } else if (opcode == 0xfc) {
       // JSR (IND, X): the operand is the data pushed to the stack (PCH, PCL)
-      // <opcode> <op1> <write pch> <write pcl> <op2> <internal> <read new pcl> <read new pcl>
+      // <opcode> <op1> <write pch> <write pcl> <op2> <internal> <read new pcl> <read new pch>
       operand = (sample_q[2].data << 8) + sample_q[3].data;
    } else if (opcode == 0x22) {
       // JSL: the operand is the data pushed to the stack (PCB, PCH, PCL)
@@ -1156,24 +1157,24 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    // Note: not needed for stack operations, as S is used directly
 
    // TODO: need to account for optional extra cycle for direct register low (DL) not equal 0.
-   // TODO: could do additional memory modelling of pointer accesses
 
    // DP page wrapping only happens:
    // - in Emulation Mode (E=1), and
    // - if DPL == 00, and
    // - only for old instructions
    int wrap = E && !(DP & 0xff) && !(instr->newop);
-
    int ea = -1;
    int index;
    switch (instr->mode) {
    case ZP:
+      // Calculate the effective address
       if (DP >= 0) {
          ea = (DP + op1);
       }
       break;
    case ZPX:
    case ZPY:
+      // Calculate the effective address
       index = instr->mode == ZPX ? X : Y;
       if (index >= 0 && DP >= 0) {
          if (wrap) {
@@ -1184,7 +1185,18 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       }
       break;
    case INDY:
-      // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand>
+      // <opcode> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand>
+      // Model the memory read of the pointer
+      if (DP >= 0) {
+         if (wrap) {
+            memory_read(sample_q[2].data, (DP & 0xFF00) + op1);
+            memory_read(sample_q[3].data, (DP & 0xFF00) + ((op1 + 1) & 0xff));
+         } else {
+            memory_read(sample_q[2].data, DP + op1);
+            memory_read(sample_q[3].data, DP + op1 + 1);
+         }
+      }
+      // Calculate the effective address
       index = Y;
       if (index >= 0 && DB >= 0) {
          ea = (sample_q[3].data << 8) + sample_q[2].data;
@@ -1192,30 +1204,55 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       }
       break;
    case INDX:
-      // <opcpde> <op1> <dummy> <addrlo> <addrhi> <operand>
+      // <opcode> <op1> <dummy> <addrlo> <addrhi> <operand>
+      // Model the memory read of the pointer
+      if (DP >= 0 && X >= 0) {
+         if (wrap) {
+            memory_read(sample_q[3].data, (DP & 0xFF00) + ((op1 + X) & 0xff));
+            memory_read(sample_q[4].data, (DP & 0xFF00) + ((op1 + X + 1) & 0xff));
+         } else {
+            memory_read(sample_q[3].data, DP + op1 + X);
+            memory_read(sample_q[4].data, DP + op1 + X + 1);
+         }
+      }
+      // Calculate the effective address
       if (DB >= 0) {
          ea = (DB << 16) + (sample_q[4].data << 8) + sample_q[3].data;
       }
       break;
    case IND:
-      // <opcpde> <op1> <addrlo> <addrhi> <operand>
+      // <opcode> <op1> <addrlo> <addrhi> <operand>
+      // Model the memory read of the pointer
+      if (DP >= 0) {
+         if (wrap) {
+            memory_read(sample_q[2].data, (DP & 0xFF00) + op1);
+            memory_read(sample_q[3].data, (DP & 0xFF00) + ((op1 + 1) & 0xff));
+         } else {
+            memory_read(sample_q[2].data, DP + op1);
+            memory_read(sample_q[3].data, DP + op1 + 1);
+         }
+      }
+      // Calculate the effective address
       if (DB >= 0) {
          ea = (DB << 16) + (sample_q[3].data << 8) + sample_q[2].data;
       }
       break;
    case ABS:
+      // Calculate the effective address
       if (DB >= 0) {
          ea = (DB << 16) + (op2 << 8) + op1;
       }
       break;
    case ABSX:
    case ABSY:
+      // Calculate the effective address
       index = instr->mode == ABSX ? X : Y;
       if (index >= 0 && DB >= 0) {
          ea = (DB << 16) + (((op2 << 8 | op1) + index) & 0xffff);
       }
       break;
    case BRA:
+      // Calculate the effective address
       if (PC > 0) {
          ea = (PC + ((int8_t)(op1)) + 2) & 0xffff;
       }
@@ -1231,6 +1268,12 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    case ISY:
       // e.g. LDA (08, S),Y
       // <opcode> <op1> <internal> <addrlo> <addrhi> <internal> <operand>
+      // Model the memory read of the pointer
+      if (SL >= 0 && SH >= 0) {
+         memory_read(sample_q[3].data, ((SH << 8) + SL + op1) & 0xffff);
+         memory_read(sample_q[4].data, ((SH << 8) + SL + op1 + 1) & 0xffff);
+      }
+      // Calculate the effective address
       index = Y;
       if (index >= 0 && DB >= 0) {
          ea = (DB << 16) + (sample_q[4].data << 8) + sample_q[3].data;
@@ -1239,12 +1282,26 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       break;
    case IDL:
       // e.g. LDA [80]
-      // <opcpde> <op1> <addrlo> <addrhi> <bank> <operand>
+      // <opcode> <op1> <addrlo> <addrhi> <bank> <operand>
+      // Model the memory read of the pointer
+      if (DP >= 0) {
+         memory_read(sample_q[2].data, DP + op1);
+         memory_read(sample_q[3].data, DP + op1 + 1);
+         memory_read(sample_q[4].data, DP + op1 + 2);
+      }
+      // Calculate the effective address
       ea = (sample_q[4].data << 16) + (sample_q[3].data << 8) + sample_q[2].data;
       break;
    case IDLY:
       // e.g. LDA [80],Y
-      // <opcpde> <op1> <addrlo> <addrhi> <bank> [ <page crossing>] <<operand>
+      // <opcode> <op1> <addrlo> <addrhi> <bank> [ <page crossing>] <<operand>
+      // Model the memory read of the pointer
+      if (DP >= 0) {
+         memory_read(sample_q[2].data, DP + op1);
+         memory_read(sample_q[3].data, DP + op1 + 1);
+         memory_read(sample_q[4].data, DP + op1 + 2);
+      }
+      // Calculate the effective address
       index = Y;
       if (index >= 0) {
          ea = (sample_q[4].data << 16) + (sample_q[3].data << 8) + sample_q[2].data;
@@ -1253,10 +1310,12 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       break;
    case ABL:
       // e.g. LDA EE0080
+      // Calculate the effective address
       ea = (op3 << 16) + (op2 << 8) + op1;
       break;
    case ALX:
       // e.g. LDA EE0080,X
+      // Calculate the effective address
       if (X >= 0) {
          ea = ((op3 << 16) + (op2 << 8) + op1 + X) & 0xffffff;
       }
@@ -1264,19 +1323,44 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    case IAL:
       // e.g. JMP [$1234] (this is the only one)
       // <opcode> <op1> <op2> <addrlo> <addrhi> <bank>
+      // Model the memory read of the pointer (always bank 0)
+      memory_read(sample_q[3].data, (op2 << 8) + op1);
+      memory_read(sample_q[4].data, ((op2 << 8) + op1 + 1) & 0xffff);
+      memory_read(sample_q[5].data, ((op2 << 8) + op1 + 2) & 0xffff);
+      // Model the memory read of the pointer
+      // Calculate the effective address
       ea = (sample_q[5].data << 16) + (sample_q[4].data << 8) + sample_q[3].data;
       break;
    case BRL:
       // e.g. PER 1234 or BRL 1234
+      // Calculate the effective address
       if (PC > 0) {
          ea = (PC + ((int16_t)((op2 << 8) + op1)) + 3) & 0xffff;
       }
       break;
    case BM:
       // e.g. MVN 0, 2
+      // Calculate the effective address
       ea = (op2 << 8) + op1;
+      break;
+   case IND16:
+      // e.g. JMP (1234)
+      // <opcode> <op1> <op2> <addrlo> <addrhi>
+      // Model the memory read of the pointer (always bank 0)
+      memory_read(sample_q[3].data, (op2 << 8) + op1);
+      memory_read(sample_q[4].data, ((op2 << 8) + op1 + 1) & 0xffff);
+      break;
+   case IND1X:
+      // Model the memory read of the pointer
+      // JMP: <opcode=6C> <op1> <op2> <read new pcl> <read new pch>
+      // JSR: <opcode=FC> <op1> <write pch> <write pcl> <op2> <internal> <read new pcl> <read new pch>
+      if (PB >= 0 && X >= 0) {
+         memory_read(sample_q[num_cycles - 2].data, (PB << 16) + (((op2 << 8) + op1 + X    ) & 0xffff));
+         memory_read(sample_q[num_cycles - 1].data, (PB << 16) + (((op2 << 8) + op1 + X + 1) & 0xffff));
+      }
+      break;
    default:
-      // covers IMM, IMP, IMPA, IND16, IND1X, BM
+      // covers IMM, IMP, IMPA
       break;
    }
 
