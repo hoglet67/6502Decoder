@@ -34,8 +34,8 @@ declare -A test_options
 
 # Tests to run in emulation mode
               test_options[brk]="--emul=1 --pb=00 --db=00 --dp=0000"
-          test_options[optest1]="--emul=1 --pb=00 --db=00 --dp=0000"
-          test_options[optest2]="--emul=1 --pb=00 --db=00 --dp=0000"
+          test_options[optest1]="--emul=1 --pb=00 --db=00 --dp=0000 --sp=01FD"
+          test_options[optest2]="--emul=1 --pb=00 --db=00 --dp=0000 --sp=01FD"
           test_options[optest3]="--emul=1 --pb=00 --db=00 --dp=0000"
 test_options[romcopy_hipoke_17]="--emul=1 --pb=00 --db=00 --dp=0000"
             test_options[reset]="--emul=1 --pb=00 --db=00 --dp=0000"
