@@ -16,12 +16,16 @@
 
 // Compile with sdcc!
 
+// Uncomment this to enable debug output at 9600 baud on PA0
+// #define SERIAL_DEBUG
+
+#define BAUD 9600
+
 #define ALLOCATE_EXTERN
 #include <fx2regs.h>
 
 typedef unsigned char uint8;
 typedef unsigned int uint16;  // int is 16 bit.
-
 
 // TRM states: (p.15-115)
 //
@@ -52,6 +56,59 @@ typedef unsigned int uint16;  // int is 16 bit.
 	NOP
 
 
+#ifdef SERIAL_DEBUG
+
+#define BAUD_TICKS (4000000/BAUD)
+
+static void debug_putc(int c)
+{
+   int i;
+   int senddata = (c << 1) | 0x200;
+   OEA  |= 0x01;
+   for (i = 0; i < 10; i++) {
+      TH1 = (65536 - BAUD_TICKS) / 256;
+      TL1 = (65536 - BAUD_TICKS) % 256;
+      IOA = (IOA & 0xFE) | (senddata & 1);
+      senddata >>= 1;
+      while (TH1 > 128);
+   }
+}
+
+static void debug_puthex1(int i)
+{
+   i &= 0xf;
+   debug_putc(i + (i < 10 ? '0' : 'A' - 10));
+}
+
+
+static void debug_puthex2(int i)
+{
+   debug_puthex1(i >> 4);
+   debug_puthex1(i);
+}
+
+static void debug_puts(char *s)
+{
+   while (*s) {
+      debug_putc(*s);
+      s++;
+   }
+}
+
+static void debug_init() {
+   CPUCS = 0x12; // Clock the 8051 at 48MHz
+   TMOD  = 0x10; // Run T1 at 48MHz / 12 = 4MHz
+   TCON |= 0x40; // Start T1
+}
+
+#else
+
+#define debug_put(...)
+#define debug_puts(...)
+#define debug_init(...)
+
+#endif
+
 // Initialize the FX2 in 16bit sync fifo mode.
 static void Initialize(void)
 {
@@ -60,7 +117,7 @@ static void Initialize(void)
 	// NOTE: This is for FX2LP; the FX2 has fewer SRAM and so we cannot use
 	//       0x3000 but rather 0x1000 or so.
 	//       Now we use 0x1000 to support both devices.
-	__xdata char *cfg_data=(__xdata char*)0x1003;
+   __xdata char *cfg_data=(__xdata char*)0x1003;
 	// First cfg_data must be 21 or 12 to be considered valid.
 	char cfg_data_ok = (cfg_data[0]==0x12U || cfg_data[0]==0x21U);
 
@@ -218,10 +275,29 @@ static void Initialize(void)
 
 void main()
 {
-	Initialize();
 
-	for(;;)
-	{
-		// Do nothing.
-	}
+#ifdef SERIAL_DEBUG
+   int i;
+   __xdata char *cfg_data=(__xdata char*)0x1003;
+   debug_init();
+   debug_puts("Booted cfg=");
+   for (i = 0; i< 5; i++) {
+      debug_puthex2(cfg_data[i]);
+      debug_putc(' ');
+   }
+   debug_puts("\r\n");
+#endif
+    Initialize();
+#ifdef SERIAL_DEBUG
+    debug_puts("Looping\r\n");
+#endif
+    for(;;) {
+       // Do nothing.
+#ifdef SERIAL_DEBUG
+       debug_puts("ep2468stat=");
+       debug_puthex2(EP2468STAT);
+       debug_puts("\r\n");
+#endif
+
+    }
 }
