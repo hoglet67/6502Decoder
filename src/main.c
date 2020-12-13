@@ -126,6 +126,7 @@ static struct argp_option options[] = {
    { "dp",           15,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Direct Page register (65816)"},
    { "ms",           16,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the M flag (65816)"},
    { "xs",           17,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the X flag (65816)"},
+   { "skip",         18,     "HEX", OPTION_ARG_OPTIONAL, "Skip n samples"},
    { 0 }
 };
 
@@ -245,6 +246,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->xs_flag = strtol(arg, (char **)NULL, 16);
       } else {
          arguments->xs_flag = -1;
+      }
+      break;
+   case  18:
+      if (arg && strlen(arg) > 0) {
+         arguments->skip = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->skip = 0;
       }
       break;
    case 'c':
@@ -826,6 +834,11 @@ void decode(FILE *stream) {
 
    sample_t s;
 
+   // Skip the start of the file, if required
+   if (arguments.skip) {
+      fseek(stream, arguments.skip * (arguments.byte ? 1 : 2), SEEK_SET);
+   }
+
    if (arguments.byte) {
       s.rnw = -1;
       s.rst = -1;
@@ -1047,6 +1060,7 @@ int main(int argc, char *argv[]) {
    arguments.xs_flag          = -1;
    arguments.byte             = 0;
    arguments.debug            = 0;
+   arguments.skip             = 0;
    arguments.profile          = 0;
    arguments.trigger_start    = -1;
    arguments.trigger_stop     = -1;

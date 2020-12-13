@@ -82,6 +82,7 @@ typedef struct {
    int dp_reg;
    int byte;
    int debug;
+   int skip;
    int profile;
    int trigger_start;
    int trigger_stop;
