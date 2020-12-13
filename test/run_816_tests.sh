@@ -42,6 +42,10 @@ test_options[romcopy_hipoke_17]="--emul=1 --pb=00 --db=00 --dp=0000"
              test_options[test]="--emul=1 --pb=00 --db=00 --dp=0000"
        test_options[hog816_emu]="--emul=1 --pb=00 --db=00 --dp=0000"
     test_options[dormann_d6502]="--emul=1 --pb=00 --db=00 --dp=0000 --sp= --quiet"
+           test_options[dp2100]="--emul=1 --pb=00 --db=00 --dp=0000"
+           test_options[dp2101]="--emul=1 --pb=00 --db=00 --dp=0000"
+           test_options[dp2180]="--emul=1 --pb=00 --db=00 --dp=0000"
+           test_options[dp21ff]="--emul=1 --pb=00 --db=00 --dp=0000"
 
 
 # Tests to run in native mode
