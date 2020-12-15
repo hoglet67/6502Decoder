@@ -2,9 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include "tube_decode.h"
 #include "em_65816.h"
 #include "defs.h"
+#include "memory.h"
 
 // ====================================================================
 // Type Defs
@@ -97,7 +97,6 @@ typedef struct {
 static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=? D=? I=? Z=? C=? E=? PB=?? DB=?? DP=????";
 
 static int c02;
-static int bbctube;
 
 static InstrType *instr_table;
 
@@ -159,12 +158,6 @@ static int MS = -1; // Accumulator and Memeory Size Flag
 static int XS = -1; // Index Register Size Flag
 static int E =  -1; // Emulation Mode Flag, updated by XCE
 
-// indicate state prediction failed
-static int failflag = 0;
-
-// 16MB Main Memory
-static int memory[0x1000000];
-
 static char *x1_ops[] = {
    "CPX",
    "CPY",
@@ -222,37 +215,6 @@ static int op_STY(operand_t operand, ea_t ea);
 // ====================================================================
 // Helper Methods
 // ====================================================================
-
-// Don't model 8000-FFFF as it's ROM or I/O on the Beeb
-
-static void memory_read(int data, int ea) {
-   if (ea < 0x8000 || ea >= 0x10000) {
-      if (arguments.debug & 2) {
-         printf("memory  read: %06x = %02x\n", ea, data);
-      }
-      if (memory[ea] >=0 && memory[ea] != data) {
-         printf("memory modelling failed at %06x: expected %02x, actual %02x\n", ea, memory[ea], data);
-         failflag |= 1;
-      }
-      memory[ea] = data;
-   }
-   if (bbctube && ea >= 0xfee0 && ea <= 0xfee7) {
-      tube_read(ea & 7, data);
-   }
-}
-
-static void memory_write(int data, int ea) {
-   if (ea < 0x8000 || ea >= 0x10000) {
-      // Data can be negative, which means the memory becomes undefined again
-      if (arguments.debug & 2) {
-         printf("memory write: %06x = %02x\n", ea, data);
-      }
-      memory[ea] = data;
-   }
-   if (bbctube && ea >= 0xfee0 && ea <= 0xfee7) {
-      tube_write(ea & 7, data);
-   }
-}
 
 static int compare_FLAGS(int operand) {
    if (N >= 0) {
@@ -440,7 +402,7 @@ static void pop8(int value) {
    }
    // Handle the memory access
    if (SL >= 0 && SH >= 0) {
-      memory_read(value & 0xff, (SH << 8) + SL);
+      memory_read(value & 0xff, (SH << 8) + SL, MEM_STACK);
    }
 }
 
@@ -451,7 +413,7 @@ static void pop8(int value) {
 static void push8(int value) {
    // Handle the memory access
    if (SL >= 0 && SH >= 0) {
-      memory_write(value & 0xff, (SH << 8) + SL);
+      memory_write(value & 0xff, (SH << 8) + SL, MEM_STACK);
    }
    // Decrement the low byte of SP
    if (SL >= 0) {
@@ -848,7 +810,8 @@ static void em_65816_init(arguments_t *args) {
       printf("em_65816_init called with unsupported cpu_type (%d)\n", args->cpu_type);
       exit(1);
    }
-   bbctube = args->bbctube;
+   // Initialize Memory
+   memory_init(0x1000000);
    if (args->e_flag >= 0) {
       E  = args->e_flag & 1;
       if (E) {
@@ -913,9 +876,6 @@ static void em_65816_init(arguments_t *args) {
       instr->fmt = addr_mode_table[instr->mode].fmt;
       //printf("%02x %d %d %d\n", i, instr->m_extra, instr->x_extra, instr->len);
       instr++;
-   }
-   for (int i = 0; i < sizeof(memory) / sizeof(int); i++) {
-      memory[i] = -1;
    }
 }
 
@@ -1034,6 +994,21 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    int op2 = (opcount < 2) ? 0 : (opcode == 0xFC) ? sample_q[4].data : sample_q[2].data;
 
    int op3 = (opcount < 3) ? 0 : sample_q[(opcode == 0x22) ? 5 : 3].data;
+
+   // Model instruction fetch memory reads
+   if (PB >= 0 && PC >= 0) {
+      int pc = (PB << 16) + PC;
+      memory_read(opcode, pc++, MEM_INSTR);
+      if (opcount >= 1) {
+         memory_read(op1, pc++, MEM_INSTR);
+      }
+      if (opcount >= 2) {
+         memory_read(op2, pc++, MEM_INSTR);
+      }
+      if (opcount >= 3) {
+         memory_read(op3, pc++, MEM_INSTR);
+      }
+   }
 
    // Save the instruction state
    instruction->opcode  = opcode;
@@ -1158,6 +1133,11 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       }
    }
 
+
+
+
+
+
    // Take account for optional extra cycle for direct register low (DL) not equal 0.
    int dpextra = (instr->mode <= ZP && DP >= 0 && (DP & 0xff)) ? 1 : 0;
 
@@ -1195,11 +1175,11 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // Model the memory read of the pointer
       if (DP >= 0) {
          if (wrap) {
-            memory_read(sample_q[2 + dpextra].data, (DP & 0xFF00) + op1);
-            memory_read(sample_q[3 + dpextra].data, (DP & 0xFF00) + ((op1 + 1) & 0xff));
+            memory_read(sample_q[2 + dpextra].data, (DP & 0xFF00) +                op1, MEM_POINTER);
+            memory_read(sample_q[3 + dpextra].data, (DP & 0xFF00) + ((op1 + 1) & 0xff), MEM_POINTER);
          } else {
-            memory_read(sample_q[2 + dpextra].data, DP + op1);
-            memory_read(sample_q[3 + dpextra].data, DP + op1 + 1);
+            memory_read(sample_q[2 + dpextra].data, DP + op1    , MEM_POINTER);
+            memory_read(sample_q[3 + dpextra].data, DP + op1 + 1, MEM_POINTER);
          }
       }
       // Calculate the effective address
@@ -1214,11 +1194,11 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // Model the memory read of the pointer
       if (DP >= 0 && X >= 0) {
          if (wrap) {
-            memory_read(sample_q[3 + dpextra].data, (DP & 0xFF00) + ((op1 + X) & 0xff));
-            memory_read(sample_q[4 + dpextra].data, (DP & 0xFF00) + ((op1 + X + 1) & 0xff));
+            memory_read(sample_q[3 + dpextra].data, (DP & 0xFF00) + ((op1 + X    ) & 0xff), MEM_POINTER);
+            memory_read(sample_q[4 + dpextra].data, (DP & 0xFF00) + ((op1 + X + 1) & 0xff), MEM_POINTER);
          } else {
-            memory_read(sample_q[3 + dpextra].data, DP + op1 + X);
-            memory_read(sample_q[4 + dpextra].data, DP + op1 + X + 1);
+            memory_read(sample_q[3 + dpextra].data, DP + op1 + X    , MEM_POINTER);
+            memory_read(sample_q[4 + dpextra].data, DP + op1 + X + 1, MEM_POINTER);
          }
       }
       // Calculate the effective address
@@ -1231,11 +1211,11 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // Model the memory read of the pointer
       if (DP >= 0) {
          if (wrap) {
-            memory_read(sample_q[2 + dpextra].data, (DP & 0xFF00) + op1);
-            memory_read(sample_q[3 + dpextra].data, (DP & 0xFF00) + ((op1 + 1) & 0xff));
+            memory_read(sample_q[2 + dpextra].data, (DP & 0xFF00) + op1               , MEM_POINTER);
+            memory_read(sample_q[3 + dpextra].data, (DP & 0xFF00) + ((op1 + 1) & 0xff), MEM_POINTER);
          } else {
-            memory_read(sample_q[2 + dpextra].data, DP + op1);
-            memory_read(sample_q[3 + dpextra].data, DP + op1 + 1);
+            memory_read(sample_q[2 + dpextra].data, DP + op1    , MEM_POINTER);
+            memory_read(sample_q[3 + dpextra].data, DP + op1 + 1, MEM_POINTER);
          }
       }
       // Calculate the effective address
@@ -1276,8 +1256,8 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // <opcode> <op1> <internal> <addrlo> <addrhi> <internal> <operand>
       // Model the memory read of the pointer
       if (SL >= 0 && SH >= 0) {
-         memory_read(sample_q[3].data, ((SH << 8) + SL + op1) & 0xffff);
-         memory_read(sample_q[4].data, ((SH << 8) + SL + op1 + 1) & 0xffff);
+         memory_read(sample_q[3].data, ((SH << 8) + SL + op1    ) & 0xffff, MEM_POINTER);
+         memory_read(sample_q[4].data, ((SH << 8) + SL + op1 + 1) & 0xffff, MEM_POINTER);
       }
       // Calculate the effective address
       index = Y;
@@ -1291,9 +1271,9 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> <bank> <operand>
       // Model the memory read of the pointer
       if (DP >= 0) {
-         memory_read(sample_q[2 + dpextra].data, DP + op1);
-         memory_read(sample_q[3 + dpextra].data, DP + op1 + 1);
-         memory_read(sample_q[4 + dpextra].data, DP + op1 + 2);
+         memory_read(sample_q[2 + dpextra].data, DP + op1    , MEM_POINTER);
+         memory_read(sample_q[3 + dpextra].data, DP + op1 + 1, MEM_POINTER);
+         memory_read(sample_q[4 + dpextra].data, DP + op1 + 2, MEM_POINTER);
       }
       // Calculate the effective address
       ea = (sample_q[4].data << 16) + (sample_q[3].data << 8) + sample_q[2].data;
@@ -1303,9 +1283,9 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> <bank> [ <page crossing>] <<operand>
       // Model the memory read of the pointer
       if (DP >= 0) {
-         memory_read(sample_q[2 + dpextra].data, DP + op1);
-         memory_read(sample_q[3 + dpextra].data, DP + op1 + 1);
-         memory_read(sample_q[4 + dpextra].data, DP + op1 + 2);
+         memory_read(sample_q[2 + dpextra].data, DP + op1    , MEM_POINTER);
+         memory_read(sample_q[3 + dpextra].data, DP + op1 + 1, MEM_POINTER);
+         memory_read(sample_q[4 + dpextra].data, DP + op1 + 2, MEM_POINTER);
       }
       // Calculate the effective address
       index = Y;
@@ -1330,9 +1310,9 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // e.g. JMP [$1234] (this is the only one)
       // <opcode> <op1> <op2> <addrlo> <addrhi> <bank>
       // Model the memory read of the pointer (always bank 0)
-      memory_read(sample_q[3].data, (op2 << 8) + op1);
-      memory_read(sample_q[4].data, ((op2 << 8) + op1 + 1) & 0xffff);
-      memory_read(sample_q[5].data, ((op2 << 8) + op1 + 2) & 0xffff);
+      memory_read(sample_q[3].data,  (op2 << 8) + op1              , MEM_POINTER);
+      memory_read(sample_q[4].data, ((op2 << 8) + op1 + 1) & 0xffff, MEM_POINTER);
+      memory_read(sample_q[5].data, ((op2 << 8) + op1 + 2) & 0xffff, MEM_POINTER);
       // Model the memory read of the pointer
       // Calculate the effective address
       ea = (sample_q[5].data << 16) + (sample_q[4].data << 8) + sample_q[3].data;
@@ -1353,16 +1333,16 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // e.g. JMP (1234)
       // <opcode> <op1> <op2> <addrlo> <addrhi>
       // Model the memory read of the pointer (always bank 0)
-      memory_read(sample_q[3].data, (op2 << 8) + op1);
-      memory_read(sample_q[4].data, ((op2 << 8) + op1 + 1) & 0xffff);
+      memory_read(sample_q[3].data,  (op2 << 8) + op1              , MEM_POINTER);
+      memory_read(sample_q[4].data, ((op2 << 8) + op1 + 1) & 0xffff, MEM_POINTER);
       break;
    case IND1X:
       // Model the memory read of the pointer
       // JMP: <opcode=6C> <op1> <op2> <read new pcl> <read new pch>
       // JSR: <opcode=FC> <op1> <write pch> <write pcl> <op2> <internal> <read new pcl> <read new pch>
       if (PB >= 0 && X >= 0) {
-         memory_read(sample_q[num_cycles - 2].data, (PB << 16) + (((op2 << 8) + op1 + X    ) & 0xffff));
-         memory_read(sample_q[num_cycles - 1].data, (PB << 16) + (((op2 << 8) + op1 + X + 1) & 0xffff));
+         memory_read(sample_q[num_cycles - 2].data, (PB << 16) + (((op2 << 8) + op1 + X    ) & 0xffff), MEM_POINTER);
+         memory_read(sample_q[num_cycles - 1].data, (PB << 16) + (((op2 << 8) + op1 + X + 1) & 0xffff), MEM_POINTER);
       }
       break;
    default:
@@ -1380,10 +1360,10 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          int oplo = operand < 0 ? -1 : (operand & 0xff);
          int ophi = operand < 0 ? -1 : ((operand >> 8) & 0xff);
          if (size == 0) {
-            memory_read(oplo,  ea);
-            memory_read(ophi, (ea + 1) & 0xffff);
+            memory_read(oplo,  ea              , MEM_DATA);
+            memory_read(ophi, (ea + 1) & 0xffff, MEM_DATA);
          } else if (size > 0) {
-            memory_read(oplo, ea);
+            memory_read(oplo, ea, MEM_DATA);
          }
       }
 
@@ -1404,9 +1384,9 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
 
          // Model memory writes based on result seen on bus
          if (ea >= 0) {
-            memory_write(operand2 & 0xff,  ea);
+            memory_write(operand2 & 0xff,  ea, MEM_DATA);
             if (size == 0) {
-               memory_write((operand2 >> 8) & 0xff, (ea + 1) & 0xffff);
+               memory_write((operand2 >> 8) & 0xff, (ea + 1) & 0xffff, MEM_DATA);
             }
          }
       }
@@ -1545,7 +1525,7 @@ static int em_65816_get_PB() {
 }
 
 static int em_65816_read_memory(int address) {
-   return memory[address];
+   return memory_read_raw(address);
 }
 
 static char *em_65816_get_state(char *buffer) {
@@ -1709,10 +1689,10 @@ static int op_MV(int data, int sba, int dba, int dir) {
    // operand is the data byte (from the bus read)
    // ea = (op2 << 8) + op1 == (srcbank << 8) + dstbank;
    if (X >= 0) {
-      memory_read(data, (sba << 16) + X);
+      memory_read(data, (sba << 16) + X, MEM_DATA);
    }
    if (Y >= 0) {
-      memory_write(data, (dba << 16) + Y);
+      memory_write(data, (dba << 16) + Y, MEM_DATA);
    }
    if (A >= 0 && B >= 0) {
       int C = (((B << 8) | A) - 1) & 0xffff;

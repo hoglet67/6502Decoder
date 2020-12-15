@@ -8,6 +8,7 @@
 #include "defs.h"
 #include "em_6502.h"
 #include "em_65816.h"
+#include "memory.h"
 #include "profiler.h"
 
 int sample_count = 0;
@@ -20,6 +21,7 @@ uint16_t buffer[BUFSIZE];
 
 const char *machine_names[] = {
    "default",
+   "beeb",
    "master",
    "elk",
    0
@@ -47,6 +49,9 @@ arguments_t arguments;
 
 // This is a global, so it's visible to the emulator functions
 int triggered = 0;
+
+// indicate state prediction failed
+int failflag = 0;
 
 // ====================================================================
 // Argp processing
@@ -127,6 +132,7 @@ static struct argp_option options[] = {
    { "ms",           16,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the M flag (65816)"},
    { "xs",           17,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the X flag (65816)"},
    { "skip",         18,     "HEX", OPTION_ARG_OPTIONAL, "Skip n samples"},
+   { "mem",          19,     "HEX", OPTION_ARG_OPTIONAL, "Memory modelling (bitmask)"},
    { 0 }
 };
 
@@ -253,6 +259,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->skip = strtol(arg, (char **)NULL, 16);
       } else {
          arguments->skip = 0;
+      }
+      break;
+   case  19:
+      if (arg && strlen(arg) > 0) {
+         arguments->mem_model = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->mem_model = 0;
       }
       break;
    case 'c':
@@ -1060,6 +1073,7 @@ int main(int argc, char *argv[]) {
    arguments.xs_flag          = -1;
    arguments.byte             = 0;
    arguments.debug            = 0;
+   arguments.mem_model        = 0;
    arguments.skip             = 0;
    arguments.profile          = 0;
    arguments.trigger_start    = -1;
@@ -1101,6 +1115,46 @@ int main(int argc, char *argv[]) {
          perror("failed to open capture file");
          return 2;
       }
+   }
+
+   // Initialize memory modelling
+   // (em->init actually mallocs the memory)
+   memory_set_modelling(  arguments.mem_model       & 0x0f);
+   memory_set_rd_logging((arguments.mem_model >> 4) & 0x0f);
+   memory_set_wr_logging((arguments.mem_model >> 8) & 0x0f);
+
+   // Machine specific stuff
+
+   if (arguments.vec_rst <= 0) {
+      switch (arguments.machine) {
+      case MACHINE_BEEB:
+         arguments.vec_rst = 0xA9D9CD;
+         break;
+      case MACHINE_MASTER:
+         arguments.vec_rst = 0xA9E364;
+         break;
+      case MACHINE_ELK:
+         arguments.vec_rst = 0xA9D8D2;
+         break;
+      }
+   }
+
+   switch (arguments.machine) {
+   case MACHINE_BEEB:
+   case MACHINE_MASTER:
+      memory_set_rom_latch_addr(0xfe30);
+      memory_set_io_window(0xfc00, 0xff00);
+      if (arguments.bbctube) {
+         memory_set_tube_window(0xfee0, 0xfee8);
+      }
+      break;
+   case MACHINE_ELK:
+      memory_set_rom_latch_addr(0xfe05);
+      memory_set_io_window(0xfc00, 0xff00);
+      if (arguments.bbctube) {
+         memory_set_tube_window(0xfce0, 0xfce8);
+      }
+      break;
    }
 
    if (arguments.cpu_type == CPU_65C816) {
