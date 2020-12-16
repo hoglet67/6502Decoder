@@ -329,7 +329,7 @@ static void dump_samples(sample_t *sample_q, int n) {
       static int ctr = 0;
       for (int i = 0; i < n; i++) {
          sample_t *sample = sample_q + i;
-         printf("%8d %d %02x ", ctr++, i, sample->data);
+         printf("%8d %8x %d %02x ", ctr, ctr, i, sample->data);
          switch(sample->type) {
          case INTERNAL:
             putchar('I');
@@ -355,6 +355,7 @@ static void dump_samples(sample_t *sample_q, int n) {
          putchar(' ');
          putchar(sample->rst >= 0 ? '0' + sample->rst : '?');
          putchar('\n');
+         ctr++;
       }
 
 }

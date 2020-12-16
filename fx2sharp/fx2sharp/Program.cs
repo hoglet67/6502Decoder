@@ -209,7 +209,7 @@ namespace fx2sharp
         static bool Cancelled = false;
 
 
-        static int Main(string[] args)
+        static unsafe int Main(string[] args)
         {
 
             Console.CancelKeyPress += delegate (object sender, ConsoleCancelEventArgs e)
@@ -284,7 +284,7 @@ namespace fx2sharp
                             cfg.CPUClockOut = true;
                             cfg.Direction = FirmwareConfigDirection.In;
                             cfg.Fifo8bit = false;
-                            cfg.FifoBufferMode = FirmwareConfigBuffering.Double;
+                            cfg.FifoBufferMode = FirmwareConfigBuffering.Quadruple;
                             cfg.FifoMode = FirmwareConfigFifoMode.Async;
                             cfg.IFClock = FirmwareConfigIFClock.Internal48;
                             cfg.IFClockInvert = false;
@@ -345,10 +345,12 @@ namespace fx2sharp
                             return E_ENDPOINT;
                         }
 
+                        
+                        const int OVQSZ = 64; // number of overlapped USB i/o requests to queue
 
                         const int BUFFERSMAX = 1000;
                         const int BUFFERSIZE = 512;
-                        const int DISCARD = 10;
+                        const int DISCARD = 100;
                         const int MAX = 10000;
                         const int BUFFERSMIN = 16;
 
@@ -373,69 +375,134 @@ namespace fx2sharp
                         //start a pair of Tasks, one to read from USB, the other to write
                         var prodThread = new Thread(() =>
                         {
-                            //try own buffer
-                            byte[] mybuf = new byte[BUFFERSIZE];
-                            int mylen;
-                            int len2;
+                            int i;
 
-                            Thread.CurrentThread.Priority = ThreadPriority.Highest;
-                            long ctr = 0;
-                            while (!Cancelled && ctr < MAX)
+                            byte[][] cmdBufs = new byte[OVQSZ][];
+                            byte[][] xferBufs = new byte[OVQSZ][];
+                            byte[][] ovLaps = new byte[OVQSZ][];
+
+                            try
                             {
-                                len2 = BUFFERSIZE;
-                                mylen = BUFFERSIZE;
-                                if (!e.XferData(ref mybuf, ref mylen))
+                                Thread.CurrentThread.Priority = ThreadPriority.Highest;
+
+                                // Setup the queue buffers
+                                for (i = 0; i < OVQSZ; i++)
+
                                 {
-                                    Console.Write("TO");
-                                }
-                                else
-                                {
-                                    if (mylen != 0)
+                                    cmdBufs[i] = new byte[CyConst.SINGLE_XFER_LEN + ((e.XferMode == XMODE.BUFFERED) ? BUFFERSIZE : 0)];
+                                    xferBufs[i] = new byte[BUFFERSIZE];
+                                    ovLaps[i] = new byte[CyConst.OverlapSignalAllocSize];
+                                    fixed (byte* tmp0 = ovLaps[i])
                                     {
-                                        if (ctr > DISCARD)
+                                        OVERLAPPED* ovLapStatus = (OVERLAPPED*)tmp0;
+                                        ovLapStatus->hEvent = PInvoke.CreateEvent(0, 0, 0, 0);
+                                    }
+
+                                }
+
+                                // Pre-load the queue with requests
+
+                                int len = BUFFERSIZE;
+                                for (i = 0; i < OVQSZ; i++)
+                                    e.BeginDataXfer(ref cmdBufs[i], ref xferBufs[i], ref len, ref ovLaps[i]);
+
+
+                                i = 0;
+                                long ctr = 0;
+                                int lenmin = BUFFERSIZE;
+                                while (!Cancelled && ctr < MAX)
+                                {
+                                    fixed (byte* tmp0 = ovLaps[i])
+                                    {
+                                        OVERLAPPED* ovLapStatus = (OVERLAPPED*)tmp0;
+                                        if (!e.WaitForXfer(ovLapStatus->hEvent, 500))
                                         {
-                                            /*bufandlen ret = null;
-
-                                            if (!bufferPool.TryTake(out buf))
-                                            {
-                                                buf = new byte[BUFFERSIZE];
-                                            }
-                                            lock (bufferPool)
-                                            {
-                                                ret = bufferPool.FirstOrDefault();
-                                            }
-                                            if (ret == null)
-                                            {
-                                                ret = new bufandlen { buf = new byte[BUFFERSIZE] };
-                                                extcount++;
-                                            }
-                                            
-
-                                            ret.len = mylen;
-                                            Array.Copy(mybuf, ret.buf, mylen);
-
-                                            bc.Add(ret);
-                                            */
-                                            Array.Copy(mybuf, 0, bigbuffer, bigbufferptr, mylen);
-                                            bigbufferptr += mylen;
-                                            len2 = mylen;
-
+                                            e.Abort();
+                                            PInvoke.WaitForSingleObject(ovLapStatus->hEvent, CyConst.INFINITE);
                                         }
-                                        ctr++;
+                                    }
+
+                                    if (e.FinishDataXfer(ref cmdBufs[i], ref xferBufs[i], ref len, ref ovLaps[i]))
+                                    {
+                                        if (len != 0)
+                                        {
+                                            if (ctr > DISCARD)
+                                            {
+                                                /*bufandlen ret = null;
+
+                                                if (!bufferPool.TryTake(out buf))
+                                                {
+                                                    buf = new byte[BUFFERSIZE];
+                                                }
+                                                lock (bufferPool)
+                                                {
+                                                    ret = bufferPool.FirstOrDefault();
+                                                }
+                                                if (ret == null)
+                                                {
+                                                    ret = new bufandlen { buf = new byte[BUFFERSIZE] };
+                                                    extcount++;
+                                                }
+
+
+                                                ret.len = mylen;
+                                                Array.Copy(mybuf, ret.buf, mylen);
+
+                                                bc.Add(ret);
+                                                */
+                                                Array.Copy(xferBufs[i], 0, bigbuffer, bigbufferptr, len);
+                                                bigbufferptr += len;
+                                                lenmin = len;
+
+                                            }
+                                            ctr++;
+                                        }
+                                        else
+                                        {
+                                            throw new Exception("0");
+                                        }
+
                                     }
                                     else
+                                        throw new Exception($"FAIL! {e.LastError}");
+
+                                    len = BUFFERSIZE;
+
+                                    e.BeginDataXfer(ref cmdBufs[i], ref xferBufs[i], ref len, ref ovLaps[i]);
+
+
+
+                                    i = (i + 1) % OVQSZ;
+
+
+
+
+
+                                    int bcc = bc.Count;
+                                    if (bcc > bcmax)
+                                        bcmax = bcc;
+                                    if (lenmin != 0 && lenmin < szmin)
+                                        szmin = lenmin;
+
+                                }
+
+                                bc.CompleteAdding();
+                            }
+                            finally
+                            {
+                                for (i = 0; i < OVQSZ; i++)
+                                {
+                                    fixed (byte* tmp0 = ovLaps[i])
                                     {
-                                        throw new Exception("0");
+                                        OVERLAPPED* ovLapStatus = (OVERLAPPED*)tmp0;
+                                        if (ovLapStatus->hEvent != null)
+                                        {
+                                            PInvoke.CloseHandle(ovLapStatus->hEvent);
+                                        }
                                     }
 
                                 }
-                                int bcc = bc.Count;
-                                if (bcc > bcmax)
-                                    bcmax = bcc;
-                                if (len2 != 0 && len2 < szmin)
-                                    szmin = len2;
                             }
-                            bc.CompleteAdding();
                         });
 
                         /*
