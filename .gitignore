@@ -16,3 +16,7 @@ extended_tests.zip
 decode6502.dSYM/
 test/**/*.ref
 test/**/*.dif
+fx2sharp/fx2sharp/bin
+fx2sharp/fx2sharp/obj
+fx2sharp/.vs
+decode6502.exe
