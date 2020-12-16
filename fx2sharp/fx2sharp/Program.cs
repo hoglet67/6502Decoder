@@ -4,8 +4,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
-using System.Threading.Tasks;
-using System.Linq;
 
 namespace fx2sharp
 {
@@ -49,7 +47,8 @@ namespace fx2sharp
     }
 
 
-    public class bufandlen {
+    public class bufandlen
+    {
         public byte[] buf;
         public int len;
     }
@@ -353,6 +352,10 @@ namespace fx2sharp
                         const int MAX = 10000;
                         const int BUFFERSMIN = 16;
 
+                        byte[] bigbuffer = new byte[MAX * BUFFERSIZE];
+                        int bigbufferptr = 0;
+
+
                         //                        ConcurrentBag<byte[]> bufferPool = new ConcurrentBag<byte[]>();
                         Queue<bufandlen> bufferPool = new Queue<bufandlen>();
                         for (int i = 0; i < BUFFERSMIN; i++)
@@ -383,7 +386,7 @@ namespace fx2sharp
                                 mylen = BUFFERSIZE;
                                 if (!e.XferData(ref mybuf, ref mylen))
                                 {
-                                    Console.Write("TO");                                    
+                                    Console.Write("TO");
                                 }
                                 else
                                 {
@@ -391,12 +394,12 @@ namespace fx2sharp
                                     {
                                         if (ctr > DISCARD)
                                         {
-                                            bufandlen ret = null;
+                                            /*bufandlen ret = null;
 
-                                            /*if (!bufferPool.TryTake(out buf))
+                                            if (!bufferPool.TryTake(out buf))
                                             {
                                                 buf = new byte[BUFFERSIZE];
-                                            }*/
+                                            }
                                             lock (bufferPool)
                                             {
                                                 ret = bufferPool.FirstOrDefault();
@@ -406,15 +409,21 @@ namespace fx2sharp
                                                 ret = new bufandlen { buf = new byte[BUFFERSIZE] };
                                                 extcount++;
                                             }
+                                            
 
                                             ret.len = mylen;
                                             Array.Copy(mybuf, ret.buf, mylen);
 
                                             bc.Add(ret);
+                                            */
+                                            Array.Copy(mybuf, 0, bigbuffer, bigbufferptr, mylen);
+                                            bigbufferptr += mylen;
                                             len2 = mylen;
+
                                         }
                                         ctr++;
-                                    } else
+                                    }
+                                    else
                                     {
                                         throw new Exception("0");
                                     }
@@ -429,6 +438,7 @@ namespace fx2sharp
                             bc.CompleteAdding();
                         });
 
+                        /*
                         var consThread = new Thread(() =>
                         {
                             Console.WriteLine("STREAMING...");
@@ -450,10 +460,16 @@ namespace fx2sharp
 
                         consThread.Start();
                         Thread.Sleep(10);
+                        */
                         prodThread.Start();
 
                         prodThread.Join();
-                        consThread.Join();
+                        //consThread.Join();
+                        using (var f = new FileStream("d:\\temp\\test.bin", FileMode.Create, FileAccess.Write))
+                        {
+                            f.Write(bigbuffer, 0, bigbufferptr);
+                        }
+
 
                         Console.WriteLine($"Wrote {count} bytes [{bcmax} {szmin} {extcount}]");
 
