@@ -326,9 +326,10 @@ static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 
 
 static void dump_samples(sample_t *sample_q, int n) {
+      static int ctr = 0;
       for (int i = 0; i < n; i++) {
          sample_t *sample = sample_q + i;
-         printf("%d %02x ", i, sample->data);
+         printf("%8d %d %02x ", ctr++, i, sample->data);
          switch(sample->type) {
          case INTERNAL:
             putchar('I');

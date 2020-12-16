@@ -370,42 +370,55 @@ namespace fx2sharp
                         //start a pair of Tasks, one to read from USB, the other to write
                         var prodThread = new Thread(() =>
                         {
+                            //try own buffer
+                            byte[] mybuf = new byte[BUFFERSIZE];
+                            int mylen;
+                            int len2;
+
                             Thread.CurrentThread.Priority = ThreadPriority.Highest;
-                            int ctr = 0;
+                            long ctr = 0;
                             while (!Cancelled && ctr < MAX)
                             {
-
-                                bufandlen buf = null;
-
-                                /*if (!bufferPool.TryTake(out buf))
-                                {
-                                    buf = new byte[BUFFERSIZE];
-                                }*/
-                                lock (bufferPool)
-                                {
-                                    buf = bufferPool.FirstOrDefault();
-                                }
-                                if (buf == null)
-                                {
-                                    buf = new bufandlen { buf = new byte[BUFFERSIZE] };
-                                    extcount++;
-                                }
-
-                                buf.len = BUFFERSIZE;
-                                int len2 = BUFFERSIZE;
-
-                                if (!e.XferData(ref buf.buf, ref buf.len))
+                                len2 = BUFFERSIZE;
+                                mylen = BUFFERSIZE;
+                                if (!e.XferData(ref mybuf, ref mylen))
                                 {
                                     Console.Write("TO");                                    
                                 }
                                 else
                                 {
-                                    if (buf.len != 0 && ctr > DISCARD)
+                                    if (mylen != 0)
                                     {
-                                        bc.Add(buf);
-                                        len2 = buf.len;
+                                        if (ctr > DISCARD)
+                                        {
+                                            bufandlen ret = null;
+
+                                            /*if (!bufferPool.TryTake(out buf))
+                                            {
+                                                buf = new byte[BUFFERSIZE];
+                                            }*/
+                                            lock (bufferPool)
+                                            {
+                                                ret = bufferPool.FirstOrDefault();
+                                            }
+                                            if (ret == null)
+                                            {
+                                                ret = new bufandlen { buf = new byte[BUFFERSIZE] };
+                                                extcount++;
+                                            }
+
+                                            ret.len = mylen;
+                                            Array.Copy(mybuf, ret.buf, mylen);
+
+                                            bc.Add(ret);
+                                            len2 = mylen;
+                                        }
+                                        ctr++;
+                                    } else
+                                    {
+                                        throw new Exception("0");
                                     }
-                                    ctr++;
+
                                 }
                                 int bcc = bc.Count;
                                 if (bcc > bcmax)
@@ -427,6 +440,7 @@ namespace fx2sharp
 
                                     f.Write(tp.buf, 0, tp.len);
                                     count += tp.len;
+                                    Array.Clear(tp.buf, 0, tp.buf.Length);
                                     lock(bufferPool)
                                         bufferPool.Enqueue(tp);
                                 }
