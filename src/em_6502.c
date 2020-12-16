@@ -112,9 +112,6 @@ static int I = -1;
 static int Z = -1;
 static int C = -1;
 
-// indicate state prediction failed
-static int failflag = 0;
-
 // 64KB Main Memory
 static int memory[0x10000];
 

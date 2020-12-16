@@ -4,8 +4,9 @@
 #include <inttypes.h>
 
 #define MACHINE_DEFAULT 0
-#define MACHINE_MASTER  1
-#define MACHINE_ELK  2
+#define MACHINE_BEEB    1
+#define MACHINE_MASTER  2
+#define MACHINE_ELK     3
 
 typedef enum {
    CPU_6502,
@@ -74,12 +75,16 @@ typedef struct {
    int bbctube;
    int undocumented;
    int e_flag;
+   int ms_flag;
+   int xs_flag;
    int sp_reg;
    int pb_reg;
    int db_reg;
    int dp_reg;
    int byte;
    int debug;
+   int skip;
+   int mem_model;
    int profile;
    int trigger_start;
    int trigger_stop;
@@ -102,7 +107,6 @@ typedef struct {
    int (*get_and_clear_fail)();
 } cpu_emulator_t;
 
-extern arguments_t arguments;
-
+extern int failflag;
 
 #endif

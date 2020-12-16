@@ -2,25 +2,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include "tube_decode.h"
 #include "em_65816.h"
 #include "defs.h"
+#include "memory.h"
 
 // ====================================================================
 // Type Defs
 // ====================================================================
 
 typedef enum {
-   IMP,
-   IMPA,
-   BRA,
-   IMM,
-   ZP,
-   ZPX,
-   ZPY,
    INDX,
    INDY,
    IND,
+   IDL,
+   IDLY,
+   ZPX,
+   ZPY,
+   ZP,
+   // All direct page modes are <= ZP
    ABS,
    ABSX,
    ABSY,
@@ -28,13 +27,15 @@ typedef enum {
    IND1X,
    SR,
    ISY,
-   IDL,
-   IDLY,
    ABL,
    ALX,
    IAL,
    BRL,
-   BM
+   BM,
+   IMP,
+   IMPA,
+   BRA,
+   IMM
 } AddrMode ;
 
 typedef enum {
@@ -96,21 +97,18 @@ typedef struct {
 static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=? D=? I=? Z=? C=? E=? PB=?? DB=?? DP=????";
 
 static int c02;
-static int bbctube;
 
 static InstrType *instr_table;
 
 AddrModeType addr_mode_table[] = {
-   {1,    "%1$s"},                     // IMP
-   {1,    "%1$s A"},                   // IMPA
-   {2,    "%1$s %2$s"},                // BRA
-   {2,    "%1$s #%2$02X"},             // IMM
-   {2,    "%1$s %2$02X"},              // ZP
-   {2,    "%1$s %2$02X,X"},            // ZPX
-   {2,    "%1$s %2$02X,Y"},            // ZPY
    {2,    "%1$s (%2$02X,X)"},          // INDX
    {2,    "%1$s (%2$02X),Y"},          // INDY
    {2,    "%1$s (%2$02X)"},            // IND
+   {2,    "%1$s [%2$02X]"},            // IDL
+   {2,    "%1$s [%2$02X],Y"},          // IDLY
+   {2,    "%1$s %2$02X,X"},            // ZPX
+   {2,    "%1$s %2$02X,Y"},            // ZPY
+   {2,    "%1$s %2$02X"},              // ZP
    {3,    "%1$s %3$02X%2$02X"},        // ABS
    {3,    "%1$s %3$02X%2$02X,X"},      // ABSX
    {3,    "%1$s %3$02X%2$02X,Y"},      // ABSY
@@ -118,13 +116,15 @@ AddrModeType addr_mode_table[] = {
    {3,    "%1$s (%3$02X%2$02X,X)"},    // IND1X
    {2,    "%1$s %2$02X,S"},            // SR
    {2,    "%1$s (%2$02X,S),Y"},        // ISY
-   {2,    "%1$s [%2$02X]"},            // IDL
-   {2,    "%1$s [%2$02X],Y"},          // IDLY
    {4,    "%1$s %4$02X%3$02X%2$02X"},  // ABL
    {4,    "%1$s %4$02X%3$02X%2$02X,X"},// ABLX
    {3,    "%1$s [%3$02X%2$02X]"},      // IAL
    {3,    "%1$s %2$s"},                // BRL
-   {3,    "%1$s %2$02X,%3$02X"}        // BM
+   {3,    "%1$s %2$02X,%3$02X"},       // BM
+   {1,    "%1$s"},                     // IMP
+   {1,    "%1$s A"},                   // IMPA
+   {2,    "%1$s %2$s"},                // BRA
+   {2,    "%1$s #%2$02X"},             // IMM
 };
 
 static const char *fmt_imm16 = "%1$s #%3$02X%2$02X";
@@ -158,19 +158,9 @@ static int MS = -1; // Accumulator and Memeory Size Flag
 static int XS = -1; // Index Register Size Flag
 static int E =  -1; // Emulation Mode Flag, updated by XCE
 
-// indicate state prediction failed
-static int failflag = 0;
-
-// 16MB Main Memory
-static int memory[0x1000000];
-
 static char *x1_ops[] = {
    "CPX",
    "CPY",
-   "DEX",
-   "DEY",
-   "INX",
-   "INY",
    "LDX",
    "LDY",
    "PHX",
@@ -225,37 +215,6 @@ static int op_STY(operand_t operand, ea_t ea);
 // ====================================================================
 // Helper Methods
 // ====================================================================
-
-// Don't model 8000-FFFF as it's ROM or I/O on the Beeb
-
-static void memory_read(int data, int ea) {
-   if (ea < 0x8000 || ea >= 0x10000) {
-      if (arguments.debug & 2) {
-         printf("memory  read: %06x = %02x\n", ea, data);
-      }
-      if (memory[ea] >=0 && memory[ea] != data) {
-         printf("memory modelling failed at %06x: expected %02x, actual %02x\n", ea, memory[ea], data);
-         failflag |= 1;
-      }
-      memory[ea] = data;
-   }
-   if (bbctube && ea >= 0xfee0 && ea <= 0xfee7) {
-      tube_read(ea & 7, data);
-   }
-}
-
-static void memory_write(int data, int ea) {
-   if (ea < 0x8000 || ea >= 0x10000) {
-      // Data can be negative, which means the memory becomes undefined again
-      if (arguments.debug & 2) {
-         printf("memory write: %06x = %02x\n", ea, data);
-      }
-      memory[ea] = data;
-   }
-   if (bbctube && ea >= 0xfee0 && ea <= 0xfee7) {
-      tube_write(ea & 7, data);
-   }
-}
 
 static int compare_FLAGS(int operand) {
    if (N >= 0) {
@@ -423,7 +382,7 @@ static void set_NZ_AB(int A, int B) {
 static void pop8(int value) {
    // Increment the low byte of SP
    if (SL >= 0) {
-      SL = (SL + 1) & 0xFF;
+      SL = (SL + 1) & 0xff;
    }
    // Increment the high byte of SP, in certain cases
    if (E == 1) {
@@ -435,7 +394,7 @@ static void pop8(int value) {
          if (SL < 0) {
             SH = -1;
          } else if (SL == 0) {
-            SH = (SH + 1) & 0xFF;
+            SH = (SH + 1) & 0xff;
          }
       }
    } else {
@@ -443,7 +402,7 @@ static void pop8(int value) {
    }
    // Handle the memory access
    if (SL >= 0 && SH >= 0) {
-      memory_read(value & 0xff, (SH << 8) + SL);
+      memory_read(value & 0xff, (SH << 8) + SL, MEM_STACK);
    }
 }
 
@@ -454,11 +413,11 @@ static void pop8(int value) {
 static void push8(int value) {
    // Handle the memory access
    if (SL >= 0 && SH >= 0) {
-      memory_write(value & 0xff, (SH << 8) + SL);
+      memory_write(value & 0xff, (SH << 8) + SL, MEM_STACK);
    }
    // Decrement the low byte of SP
    if (SL >= 0) {
-      SL = (SL - 1) & 0xFF;
+      SL = (SL - 1) & 0xff;
    }
    // Decrement the high byte of SP, in certain cases
    if (E == 1) {
@@ -469,8 +428,8 @@ static void push8(int value) {
       if (SH >= 0) {
          if (SL < 0) {
             SH = -1;
-         } else if (SL == 0xFF) {
-            SH = (SH - 1) & 0xFF;
+         } else if (SL == 0xff) {
+            SH = (SH - 1) & 0xff;
          }
       }
    } else {
@@ -575,21 +534,200 @@ static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruc
    PC = vector;
 }
 
-static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
+static int get_num_cycles(sample_t *sample_q, int intr_seen) {
+   int opcode = sample_q[0].data;
+   int op1    = sample_q[1].data;
+   int op2    = sample_q[2].data;
+   InstrType *instr = &instr_table[opcode];
+   int cycle_count = instr->cycles;
 
-   printf("VPA/VDA must be connected in 65816 mode\n");
-   exit(1);
+   if (intr_seen) {
+      return (E == 0) ? 8 : 7;
+   }
 
-   return 0;
+   // E MS    Correction:
+   // ?  ?    ?
+   // ?  0    ?
+   // 0  ?    ?
+   // 0  0    1
+   // ?  1    0
+   // 0  1    0
+   // 1  ?    0
+   // 1  0    0
+   // 1  1    0
+
+   if (instr->m_extra) {
+      if (E == 0 && MS == 0) {
+         cycle_count += instr->m_extra;
+      } else if (!(E > 0 || MS > 0)) {
+         return -1;
+      }
+   }
+
+   if (instr->x_extra) {
+      if (E == 0 && XS == 0) {
+         cycle_count += instr->x_extra;
+      } else if (!(E > 0 || XS > 0)) {
+         return -1;
+      }
+   }
+
+
+   // One cycle penalty if DP is not page aligned
+   int dpextra = (instr->mode <= ZP && DP >= 0 && (DP & 0xff)) ? 1 : 0;
+
+   // RTI takes one extra cycle in native mode
+   if (opcode == 0x40) {
+      if (E == 0) {
+         cycle_count++;
+      } else if (E < 0) {
+         return -1;
+      }
+   }
+
+   // Account for extra cycle in a page crossing in (indirect), Y (not stores)
+   // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
+   if ((instr->mode == INDY) && (instr->optype != WRITEOP) && Y >= 0) {
+      int base = (sample_q[3 + dpextra].data << 8) + sample_q[2 + dpextra].data;
+      if ((base & 0xff00) != ((base + Y) & 0xff00)) {
+         cycle_count++;
+      }
+   }
+
+   // Account for extra cycle in a page crossing in absolute indexed (not stores or rmw) in emulated mode
+   if (((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype == READOP)) {
+      int correction = -1;
+      int index = (instr->mode == ABSX) ? X : Y;
+      if (index >= 0) {
+         int base = op1 + (op2 << 8);
+         if ((base & 0xff00) != ((base + index) & 0xff00)) {
+            correction = 1;
+         } else {
+            correction = 0;
+         }
+      }
+      // E  C
+      // 1  1    1
+      // ?  ?    ?
+      // ?  1    ?
+      // 1  ?    ?
+      // ?  0    0
+      // 0  ?    0
+      // 0  0    0
+      // 0  1    0
+      // 1  0    0
+      if (E > 0 && correction > 0) {
+         cycle_count++;
+      } else if (!(E == 0 || correction == 0)) {
+         return -1;
+      }
+   }
+
+   // Account for extra cycles in a branch
+   if (((opcode & 0x1f) == 0x10) || (opcode == 0x80)) {
+      // Default to backards branches taken, forward not taken
+      // int taken = ((int8_t)op1) < 0;
+      int taken = -1;
+      switch (opcode) {
+      case 0x10: // BPL
+         if (N >= 0) {
+            taken = !N;
+         }
+         break;
+      case 0x30: // BMI
+         if (N >= 0) {
+            taken = N;
+         }
+         break;
+      case 0x50: // BVC
+         if (V >= 0) {
+            taken = !V;
+         }
+         break;
+      case 0x70: // BVS
+         if (V >= 0) {
+            taken = V;
+         }
+         break;
+      case 0x80: // BRA
+         taken = 1;
+         cycle_count--; // instr table contains 3 for cycle count
+         break;
+      case 0x90: // BCC
+         if (C >= 0) {
+            taken = !C;
+         }
+         break;
+      case 0xB0: // BCS
+         if (C >= 0) {
+            taken = C;
+         }
+         break;
+      case 0xD0: // BNE
+         if (Z >= 0) {
+            taken = !Z;
+         }
+         break;
+      case 0xF0: // BEQ
+         if (Z >= 0) {
+            taken = Z;
+         }
+         break;
+      }
+      if (taken < 0) {
+         return -1;
+      } else if (taken) {
+         // A taken branch is 3 cycles, not 2
+         cycle_count++;
+         // In emulation node, a taken branch that crosses a page boundary is 4 cycle
+         int page_cross = -1;
+         if (E > 0 && PC >= 0) {
+            int target =  (PC + 2) + ((int8_t)(op1));
+            if ((target & 0xFF00) != ((PC + 2) & 0xff00)) {
+               page_cross = 1;
+            } else {
+               page_cross = 0;
+            }
+         } else if (E == 0) {
+            page_cross = 0;
+         }
+         if (page_cross < 0) {
+            return -1;
+         } else {
+            cycle_count += page_cross;
+         }
+      }
+   }
+
+   return cycle_count + dpextra;
 }
 
-static int count_cycles_with_sync(sample_t *sample_q) {
+
+static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
+   //printf("VPA/VDA must be connected in 65816 mode\n");
+   //exit(1);
+   int num_cycles = get_num_cycles(sample_q, intr_seen);
+   if (num_cycles >= 0) {
+      return num_cycles;
+   }
+   printf ("cycle prediction unknown\n");
+   return 1;
+}
+
+static int count_cycles_with_sync(sample_t *sample_q, int intr_seen) {
    if (sample_q[0].type == OPCODE) {
       for (int i = 1; i < DEPTH; i++) {
          if (sample_q[i].type == LAST) {
             return 0;
          }
          if (sample_q[i].type == OPCODE) {
+            // Validate the num_cycles passed in
+            int expected = get_num_cycles(sample_q, intr_seen);
+            if (expected >= 0) {
+               if (i != expected) {
+                  printf ("cycle prediction fail: expected %d actual %d\n", expected, i);
+               }
+            }
             return i;
          }
       }
@@ -644,6 +782,20 @@ static void check_and_set_xs(int val) {
    }
 }
 
+// Helper to return the variable size accumulator
+static int get_accumulator() {
+   if (MS > 0 && A >= 0) {
+      // 8-bit mode
+      return A;
+   } else if (MS == 0 && A >= 0 && B >= 0) {
+      // 16-bit mode
+      return (B << 8) + A;
+   } else {
+      // unknown width
+      return -1;
+   }
+}
+
 // ====================================================================
 // Public Methods
 // ====================================================================
@@ -658,7 +810,8 @@ static void em_65816_init(arguments_t *args) {
       printf("em_65816_init called with unsupported cpu_type (%d)\n", args->cpu_type);
       exit(1);
    }
-   bbctube = args->bbctube;
+   // Initialize Memory
+   memory_init(0x1000000);
    if (args->e_flag >= 0) {
       E  = args->e_flag & 1;
       if (E) {
@@ -679,6 +832,12 @@ static void em_65816_init(arguments_t *args) {
    }
    if (args->dp_reg >= 0) {
       DP = args->dp_reg & 0xffff;
+   }
+   if (args->ms_flag >= 0) {
+      MS = args->ms_flag & 1;
+   }
+   if (args->xs_flag >= 0) {
+      XS = args->xs_flag & 1;
    }
    InstrType *instr = instr_table;
    for (int i = 0; i < 256; i++) {
@@ -707,15 +866,16 @@ static void em_65816_init(arguments_t *args) {
                break;
             }
          }
+         // if ABSX ot ABXY add
+         if (instr->mode == ABSX || instr->mode == ABSY) {
+            instr->x_extra++;
+         }
       }
       // Copy the length and format from the address mode, for efficiency
       instr->len = addr_mode_table[instr->mode].len;
       instr->fmt = addr_mode_table[instr->mode].fmt;
       //printf("%02x %d %d %d\n", i, instr->m_extra, instr->x_extra, instr->len);
       instr++;
-   }
-   for (int i = 0; i < sizeof(memory) / sizeof(int); i++) {
-      memory[i] = -1;
    }
 }
 
@@ -764,7 +924,7 @@ static int em_65816_count_cycles(sample_t *sample_q, int intr_seen) {
    if (sample_q[0].type == UNKNOWN) {
       return count_cycles_without_sync(sample_q, intr_seen);
    } else {
-      return count_cycles_with_sync(sample_q);
+      return count_cycles_with_sync(sample_q, intr_seen);
    }
 }
 
@@ -825,6 +985,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          }
       }
    }
+   // TODO: Infer MS and XS where possible in other addressing modes
    opcount += instr->len - 1;
 
    int op1 = (opcount < 1) ? 0 : sample_q[1].data;
@@ -834,12 +995,28 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
 
    int op3 = (opcount < 3) ? 0 : sample_q[(opcode == 0x22) ? 5 : 3].data;
 
+   // Memory Modelling: Instruction fetches
+   if (PB >= 0 && PC >= 0) {
+      int pc = (PB << 16) + PC;
+      memory_read(opcode, pc++, MEM_INSTR);
+      if (opcount >= 1) {
+         memory_read(op1, pc++, MEM_INSTR);
+      }
+      if (opcount >= 2) {
+         memory_read(op2, pc++, MEM_INSTR);
+      }
+      if (opcount >= 3) {
+         memory_read(op3, pc++, MEM_INSTR);
+      }
+   }
+
    // Save the instruction state
    instruction->opcode  = opcode;
    instruction->op1     = op1;
    instruction->op2     = op2;
    instruction->op3     = op3;
    instruction->opcount = opcount;
+
 
    // Fill in the current PB/PC value
    if (opcode == 0x00 || opcode == 0x02) {
@@ -861,17 +1038,120 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       instruction->pb = PB;
    }
 
+   // Take account for optional extra cycle for direct register low (DL) not equal 0.
+   int dpextra = (instr->mode <= ZP && DP >= 0 && (DP & 0xff)) ? 1 : 0;
+
+   // DP page wrapping only happens:
+   // - in Emulation Mode (E=1), and
+   // - if DPL == 00, and
+   // - only for old instructions
+   int wrap = E && !(DP & 0xff) && !(instr->newop);
+
+   // Memory Modelling: Pointer indirection
+   switch (instr->mode) {
+   case INDY:
+      // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> [ <page crossing>] <<operand>
+      if (DP >= 0) {
+         if (wrap) {
+            memory_read(sample_q[2 + dpextra].data, (DP & 0xFF00) +                op1, MEM_POINTER);
+            memory_read(sample_q[3 + dpextra].data, (DP & 0xFF00) + ((op1 + 1) & 0xff), MEM_POINTER);
+         } else {
+            memory_read(sample_q[2 + dpextra].data, DP + op1    , MEM_POINTER);
+            memory_read(sample_q[3 + dpextra].data, DP + op1 + 1, MEM_POINTER);
+         }
+      }
+      break;
+   case INDX:
+      // <opcode> <op1> [ <dpextra> ] <dummy> <addrlo> <addrhi> <operand>
+      if (DP >= 0 && X >= 0) {
+         if (wrap) {
+            memory_read(sample_q[3 + dpextra].data, (DP & 0xFF00) + ((op1 + X    ) & 0xff), MEM_POINTER);
+            memory_read(sample_q[4 + dpextra].data, (DP & 0xFF00) + ((op1 + X + 1) & 0xff), MEM_POINTER);
+         } else {
+            memory_read(sample_q[3 + dpextra].data, DP + op1 + X    , MEM_POINTER);
+            memory_read(sample_q[4 + dpextra].data, DP + op1 + X + 1, MEM_POINTER);
+         }
+      }
+      break;
+   case IND:
+      // <opcode> <op1>  [ <dpextra> ] <addrlo> <addrhi> <operand>
+      if (DP >= 0) {
+         if (wrap) {
+            memory_read(sample_q[2 + dpextra].data, (DP & 0xFF00) + op1               , MEM_POINTER);
+            memory_read(sample_q[3 + dpextra].data, (DP & 0xFF00) + ((op1 + 1) & 0xff), MEM_POINTER);
+         } else {
+            memory_read(sample_q[2 + dpextra].data, DP + op1    , MEM_POINTER);
+            memory_read(sample_q[3 + dpextra].data, DP + op1 + 1, MEM_POINTER);
+         }
+      }
+      break;
+   case ISY:
+      // e.g. LDA (08, S),Y
+      // <opcode> <op1> <internal> <addrlo> <addrhi> <internal> <operand>
+      if (SL >= 0 && SH >= 0) {
+         memory_read(sample_q[3].data, ((SH << 8) + SL + op1    ) & 0xffff, MEM_POINTER);
+         memory_read(sample_q[4].data, ((SH << 8) + SL + op1 + 1) & 0xffff, MEM_POINTER);
+      }
+      break;
+   case IDL:
+      // e.g. LDA [80]
+      // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> <bank> <operand>
+      if (DP >= 0) {
+         memory_read(sample_q[2 + dpextra].data, DP + op1    , MEM_POINTER);
+         memory_read(sample_q[3 + dpextra].data, DP + op1 + 1, MEM_POINTER);
+         memory_read(sample_q[4 + dpextra].data, DP + op1 + 2, MEM_POINTER);
+      }
+      break;
+   case IDLY:
+      // e.g. LDA [80],Y
+      // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> <bank> [ <page crossing>] <<operand>
+      if (DP >= 0) {
+         memory_read(sample_q[2 + dpextra].data, DP + op1    , MEM_POINTER);
+         memory_read(sample_q[3 + dpextra].data, DP + op1 + 1, MEM_POINTER);
+         memory_read(sample_q[4 + dpextra].data, DP + op1 + 2, MEM_POINTER);
+      }
+      break;
+   case IAL:
+      // e.g. JMP [$1234] (this is the only one)
+      // <opcode> <op1> <op2> <addrlo> <addrhi> <bank>
+      memory_read(sample_q[3].data,  (op2 << 8) + op1              , MEM_POINTER);
+      memory_read(sample_q[4].data, ((op2 << 8) + op1 + 1) & 0xffff, MEM_POINTER);
+      memory_read(sample_q[5].data, ((op2 << 8) + op1 + 2) & 0xffff, MEM_POINTER);
+      break;
+   case IND16:
+      // e.g. JMP (1234)
+      // <opcode> <op1> <op2> <addrlo> <addrhi>
+      memory_read(sample_q[3].data,  (op2 << 8) + op1              , MEM_POINTER);
+      memory_read(sample_q[4].data, ((op2 << 8) + op1 + 1) & 0xffff, MEM_POINTER);
+      break;
+   case IND1X:
+      // JMP: <opcode=6C> <op1> <op2> <read new pcl> <read new pch>
+      // JSR: <opcode=FC> <op1> <write pch> <write pcl> <op2> <internal> <read new pcl> <read new pch>
+      if (PB >= 0 && X >= 0) {
+         memory_read(sample_q[num_cycles - 2].data, (PB << 16) + (((op2 << 8) + op1 + X    ) & 0xffff), MEM_POINTER);
+         memory_read(sample_q[num_cycles - 1].data, (PB << 16) + (((op2 << 8) + op1 + X + 1) & 0xffff), MEM_POINTER);
+      }
+      break;
+   default:
+      break;
+   }
+
    uint32_t operand;
    if (instr->optype == RMWOP) {
-      // e.g. <opcode> <op1> <op2> <read old> <dummy> <write new>
       // 2/12/2020: on Beeb816 the <read old> cycle seems hard to sample
       // reliably with the FX2, so lets use the <dummy> instead.
-      // E=0 - Dummy is a read of the same data (albeit with VPA/VDA=00)
       // E=1 - Dummy is a write of the same data
-      // TODO: handle 16-bits
+      // <opcode> <op1> <op2> <read old> <write old> <write new>
+      // E=0 - Dummy is an internal cycle (with VPA/VDA=00)
+      // MS == 1:       <opcode> <op1> <op2> <read lo> <read hi> <dummy> <write hi> <write lo>
+      // MS == 0:       <opcode> <op1> <op2> <read> <dummy> <write>
       if (E == 1) {
          operand = sample_q[num_cycles - 2].data;
+      } else if (MS == 0) {
+         // 16-bit mode
+         operand = (sample_q[num_cycles - 4].data << 8) + sample_q[num_cycles - 5].data;
       } else {
+         // 8-bit mode
          operand = sample_q[num_cycles - 3].data;
       }
    } else if (instr->optype == BRANCHOP) {
@@ -883,7 +1163,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       operand = (sample_q[4].data << 8) + sample_q[5].data;
    } else if (opcode == 0xfc) {
       // JSR (IND, X): the operand is the data pushed to the stack (PCH, PCL)
-      // <opcode> <op1> <write pch> <write pcl> <op2> <internal> <read new pcl> <read new pcl>
+      // <opcode> <op1> <write pch> <write pcl> <op2> <internal> <read new pcl> <read new pch>
       operand = (sample_q[2].data << 8) + sample_q[3].data;
    } else if (opcode == 0x22) {
       // JSL: the operand is the data pushed to the stack (PCB, PCH, PCL)
@@ -908,6 +1188,9 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // RTL: the operand is the data pulled from the stack (PCL, PCH, PBR)
       // <opcode> <op1> <read dummy> <read pcl> <read pch> <read pbr>
       operand = (sample_q[5].data << 16) + (sample_q[4].data << 8) + sample_q[3].data;
+   } else if (instr->mode == BM) {
+      // Block Move
+      operand = sample_q[3].data;
    } else if (instr->mode == IMM) {
       // Immediate addressing mode: the operand is the 2nd byte of the instruction
       operand = (op2 << 8) + op1;
@@ -929,18 +1212,28 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       }
    }
 
+   // Operand 2 is the value written back in a store or read-modify-write
+   // See RMW comment above for bus cycles
+   uint32_t operand2 = operand;
+   if (instr->optype == RMWOP) {
+      if (E == 0 && MS == 0) {
+         // 16-bit - byte ordering is high then low
+         operand2 = (sample_q[num_cycles - 2].data << 8) + sample_q[num_cycles - 1].data;
+      } else {
+         // 8-bit
+         operand2 = sample_q[num_cycles - 1].data;
+      }
+   } else if (instr->optype == WRITEOP) {
+      if (E == 0 && MS == 0) {
+         // 16-bit - byte ordering is low then high
+         operand2 = (sample_q[num_cycles - 1].data << 8) + sample_q[num_cycles - 2].data;
+      } else {
+         operand2 = sample_q[num_cycles - 1].data;
+      }
+   }
+
    // For instructions that read or write memory, we need to work out the effective address
    // Note: not needed for stack operations, as S is used directly
-
-   // TODO: need to account for optional extra cycle for direct register low (DL) not equal 0.
-   // TODO: could do additional memory modelling of pointer accesses
-
-   // DP page wrapping only happens:
-   // - in Emulation Mode (E=1), and
-   // - if DPL == 00, and
-   // - only for old instructions
-   int wrap = E && !(DP & 0xFF) && !(instr->newop);
-
    int ea = -1;
    int index;
    switch (instr->mode) {
@@ -954,28 +1247,28 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       index = instr->mode == ZPX ? X : Y;
       if (index >= 0 && DP >= 0) {
          if (wrap) {
-            ea = (DP & 0xFF00) + ((op1 + index) & 0xff);
+            ea = (DP & 0xff00) + ((op1 + index) & 0xff);
          } else {
             ea = DP + op1 + index;
          }
       }
       break;
    case INDY:
-      // <opcpde> <op1> <addrlo> <addrhi> [ <page crossing>] <<operand>
+      // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> [ <page crossing>] <<operand>
       index = Y;
       if (index >= 0 && DB >= 0) {
-         ea = (sample_q[3].data << 8) + sample_q[2].data;
+         ea = (sample_q[3 + dpextra].data << 8) + sample_q[2 + dpextra].data;
          ea = (DB << 16) + ((ea + index) & 0xffff);
       }
       break;
    case INDX:
-      // <opcpde> <op1> <dummy> <addrlo> <addrhi> <operand>
+      // <opcode> <op1> [ <dpextra> ] <dummy> <addrlo> <addrhi> <operand>
       if (DB >= 0) {
-         ea = (DB << 16) + (sample_q[4].data << 8) + sample_q[3].data;
+         ea = (DB << 16) + (sample_q[4 + dpextra].data << 8) + sample_q[3 + dpextra].data;
       }
       break;
    case IND:
-      // <opcpde> <op1> <addrlo> <addrhi> <operand>
+      // <opcode> <op1>  [ <dpextra> ] <addrlo> <addrhi> <operand>
       if (DB >= 0) {
          ea = (DB << 16) + (sample_q[3].data << 8) + sample_q[2].data;
       }
@@ -997,8 +1290,6 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          ea = (PC + ((int8_t)(op1)) + 2) & 0xffff;
       }
       break;
-
-
    case SR:
       // e.g. LDA 08,S
       if (SL >= 0 && SH >= 0) {
@@ -1016,15 +1307,15 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       break;
    case IDL:
       // e.g. LDA [80]
-      // <opcpde> <op1> <addrlo> <addrhi> <bank> <operand>
+      // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> <bank> <operand>
       ea = (sample_q[4].data << 16) + (sample_q[3].data << 8) + sample_q[2].data;
       break;
    case IDLY:
       // e.g. LDA [80],Y
-      // <opcpde> <op1> <addrlo> <addrhi> <bank> [ <page crossing>] <<operand>
+      // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> <bank> [ <page crossing>] <<operand>
       index = Y;
       if (index >= 0) {
-         ea = (sample_q[4].data << 16) + (sample_q[3].data << 8) + sample_q[2].data;
+         ea = (sample_q[4 + dpextra].data << 16) + (sample_q[3 + dpextra].data << 8) + sample_q[2 + dpextra].data;
          ea = (ea + index) & 0xffffff;
       }
       break;
@@ -1049,46 +1340,53 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          ea = (PC + ((int16_t)((op2 << 8) + op1)) + 3) & 0xffff;
       }
       break;
+   case BM:
+      // e.g. MVN 0, 2
+      ea = (op2 << 8) + op1;
+      break;
    default:
-      // covers IMM, IMP, IMPA, IND16, IND1X, BM
+      // covers IMM, IMP, IMPA, IND16, IND1X
       break;
    }
 
    if (instr->emulate) {
 
       // Determine memory access size
-      int size = instr->x_extra ? XS : instr->x_extra ? MS : 1;
+      int size = instr->x_extra ? XS : instr->m_extra ? MS : 1;
 
       // Model memory reads
       if (ea >= 0 && (instr->optype == READOP || instr->optype == RMWOP)) {
          int oplo = operand < 0 ? -1 : (operand & 0xff);
          int ophi = operand < 0 ? -1 : ((operand >> 8) & 0xff);
          if (size == 0) {
-            memory_read(oplo,  ea);
-            memory_read(ophi, (ea + 1) & 0xffff);
+            memory_read(oplo,  ea              , MEM_DATA);
+            memory_read(ophi, (ea + 1) & 0xffff, MEM_DATA);
          } else if (size > 0) {
-            memory_read(oplo, ea);
+            memory_read(oplo, ea, MEM_DATA);
          }
       }
 
       // Execute the instruction specific function
+      // (This returns -1 if the result is unknown or invalid)
       int result = instr->emulate(operand, ea);
 
-      // Model memory writes
-      if (ea >= 0 && (instr->optype == WRITEOP || instr->optype == RMWOP)) {
+      if (instr->optype == WRITEOP || instr->optype == RMWOP) {
+
          // STA STX STY STZ
          // INC DEX ASL LSR ROL ROR
          // TSB TRB
-         // (if A is unknown, then TSB/TRB are uiknown)
-         // (if C is unlnown, then ROL/ROR are unknown)
-         // These cases could be eliminated if we snoopedthe result of Read-Modify-Weith
-         int reslo = result < 0 ? -1 : (result & 0xff);
-         int reshi = result < 0 ? -1 : ((result >> 8) & 0xff);
-         if (size == 0) {
-            memory_write(reslo,  ea);
-            memory_write(reshi, (ea + 1) & 0xffff);
-         } else if (size > 0) {
-            memory_write(reslo, ea);
+
+         // Check result of instruction against bye
+         if (result >= 0 && result != operand2) {
+            failflag |= 1;
+         }
+
+         // Model memory writes based on result seen on bus
+         if (ea >= 0) {
+            memory_write(operand2 & 0xff,  ea, MEM_DATA);
+            if (size == 0) {
+               memory_write((operand2 >> 8) & 0xff, (ea + 1) & 0xffff, MEM_DATA);
+            }
          }
       }
    }
@@ -1226,7 +1524,7 @@ static int em_65816_get_PB() {
 }
 
 static int em_65816_read_memory(int address) {
-   return memory[address];
+   return memory_read_raw(address);
 }
 
 static char *em_65816_get_state(char *buffer) {
@@ -1386,20 +1684,26 @@ static int op_PLD(operand_t operand, ea_t ea) {
    return -1;
 }
 
-// Block Move (Decrementing)
-static int op_MVP(operand_t operand, ea_t ea) {
-   // TODO: Add memory modelling
+static int op_MV(int data, int sba, int dba, int dir) {
+   // operand is the data byte (from the bus read)
+   // ea = (op2 << 8) + op1 == (srcbank << 8) + dstbank;
+   if (X >= 0) {
+      memory_read(data, (sba << 16) + X, MEM_DATA);
+   }
+   if (Y >= 0) {
+      memory_write(data, (dba << 16) + Y, MEM_DATA);
+   }
    if (A >= 0 && B >= 0) {
       int C = (((B << 8) | A) - 1) & 0xffff;
       A = C & 0xff;
       B = (C >> 8) & 0xff;
       if (X >= 0) {
-         X = (X - 1) & 0xFFFF;
+         X = (X + dir) & 0xffff;
       }
       if (Y >= 0) {
-         Y = (Y - 1) & 0xFFFF;
+         Y = (Y + dir) & 0xffff;
       }
-      if (PC >= 0 && C != 0xFFFF) {
+      if (PC >= 0 && C != 0xffff) {
          PC -= 3;
       }
    } else {
@@ -1412,29 +1716,14 @@ static int op_MVP(operand_t operand, ea_t ea) {
    return -1;
 }
 
+// Block Move (Decrementing)
+static int op_MVP(operand_t operand, ea_t ea) {
+   return op_MV(operand, (ea >> 8) & 0xff, ea & 0xff, -1);
+}
+
 // Block Move (Incrementing)
 static int op_MVN(operand_t operand, ea_t ea) {
-   if (A >= 0 && B >= 0) {
-      int C = (((B << 8) | A) - 1) & 0xffff;
-      A = C & 0xff;
-      B = (C >> 8) & 0xff;
-      if (X >= 0) {
-         X = (X + 1) & 0xFFFF;
-      }
-      if (Y >= 0) {
-         Y = (Y + 1) & 0xFFFF;
-      }
-      if (PC >= 0 && C != 0xFFFF) {
-         PC -= 3;
-      }
-   } else {
-      A = -1;
-      B = -1;
-      X = -1;
-      Y = -1;
-      PC = -1;
-   }
-   return -1;
+   return op_MV(operand, (ea >> 8) & 0xff, ea & 0xff, 1);
 }
 
 // Transfer Transfer C accumulator to Direct Page register
@@ -1461,8 +1750,8 @@ static int op_TCS(operand_t operand, ea_t ea) {
 static int op_TDC(operand_t operand, ea_t ea) {
    // Always a 16-bit transfer
    if (DP >= 0) {
-      A = DP & 255;
-      B = (DP >> 8) & 255;
+      A = DP & 0xff;
+      B = (DP >> 8) & 0xff;
       set_NZ16(DP);
    } else {
       A = -1;
@@ -1603,38 +1892,49 @@ static int op_RTL(operand_t operand, ea_t ea) {
 // ====================================================================
 
 static int op_ADC(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (A >= 0 && C >= 0) {
+   int acc = get_accumulator();
+   if (acc >= 0 && C >= 0) {
+      int tmp = 0;
       if (D == 1) {
          // Decimal mode ADC - works like a 65C02
-         int al;
-         int ah;
-         ah = 0;
-         al = (A & 0xF) + (operand & 0xF) + (C ? 1 : 0);
-         if (al > 9) {
-            al -= 10;
-            al &= 0xF;
-            ah = 1;
+         // Working a nibble at a time, correct for both 8 and 18 bits
+         for (int bit = 0; bit < (MS ? 8 : 16); bit += 4) {
+            int an = (acc >> bit) & 0xF;
+            int bn = (operand >> bit) & 0xF;
+            int rn =  an + bn + C;
+            V = ((rn ^ an) & 8) && !((bn ^ an) & 8);
+            C = 0;
+            if (rn >= 10) {
+               rn = (rn - 10) & 0xF;
+               C = 1;
+            }
+            tmp |= rn << bit;
          }
-         ah += ((A >> 4) + (operand >> 4));
-         V = (((ah << 4) ^ A) & 128) && !((A ^ operand) & 128);
-         C = 0;
-         if (ah > 9) {
-            C = 1;
-            ah -= 10;
-            ah &= 0xF;
-         }
-         A = (al & 0xF) | (ah << 4);
       } else {
          // Normal mode ADC
-         int tmp = A + operand + C;
-         C = (tmp >> 8) & 1;
-         V = (((A ^ operand) & 0x80) == 0) && (((A ^ tmp) & 0x80) != 0);
-         A = tmp & 255;
+         tmp = acc + operand + C;
+         if (MS > 0) {
+            // 8-bit mode
+            C = (tmp >> 8) & 1;
+            V = (((acc ^ operand) & 0x80) == 0) && (((acc ^ tmp) & 0x80) != 0);
+         } else {
+            // 16-bit mode
+            C = (tmp >> 16) & 1;
+            V = (((acc ^ operand) & 0x8000) == 0) && (((acc ^ tmp) & 0x8000) != 0);
+         }
       }
-      set_NZ_MS(A);
+      if (MS > 0) {
+         // 8-bit mode
+         A = tmp & 0xff;
+      } else {
+         // 16-bit mode
+         A = tmp & 0xff;
+         B = (tmp >> 8) & 0xff;
+      }
+      set_NZ_AB(A, B);
    } else {
       A = -1;
+      B = -1;
       set_NVZC_unknown();
    }
    return -1;
@@ -1643,7 +1943,7 @@ static int op_ADC(operand_t operand, ea_t ea) {
 static int op_AND(operand_t operand, ea_t ea) {
    // A is always updated, regardless of the size
    if (A >= 0) {
-      A = A & operand;
+      A = A & (operand & 0xff);
    }
    // B is updated only of the size is 16
    if (B >= 0) {
@@ -1659,32 +1959,54 @@ static int op_AND(operand_t operand, ea_t ea) {
 }
 
 static int op_ASLA(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (A >= 0) {
+   // Compute the new carry
+   if (MS > 0 && A >= 0) {
+      // 8-bit mode
       C = (A >> 7) & 1;
-      A = (A << 1) & 255;
-      set_NZ_MS(A);
+   } else if (MS == 0 && B >= 0) {
+      // 16-bit mode
+      C = (B >> 7) & 1;
    } else {
-      set_NZC_unknown();
+      // width unknown
+      C = -1;
    }
+   // Compute the new B
+   if (MS == 0 && B >= 0) {
+      if (A >= 0) {
+         B = ((B << 1) & 0xfe) | ((A >> 7) & 1);
+      } else {
+         B = -1;
+      }
+   } else if (MS < 0) {
+      B = -1;
+   }
+   // Compute the new A
+   if (A >= 0) {
+      A = (A << 1) & 0xff;
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
 static int op_ASL(operand_t operand, ea_t ea) {
-   // In 8-bit mode the uppwe byte is ignored by the memory write code
-   int tmp = (operand << 1) & 0xffff;
+   int tmp;
    if (MS > 0) {
       // 8-bit mode
       C = (operand >> 7) & 1;
       tmp = (operand << 1) & 0xff;
+      set_NZ8(tmp);
    } else if (MS == 0) {
       // 16-bit mode
       C = (operand >> 15) & 1;
+      tmp = (operand << 1) & 0xffff;
+      set_NZ16(tmp);
    } else {
       // mode unknown
       C = -1;
+      tmp = -1;
+      set_NZ_unknown();
    }
-   set_NZ_MS(tmp);
    return tmp;
 }
 
@@ -1777,9 +2099,13 @@ static int op_BVS(operand_t branch_taken, ea_t ea) {
 }
 
 static int op_BIT_IMM(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (A >= 0) {
-      Z = (A & operand) == 0;
+   int acc = get_accumulator();
+   if (operand == 0) {
+      // This makes the remainder less pessimistic
+      Z = 1;
+   } else if (acc >= 0) {
+      // both acc and operand will be the correct width
+      Z = (acc & operand) == 0;
    } else {
       Z = -1;
    }
@@ -1800,20 +2126,8 @@ static int op_BIT(operand_t operand, ea_t ea) {
       N = -1; // could be less pessimistic
       V = -1; // could be less pessimistic
    }
-   if (operand == 0) {
-      // This makes the remainder less pessimistic
-      Z = 1;
-   } else  if (MS > 0) {
-      // 8-bit mode
-      Z = (A & operand) == 0;
-   } else if (MS == 0 && A >= 0 && B >= 0) {
-      // 16-bit mode
-      Z = (((B << 8) + A) & operand) == 0;
-   } else {
-      // mode undefined
-      Z = -1;
-   }
-   return -1;
+   // the rest is the same as BIT immediate (i.e. setting the Z flag)
+   return op_BIT_IMM(operand, ea);
 }
 
 static int op_CLC(operand_t operand, ea_t ea) {
@@ -1837,9 +2151,9 @@ static int op_CLV(operand_t operand, ea_t ea) {
 }
 
 static int op_CMP(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (A >= 0) {
-      int tmp = A - operand;
+   int acc = get_accumulator();
+   if (acc >= 0) {
+      int tmp = acc - operand;
       C = tmp >= 0;
       set_NZ_MS(tmp);
    } else {
@@ -1871,20 +2185,38 @@ static int op_CPY(operand_t operand, ea_t ea) {
 }
 
 static int op_DECA(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
+   // Compute the new A
    if (A >= 0) {
-      A = (A - 1) & 255;
-      set_NZ_MS(A);
-   } else {
-      set_NZ_unknown();
+      A = (A - 1) & 0xff;
    }
+   // Compute the new B
+   if (MS == 0 && B >= 0) {
+      if (A == 0xff) {
+         B = (B - 1) & 0xff;
+      } else if (A < 0) {
+         B = -1;
+      }
+   } else if (MS < 0) {
+      B = -1;
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
 static int op_DEC(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   int tmp = (operand - 1) & 255;
-   set_NZ_MS(tmp);
+   int tmp = -1;
+   if (MS > 0) {
+      // 8-bit mode
+      tmp = (operand - 1) & 0xff;
+      set_NZ8(tmp);
+   } else if (MS == 0) {
+      // 16-bit mode
+      tmp = (operand - 1) & 0xffff;
+      set_NZ16(tmp);
+   } else {
+      set_NZ_unknown();
+   }
    return tmp;
 }
 
@@ -1933,7 +2265,7 @@ static int op_DEY(operand_t operand, ea_t ea) {
 static int op_EOR(operand_t operand, ea_t ea) {
    // A is always updated, regardless of the size
    if (A >= 0) {
-      A = A ^ operand;
+      A = A ^ (operand & 0xff);
    }
    // B is updated only of the size is 16
    if (B >= 0) {
@@ -1949,20 +2281,38 @@ static int op_EOR(operand_t operand, ea_t ea) {
 }
 
 static int op_INCA(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
+   // Compute the new A
    if (A >= 0) {
-      A = (A + 1) & 255;
-      set_NZ_MS(A);
-   } else {
-      set_NZ_unknown();
+      A = (A + 1) & 0xff;
    }
+   // Compute the new B
+   if (MS == 0 && B >= 0) {
+      if (A == 0x00) {
+         B = (B + 1) & 0xff;
+      } else if (A < 0) {
+         B = -1;
+      }
+   } else if (MS < 0) {
+      B = -1;
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
 static int op_INC(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   int tmp = (operand + 1) & 255;
-   set_NZ_MS(tmp);
+   int tmp = -1;
+   if (MS > 0) {
+      // 8-bit mode
+      tmp = (operand + 1) & 0xff;
+      set_NZ8(tmp);
+   } else if (MS == 0) {
+      // 16-bit mode
+      tmp = (operand + 1) & 0xffff;
+      set_NZ16(tmp);
+   } else {
+      set_NZ_unknown();
+   }
    return tmp;
 }
 
@@ -2015,11 +2365,11 @@ static int op_JSR(operand_t operand, ea_t ea) {
 }
 
 static int op_LDA(operand_t operand, ea_t ea) {
-   A = operand;
-   if (!MS) {
+   A = operand & 0xff;
+   if (MS == 0) {
       B = (operand >> 8) & 0xff;
    }
-   set_NZ_MS(A);
+   set_NZ_AB(A, B);
    return -1;
 }
 
@@ -2036,29 +2386,54 @@ static int op_LDY(operand_t operand, ea_t ea) {
 }
 
 static int op_LSRA(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
+   // Compute the new carry
    if (A >= 0) {
       C = A & 1;
-      A = A >> 1;
-      set_NZ_MS(A);
    } else {
-      set_NZC_unknown();
+      C = -1;
    }
+   // Compute the new A
+   if (MS > 0 && A >= 0) {
+      A = A >> 1;
+   } else if (MS == 0 && A >= 0 && B >= 0) {
+      A = ((A >> 1) | (B << 7)) & 0xff;
+   } else {
+      A = -1;
+   }
+   // Compute the new B
+   if (MS == 0 && B >= 0) {
+      B = (B >> 1) & 0xff;
+   } else if (MS < 0) {
+      B = -1;
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
 static int op_LSR(operand_t operand, ea_t ea) {
-   // In 8-bit mode the uppwe byte is ignored by the memory write code
+   int tmp;
    C = operand & 1;
-   int tmp = operand >> 1;
-   set_NZ_MS(tmp);
+   if (MS > 0) {
+      // 8-bit mode
+      tmp = (operand >> 1) & 0xff;
+      set_NZ8(tmp);
+   } else if (MS == 0) {
+      // 16-bit mode
+      tmp = (operand >> 1) & 0xffff;
+      set_NZ16(tmp);
+   } else {
+      // mode unknown
+      tmp = -1;
+      set_NZ_unknown();
+   }
    return tmp;
 }
 
 static int op_ORA(operand_t operand, ea_t ea) {
    // A is always updated, regardless of the size
    if (A >= 0) {
-      A = A | operand;
+      A = A | (operand & 0xff);
    }
    // B is updated only of the size is 16
    if (B >= 0) {
@@ -2131,58 +2506,109 @@ static int op_PLY(operand_t operand, ea_t ea) {
 }
 
 static int op_ROLA(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (A >= 0 && C >= 0) {
-      int tmp = (A << 1) + C;
-      C = (tmp >> 8) & 1;
-      A = tmp & 255;
-      set_NZ_MS(A);
+   // Save the old carry
+   int oldC = C;
+   // Compute the new carry
+   if (MS > 0 && A >= 0) {
+      // 8-bit mode
+      C = (A >> 7) & 1;
+   } else if (MS == 0 && B >= 0) {
+      // 16-bit mode
+      C = (B >> 7) & 1;
    } else {
-      A = -1;
-      set_NZC_unknown();
+      // width unknown
+      C = -1;
    }
+   // Compute the new B
+   if (MS == 0 && B >= 0) {
+      if (A >= 0) {
+         B = ((B << 1) & 0xfe) | ((A >> 7) & 1);
+      } else {
+         B = -1;
+      }
+   } else if (MS < 0) {
+      B = -1;
+   }
+   // Compute the new A
+   if (A >= 0) {
+      if (oldC >= 0) {
+         A = ((A << 1) | oldC) & 0xff;
+      } else {
+         A = -1;
+      }
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
 static int op_ROL(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (C >= 0) {
-      int tmp = (operand << 1) + C;
-      C = (tmp >> 8) & 1;
-      tmp = tmp & 255;
-      set_NZ_MS(tmp);
-      return tmp;
+   int oldC = C;
+   int tmp;
+   if (MS > 0) {
+      // 8-bit mode
+      C = (operand >> 7) & 1;
+      tmp = ((operand << 1) | oldC) & 0xff;
+      set_NZ8(tmp);
+   } else if (MS == 0) {
+      // 16-bit mode
+      C = (operand >> 15) & 1;
+      tmp = ((operand << 1) | oldC) & 0xffff;
+      set_NZ16(tmp);
    } else {
-      set_NZC_unknown();
+      C = -1;
+      tmp = -1;
+      set_NZ_unknown();
    }
-   return -1;
+   return tmp;
 }
 
 static int op_RORA(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (A >= 0 && C >= 0) {
-      int tmp = (A >> 1) + (C << 7);
+   // Save the old carry
+   int oldC = C;
+   // Compute the new carry
+   if (A >= 0) {
       C = A & 1;
-      A = tmp;
-      set_NZ_MS(A);
+   } else {
+      C = -1;
+   }
+   // Compute the new A
+   if (MS > 0 && A >= 0) {
+      A = ((A >> 1) | (oldC << 7)) & 0xff;
+   } else if (MS == 0 && A >= 0 && B >= 0) {
+      A = ((A >> 1) | (B << 7)) & 0xff;
    } else {
       A = -1;
-      set_NZC_unknown();
    }
+   // Compute the new B
+   if (MS == 0 && B >= 0 && oldC >= 0) {
+      B = ((B >> 1) | (oldC << 7)) & 0xff;
+   } else if (MS < 0) {
+      B = -1;
+   }
+   // Updating NZ is complex, depending on the whether A and/or B are unknown
+   set_NZ_AB(A, B);
    return -1;
 }
 
 static int op_ROR(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (C >= 0) {
-      int tmp = (operand >> 1) + (C << 7);
-      C = operand & 1;
-      set_NZ_MS(tmp);
-      return tmp;
+   int oldC = C;
+   int tmp;
+   C = operand & 1;
+   if (MS > 0) {
+      // 8-bit mode
+      tmp = ((operand >> 1) | (oldC << 7)) & 0xff;
+      set_NZ8(tmp);
+   } else if (MS == 0) {
+      // 16-bit mode
+      tmp = ((operand >> 1) | (oldC << 15)) & 0xffff;
+      set_NZ16(tmp);
    } else {
-      set_NZC_unknown();
+      C = -1;
+      tmp = -1;
+      set_NZ_unknown();
    }
-   return -1;
+   return tmp;
 }
 
 static int op_RTS(operand_t operand, ea_t ea) {
@@ -2207,34 +2633,49 @@ static int op_RTI(operand_t operand, ea_t ea) {
 }
 
 static int op_SBC(operand_t operand, ea_t ea) {
-   // TODO: Make variable size
-   if (A >= 0 && C >= 0) {
+   int acc = get_accumulator();
+   if (acc >= 0 && C >= 0) {
+      int tmp = 0;
       if (D == 1) {
          // Decimal mode SBC - works like a 65C02
-         int al;
-         int tmp;
-         // On 65C02 SBC, both flags and A can be different to the 6502
-         al = (A & 15) - (operand & 15) - ((C) ? 0 : 1);
-         tmp = A - operand - ((C) ? 0 : 1);
-         C = (tmp & 0x100) ? 0 : 1;
-         V = ((A ^ operand) & 0x80) && ((A ^ tmp) & 0x80);
-         if (tmp < 0) {
-            tmp = tmp - 0x60;
+         // Working a nibble at a time, correct for both 8 and 18 bits
+         for (int bit = 0; bit < (MS ? 8 : 16); bit += 4) {
+            int an = (acc >> bit) & 0xF;
+            int bn = (operand >> bit) & 0xF;
+            int rn =  an - bn - (1 - C);
+            V = ((rn ^ an) & 8) && ((bn ^ an) & 8);
+            C = 1;
+            if (rn < 0) {
+               rn = (rn + 10) & 0xF;
+               C = 0;
+            }
+            tmp |= rn << bit;
          }
-         if (al < 0) {
-            tmp = tmp - 0x06;
-         }
-         A = tmp & 255;
       } else {
          // Normal mode SBC
-         int tmp = A - operand - (1 - C);
-         C = 1 - ((tmp >> 8) & 1);
-         V = (((A ^ operand) & 0x80) != 0) && (((A ^ tmp) & 0x80) != 0);
-         A = tmp & 255;
+         tmp = acc - operand - (1 - C);
+         if (MS > 0) {
+            // 8-bit mode
+            C = 1 - ((tmp >> 8) & 1);
+            V = (((acc ^ operand) & 0x80) != 0) && (((acc ^ tmp) & 0x80) != 0);
+         } else {
+            // 16-bit mode
+            C = 1 - ((tmp >> 16) & 1);
+            V = (((acc ^ operand) & 0x8000) != 0) && (((acc ^ tmp) & 0x8000) != 0);
+         }
       }
-      set_NZ_MS(A);
+      if (MS > 0) {
+         // 8-bit mode
+         A = tmp & 0xff;
+      } else {
+         // 16-bit mode
+         A = tmp & 0xff;
+         B = (tmp >> 8) & 0xff;
+      }
+      set_NZ_AB(A, B);
    } else {
       A = -1;
+      B = -1;
       set_NVZC_unknown();
    }
    return -1;
@@ -2306,27 +2747,27 @@ static int op_STZ(operand_t operand, ea_t ea) {
    return operand;
 }
 
+
 static int op_TSB(operand_t operand, ea_t ea) {
-   if (A >= 0) {
-      Z = (A & operand) == 0;
-      if (ea >= 0 && memory[ea] >= 0) {
-         return memory[ea] | A;
-      }
+   int acc = get_accumulator();
+   if (acc >= 0) {
+      Z = ((acc & operand) == 0);
+      return operand | acc;
    } else {
       Z = -1;
+      return -1;
    }
-   return -1;
 }
+
 static int op_TRB(operand_t operand, ea_t ea) {
-   if (A >= 0) {
-      Z = (A & operand) == 0;
-      if (ea >= 0 && memory[ea] >= 0) {
-         return (memory[ea] & ~A);
-      }
+   int acc = get_accumulator();
+   if (acc >= 0) {
+      Z = ((acc & operand) == 0);
+      return operand &~ acc;
    } else {
       Z = -1;
+      return -1;
    }
-   return -1;
 }
 
 // This is used to implement: TAX, TAY, TSX
@@ -2422,6 +2863,7 @@ static int op_TYA(operand_t operand, ea_t ea) {
 // ====================================================================
 // Opcode Tables
 // ====================================================================
+
 
 static InstrType instr_table_65c816[] = {
    /* 00 */   { "BRK",  0, IMM   , 7, 0, OTHER,    0},

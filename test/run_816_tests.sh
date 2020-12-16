@@ -28,18 +28,28 @@ done
 
 DECODE=../decode6502
 
-common_options="-d3 -8 -a -h -i -y -s --sp=01FD --phi2= --rdy= --rst="
+common_options="-d2 -8 -a -h -i -y -s --sp=01E0 --phi2= --rdy= --rst="
 
 declare -A test_options
 
 # Tests to run in emulation mode
+              test_options[brk]="--emul=1 --pb=00 --db=00 --dp=0000"
+          test_options[optest1]="--emul=1 --pb=00 --db=00 --dp=0000 --sp=01FD"
+          test_options[optest2]="--emul=1 --pb=00 --db=00 --dp=0000 --sp=01FD"
+          test_options[optest3]="--emul=1 --pb=00 --db=00 --dp=0000"
 test_options[romcopy_hipoke_17]="--emul=1 --pb=00 --db=00 --dp=0000"
             test_options[reset]="--emul=1 --pb=00 --db=00 --dp=0000"
              test_options[test]="--emul=1 --pb=00 --db=00 --dp=0000"
        test_options[hog816_emu]="--emul=1 --pb=00 --db=00 --dp=0000"
+    test_options[dormann_d6502]="--emul=1 --pb=00 --db=00 --dp=0000 --sp= --quiet"
+           test_options[dp2100]="--emul=1 --pb=00 --db=00 --dp=0000"
+           test_options[dp2101]="--emul=1 --pb=00 --db=00 --dp=0000"
+           test_options[dp2180]="--emul=1 --pb=00 --db=00 --dp=0000"
+           test_options[dp21ff]="--emul=1 --pb=00 --db=00 --dp=0000"
+
 
 # Tests to run in native mode
- test_options[hog816_interrupt]="--emul=0 --pb=01 --db=01 --dp=1900"
+ test_options[hog816_interrupt]="--emul=0 --pb=01 --db=01 --dp=1900 --sp=01FD"
     test_options[hog816_native]="--emul=0 --pb=01 --db=01 --dp=1900"
 
 for data in `find 816* -name '*.data' | sort`

@@ -8,6 +8,7 @@
 #include "defs.h"
 #include "em_6502.h"
 #include "em_65816.h"
+#include "memory.h"
 #include "profiler.h"
 
 int sample_count = 0;
@@ -20,6 +21,7 @@ uint16_t buffer[BUFSIZE];
 
 const char *machine_names[] = {
    "default",
+   "beeb",
    "master",
    "elk",
    0
@@ -44,6 +46,12 @@ static int c816;
 
 // This is a global, so it's visible to the emulator functions
 arguments_t arguments;
+
+// This is a global, so it's visible to the emulator functions
+int triggered = 0;
+
+// indicate state prediction failed
+int failflag = 0;
 
 // ====================================================================
 // Argp processing
@@ -116,11 +124,15 @@ static struct argp_option options[] = {
    { "bbctube",       8,         0,                   0, "Decode BBC tube protocol"},
    { "vda",           9,  "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for vda, blank if unconnected"},
    { "vpa",          10,  "BITNUM", OPTION_ARG_OPTIONAL, "The bit number for vpa, blank if unconnected"},
-   { "emul",         11,     "HEX", OPTION_ARG_OPTIONAL, "Initial value E flag in 65816 mode"},
-   { "sp",           12,     "HEX", OPTION_ARG_OPTIONAL, "Initial value Stack Pointer register (65816)"},
-   { "pb",           13,     "HEX", OPTION_ARG_OPTIONAL, "Initial value Program Bank register (65816)"},
-   { "db",           14,     "HEX", OPTION_ARG_OPTIONAL, "Initial value Data Bank register (65816)"},
-   { "dp",           15,     "HEX", OPTION_ARG_OPTIONAL, "Initial value Direct Page register (65816)"},
+   { "emul",         11,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the E flag in 65816 mode"},
+   { "sp",           12,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register (65816)"},
+   { "pb",           13,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Program Bank register (65816)"},
+   { "db",           14,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Data Bank register (65816)"},
+   { "dp",           15,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Direct Page register (65816)"},
+   { "ms",           16,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the M flag (65816)"},
+   { "xs",           17,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the X flag (65816)"},
+   { "skip",         18,     "HEX", OPTION_ARG_OPTIONAL, "Skip n samples"},
+   { "mem",          19,     "HEX", OPTION_ARG_OPTIONAL, "Memory modelling (bitmask)"},
    { 0 }
 };
 
@@ -226,6 +238,34 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->dp_reg = strtol(arg, (char **)NULL, 16);
       } else {
          arguments->dp_reg = -1;
+      }
+      break;
+   case  16:
+      if (arg && strlen(arg) > 0) {
+         arguments->ms_flag = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->ms_flag = -1;
+      }
+      break;
+   case  17:
+      if (arg && strlen(arg) > 0) {
+         arguments->xs_flag = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->xs_flag = -1;
+      }
+      break;
+   case  18:
+      if (arg && strlen(arg) > 0) {
+         arguments->skip = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->skip = 0;
+      }
+      break;
+   case  19:
+      if (arg && strlen(arg) > 0) {
+         arguments->mem_model = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->mem_model = 0;
       }
       break;
    case 'c':
@@ -462,10 +502,9 @@ static char *get_fwa(int a_sign, int a_exp, int a_mantissa, int a_round, int a_o
 
 
 static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen) {
-
+   static int total_cycles = 0;
    static int interrupt_depth = 0;
    static int skipping_interrupted = 0;
-   static int triggered = 0;
 
    int intr_seen = em->match_interrupt(sample_q, num_samples);
 
@@ -482,7 +521,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
       return num_samples;
    }
 
-   if (arguments.debug & 1) {
+   if (triggered && arguments.debug & 1) {
       dump_samples(sample_q, num_cycles);
    }
 
@@ -523,10 +562,12 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
       }
    }
 
-   if (arguments.trigger_start < 0 || (pc >= 0 && pc == arguments.trigger_start)) {
+   if (pc >= 0 && pc == arguments.trigger_start) {
       triggered = 1;
+      printf("start trigger hit at cycle %d\n", total_cycles);
    } else if (pc >= 0 && pc == arguments.trigger_stop) {
       triggered = 0;
+      printf("stop trigger hit at cycle %d\n", total_cycles);
    }
 
    // Exclude interrupts from profiling
@@ -649,7 +690,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
 
    }
 
-
+   total_cycles += num_cycles;
    return num_cycles;
 }
 
@@ -807,6 +848,11 @@ void decode(FILE *stream) {
    int last_phi2 = -1;
 
    sample_t s;
+
+   // Skip the start of the file, if required
+   if (arguments.skip) {
+      fseek(stream, arguments.skip * (arguments.byte ? 1 : 2), SEEK_SET);
+   }
 
    if (arguments.byte) {
       s.rnw = -1;
@@ -1025,8 +1071,12 @@ int main(int argc, char *argv[]) {
    arguments.pb_reg           = -1;
    arguments.db_reg           = -1;
    arguments.dp_reg           = -1;
+   arguments.ms_flag          = -1;
+   arguments.xs_flag          = -1;
    arguments.byte             = 0;
    arguments.debug            = 0;
+   arguments.mem_model        = 0;
+   arguments.skip             = 0;
    arguments.profile          = 0;
    arguments.trigger_start    = -1;
    arguments.trigger_stop     = -1;
@@ -1034,6 +1084,10 @@ int main(int argc, char *argv[]) {
    arguments.filename         = NULL;
 
    argp_parse(&argp, argc, argv, 0, 0, &arguments);
+
+   if (arguments.trigger_start < 0) {
+      triggered = 1;
+   }
 
    arguments.show_something = arguments.show_address | arguments.show_hex | arguments.show_instruction | arguments.show_state | arguments.show_bbcfwa | arguments.show_cycles;
 
@@ -1063,6 +1117,46 @@ int main(int argc, char *argv[]) {
          perror("failed to open capture file");
          return 2;
       }
+   }
+
+   // Initialize memory modelling
+   // (em->init actually mallocs the memory)
+   memory_set_modelling(  arguments.mem_model       & 0x0f);
+   memory_set_rd_logging((arguments.mem_model >> 4) & 0x0f);
+   memory_set_wr_logging((arguments.mem_model >> 8) & 0x0f);
+
+   // Machine specific stuff
+
+   if (arguments.vec_rst <= 0) {
+      switch (arguments.machine) {
+      case MACHINE_BEEB:
+         arguments.vec_rst = 0xA9D9CD;
+         break;
+      case MACHINE_MASTER:
+         arguments.vec_rst = 0xA9E364;
+         break;
+      case MACHINE_ELK:
+         arguments.vec_rst = 0xA9D8D2;
+         break;
+      }
+   }
+
+   switch (arguments.machine) {
+   case MACHINE_BEEB:
+   case MACHINE_MASTER:
+      memory_set_rom_latch_addr(0xfe30);
+      memory_set_io_window(0xfc00, 0xff00);
+      if (arguments.bbctube) {
+         memory_set_tube_window(0xfee0, 0xfee8);
+      }
+      break;
+   case MACHINE_ELK:
+      memory_set_rom_latch_addr(0xfe05);
+      memory_set_io_window(0xfc00, 0xff00);
+      if (arguments.bbctube) {
+         memory_set_tube_window(0xfce0, 0xfce8);
+      }
+      break;
    }
 
    if (arguments.cpu_type == CPU_65C816) {
