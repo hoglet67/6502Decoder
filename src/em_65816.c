@@ -96,8 +96,6 @@ typedef struct {
 
 static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=? D=? I=? Z=? C=? E=? PB=?? DB=?? DP=????";
 
-static int c02;
-
 static InstrType *instr_table;
 
 AddrModeType addr_mode_table[] = {
@@ -803,7 +801,6 @@ static int get_accumulator() {
 static void em_65816_init(arguments_t *args) {
    switch (args->cpu_type) {
    case CPU_65C816:
-      c02 = 1;
       instr_table = instr_table_65c816;
       break;
    default:
