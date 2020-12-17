@@ -1161,18 +1161,26 @@ void decode(FILE *stream) {
 // Main program entry point
 // ====================================================================
 
-int main(int argc, char *argv[]) {
-   arguments.idx_data         =  0;
-   arguments.idx_rnw          =  8;
-   arguments.idx_sync         =  9;
-   arguments.idx_vpa          =  9;
-   arguments.idx_rdy          = 10;
-   arguments.idx_vda          = 11;
-   arguments.idx_rst          = 14;
-   arguments.idx_phi2         = 15;
-   arguments.vec_rst          = -1;
-   arguments.machine          = MACHINE_DEFAULT;
+#define UNSPECIFIED -2
 
+int main(int argc, char *argv[]) {
+   // General options
+   arguments.cpu_type         = CPU_UNKNOWN;
+   arguments.machine          = MACHINE_DEFAULT;
+   arguments.vec_rst          = UNSPECIFIED;
+   arguments.sp_reg           = UNSPECIFIED;
+   arguments.bbctube          = 0;
+   arguments.byte             = 0;
+   arguments.debug            = 0;
+   arguments.mem_model        = 0;
+   arguments.skip             = 0;
+   arguments.profile          = 0;
+   arguments.trigger_start    = UNSPECIFIED;
+   arguments.trigger_stop     = UNSPECIFIED;
+   arguments.trigger_skipint  = 0;
+   arguments.filename         = NULL;
+
+   // Output options
    arguments.show_address     = 1;
    arguments.show_hex         = 0;
    arguments.show_instruction = 1;
@@ -1180,25 +1188,26 @@ int main(int argc, char *argv[]) {
    arguments.show_bbcfwa      = 0;
    arguments.show_cycles      = 0;
 
-   arguments.bbctube          = 0;
-   arguments.cpu_type         = CPU_UNKNOWN;
+   // Signal definition options
+   arguments.idx_data         = UNSPECIFIED;
+   arguments.idx_rnw          = UNSPECIFIED;
+   arguments.idx_sync         = UNSPECIFIED;
+   arguments.idx_vpa          = UNSPECIFIED;
+   arguments.idx_rdy          = UNSPECIFIED;
+   arguments.idx_vda          = UNSPECIFIED;
+   arguments.idx_rst          = UNSPECIFIED;
+   arguments.idx_phi2         = UNSPECIFIED;
+
+   // Additional 6502 options
    arguments.undocumented     = 0;
-   arguments.e_flag           = -1;
-   arguments.sp_reg           = -1;
-   arguments.pb_reg           = -1;
-   arguments.db_reg           = -1;
-   arguments.dp_reg           = -1;
-   arguments.ms_flag          = -1;
-   arguments.xs_flag          = -1;
-   arguments.byte             = 0;
-   arguments.debug            = 0;
-   arguments.mem_model        = 0;
-   arguments.skip             = 0;
-   arguments.profile          = 0;
-   arguments.trigger_start    = -1;
-   arguments.trigger_stop     = -1;
-   arguments.trigger_skipint  = 0;
-   arguments.filename         = NULL;
+
+   // Additional 65816 options
+   arguments.pb_reg           = UNSPECIFIED;
+   arguments.db_reg           = UNSPECIFIED;
+   arguments.dp_reg           = UNSPECIFIED;
+   arguments.e_flag           = UNSPECIFIED;
+   arguments.ms_flag          = UNSPECIFIED;
+   arguments.xs_flag          = UNSPECIFIED;
 
    argp_parse(&argp, argc, argv, 0, 0, &arguments);
 
@@ -1212,39 +1221,38 @@ int main(int argc, char *argv[]) {
    // the data file is 8 bit samples, and all the control signals are
    // assumed to be don't care.
    if (arguments.byte) {
-      arguments.idx_rnw  = -1;
-      arguments.idx_sync = -1;
-      arguments.idx_rdy  = -1;
-      arguments.idx_phi2 = -1;
-      arguments.idx_rst  = -1;
-      arguments.idx_vpa  = -1;
-      arguments.idx_vda  = -1;
-   }
-
-   if (arguments.profile) {
-      profiler_init();
-   }
-
-   FILE *stream;
-   if (!arguments.filename || !strcmp(arguments.filename, "-")) {
-      stream = stdin;
-   } else {
-      stream = fopen(arguments.filename, "r");
-      if (stream == NULL) {
-         perror("failed to open capture file");
-         return 2;
+      if (arguments.idx_rnw != UNSPECIFIED) {
+         fprintf(stderr, "--rnw is incompatible with byte mode\n");
+         return 1;
+      }
+      if (arguments.idx_sync != UNSPECIFIED) {
+         fprintf(stderr, "--sync is incompatible with byte mode\n");
+         return 1;
+      }
+      if (arguments.idx_phi2 != UNSPECIFIED) {
+         fprintf(stderr, "--phi2 is incompatible with byte mode\n");
+         return 1;
+      }
+      if (arguments.idx_rst != UNSPECIFIED) {
+         fprintf(stderr, "--rst is incompatible with byte mode\n");
+         return 1;
+      }
+      if (arguments.idx_rdy != UNSPECIFIED) {
+         fprintf(stderr, "--rdy is incompatible with byte mode\n");
+         return 1;
+      }
+      if (arguments.idx_vpa != UNSPECIFIED) {
+         fprintf(stderr, "--vpa is incompatible with byte mode\n");
+         return 1;
+      }
+      if (arguments.idx_vda != UNSPECIFIED) {
+         fprintf(stderr, "--vda is incompatible with byte mode\n");
+         return 1;
       }
    }
 
-   // Initialize memory modelling
-   // (em->init actually mallocs the memory)
-   memory_set_modelling(  arguments.mem_model       & 0x0f);
-   memory_set_rd_logging((arguments.mem_model >> 4) & 0x0f);
-   memory_set_wr_logging((arguments.mem_model >> 8) & 0x0f);
-
-   // Machine specific stuff
-
-   if (arguments.vec_rst < 0) {
+   // Apply Machine specific defaults
+   if (arguments.vec_rst == UNSPECIFIED) {
       switch (arguments.machine) {
       case MACHINE_BEEB:
          arguments.vec_rst = 0xA9D9CD;
@@ -1255,9 +1263,10 @@ int main(int argc, char *argv[]) {
       case MACHINE_ELK:
          arguments.vec_rst = 0xA9D8D2;
          break;
+      default:
+         arguments.vec_rst = 0xFFFFFF;
       }
    }
-
    if (arguments.cpu_type == CPU_UNKNOWN) {
       switch (arguments.machine) {
       case MACHINE_MASTER:
@@ -1268,7 +1277,6 @@ int main(int argc, char *argv[]) {
          break;
       }
    }
-
    switch (arguments.machine) {
    case MACHINE_BEEB:
    case MACHINE_MASTER:
@@ -1287,6 +1295,83 @@ int main(int argc, char *argv[]) {
       break;
    }
 
+   // Initialize memory modelling
+   // (em->init actually mallocs the memory)
+   memory_set_modelling(  arguments.mem_model       & 0x0f);
+   memory_set_rd_logging((arguments.mem_model >> 4) & 0x0f);
+   memory_set_wr_logging((arguments.mem_model >> 8) & 0x0f);
+
+   // Validate options compatibility with CPU
+   if (arguments.cpu_type != CPU_6502 && arguments.undocumented) {
+      fprintf(stderr, "--undocumented is only applicable to the 6502\n");
+      return 1;
+   }
+   if (arguments.cpu_type == CPU_65C816) {
+      if (arguments.idx_sync != UNSPECIFIED) {
+         fprintf(stderr, "--sync is not applicable to the 65C816\n");
+         return 1;
+      }
+   } else {
+      if (arguments.idx_vda != UNSPECIFIED) {
+         fprintf(stderr, "--vda is only applicable to the 65C816\n");
+         return 1;
+      }
+      if (arguments.idx_vpa != UNSPECIFIED) {
+         fprintf(stderr, "--vpa is only applicable to the 65C816\n");
+         return 1;
+      }
+      if (arguments.pb_reg != UNSPECIFIED) {
+         fprintf(stderr, "--pb is only applicable to the 65C816\n");
+         return 1;
+      }
+      if (arguments.db_reg != UNSPECIFIED) {
+         fprintf(stderr, "--db is only applicable to the 65C816\n");
+         return 1;
+      }
+      if (arguments.dp_reg != UNSPECIFIED) {
+         fprintf(stderr, "--dp is only applicable to the 65C816\n");
+         return 1;
+      }
+      if (arguments.e_flag != UNSPECIFIED) {
+         fprintf(stderr, "--emul is only applicable to the 65C816\n");
+         return 1;
+      }
+      if (arguments.ms_flag != UNSPECIFIED) {
+         fprintf(stderr, "--ms is only applicable to the 65C816\n");
+         return 1;
+      }
+      if (arguments.xs_flag != UNSPECIFIED) {
+         fprintf(stderr, "--xs is only applicable to the 65C816\n");
+         return 1;
+      }
+   }
+
+   // Implement default pins mapping for unspecified pins
+   if (arguments.idx_data == UNSPECIFIED) {
+      arguments.idx_data = 0;
+   }
+   if (arguments.idx_rnw == UNSPECIFIED) {
+      arguments.idx_rnw = 8;
+   }
+   if (arguments.idx_sync == UNSPECIFIED) {
+      arguments.idx_sync = 9;
+   }
+   if (arguments.idx_vpa == UNSPECIFIED) {
+      arguments.idx_vpa = 9;
+   }
+   if (arguments.idx_rdy == UNSPECIFIED) {
+      arguments.idx_rdy = 10;
+   }
+   if (arguments.idx_vda == UNSPECIFIED) {
+      arguments.idx_vda = 11;
+   }
+   if (arguments.idx_rst == UNSPECIFIED) {
+      arguments.idx_rst= 14;
+   }
+   if (arguments.idx_phi2 == UNSPECIFIED) {
+      arguments.idx_phi2 = 15;
+   }
+
    if (arguments.cpu_type == CPU_65C816) {
       c816 = 1;
       em = &em_65816;
@@ -1294,7 +1379,23 @@ int main(int argc, char *argv[]) {
       c816 = 0;
       em = &em_6502;
    }
+
    em->init(&arguments);
+
+   if (arguments.profile) {
+      profiler_init();
+   }
+
+   FILE *stream;
+   if (!arguments.filename || !strcmp(arguments.filename, "-")) {
+      stream = stdin;
+   } else {
+      stream = fopen(arguments.filename, "r");
+      if (stream == NULL) {
+         perror("failed to open capture file");
+         return 2;
+      }
+   }
 
    decode(stream);
    fclose(stream);
