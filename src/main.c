@@ -130,22 +130,20 @@ enum {
 
 
 enum {
-   KEY_MACHINE = 'm',
-   KEY_C816 = '8',
-   KEY_BYTE = 'b',
-   KEY_DEBUG = 'd',
-   KEY_PROFILE = 'p',
-   KEY_TRIGGER = 't',
-   KEY_QUIET = 'q',
    KEY_ADDR = 'a',
+   KEY_BYTE = 'b',
+   KEY_CPU = 'c',
+   KEY_DEBUG = 'd',
+   KEY_BBCFWA = 'f',
    KEY_HEX = 'h',
    KEY_INSTR = 'i',
+   KEY_MACHINE = 'm',
+   KEY_PROFILE = 'p',
+   KEY_QUIET = 'q',
    KEY_STATE = 's',
-   KEY_CYCLES = 'y',
-   KEY_BBCFWA = 'f',
+   KEY_TRIGGER = 't',
    KEY_UNDOC = 'u',
-   KEY_C02 = 'c',
-   KEY_ROCKWELL = 'r',
+   KEY_CYCLES = 'y',
    KEY_VECRST = 1,
    KEY_BBCTUBE,
    KEY_MEM,
@@ -167,20 +165,52 @@ enum {
    KEY_XS
 };
 
+
+typedef struct {
+   char *cpu_name;
+   cpu_t cpu_type;
+} cpu_name_t;
+
+static cpu_name_t cpu_names[] = {
+   // 6502
+   {"6502",       CPU_6502},
+   {"R6502",      CPU_6502},
+   {"SY6502",     CPU_6502},
+   {"NMOS",       CPU_6502},
+   {"02",         CPU_6502},
+   // 65C02
+   {"65C02",      CPU_65C02},
+   {"W65C02",     CPU_65C02},
+   {"CMOS",       CPU_65C02},
+   {"C02",        CPU_65C02},
+   // 65C02_ROCKWELL
+   {"R65C02",     CPU_65C02_ROCKWELL},
+   {"ROCKWELL",   CPU_65C02_ROCKWELL},
+   // 65C816
+   {"65816",      CPU_65C816},
+   {"65C816",     CPU_65C816},
+   {"W65816",     CPU_65C816},
+   {"W65C816",    CPU_65C816},
+   {"816",        CPU_65C816},
+   {"C816",       CPU_65C816},
+
+   // Terminator
+   {NULL, 0}
+};
+
 static struct argp_option options[] = {
    { 0, 0, 0, 0, "General options:", GROUP_GENERAL},
 
    { "vecrst",      KEY_VECRST,    "HEX",  OPTION_ARG_OPTIONAL, "Reset vector, optionally preceeded by the first opcode (e.g. A9D9CD)",
                                                                                                                      GROUP_GENERAL},
+   { "cpu",            KEY_CPU,     "CPU",                   0, "Sets CPU type (6502, 65c02, r65c02, 65c816)",       GROUP_GENERAL},
    { "machine",    KEY_MACHINE, "MACHINE",                   0, "Enable machine (beeb,elk,master) defaults",         GROUP_GENERAL},
-   { "c816",          KEY_C816,         0,                   0, "Enable 65C816 mode",                                GROUP_GENERAL},
    { "byte",          KEY_BYTE,         0,                   0, "Enable byte-wide sample mode",                      GROUP_GENERAL},
-   { "debug",        KEY_DEBUG,   "LEVEL",                   0, "Sets debug level",                                  GROUP_GENERAL},
+   { "debug",        KEY_DEBUG,   "LEVEL",                   0, "Sets the debug level (0 or 1)",                     GROUP_GENERAL},
    { "profile",    KEY_PROFILE,  "PARAMS", OPTION_ARG_OPTIONAL, "Profile code execution",                            GROUP_GENERAL},
    { "trigger",    KEY_TRIGGER, "ADDRESS",                   0, "Trigger on address",                                GROUP_GENERAL},
    { "bbctube",    KEY_BBCTUBE,         0,                   0, "BBC tube protocol decoding",                        GROUP_GENERAL},
    { "mem",            KEY_MEM,     "HEX", OPTION_ARG_OPTIONAL, "Memory modelling (see above)",                      GROUP_GENERAL},
-   { "sp",              KEY_SP,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register",       GROUP_GENERAL},
    { "skip",          KEY_SKIP,     "HEX", OPTION_ARG_OPTIONAL, "Skip the first n samples",                          GROUP_GENERAL},
 
    { 0, 0, 0, 0, "Output options:", GROUP_OUTPUT},
@@ -207,8 +237,7 @@ static struct argp_option options[] = {
    { 0, 0, 0, 0, "Additional 6502/65C02 options:", GROUP_6502},
 
    { "undocumented", KEY_UNDOC,        0,                   0, "Enable undocumented opcodes",                        GROUP_6502},
-   { "c02",            KEY_C02,        0,                   0, "Enable 65C02 mode",                                  GROUP_6502},
-   { "rockwell",  KEY_ROCKWELL,        0,                   0, "Enable additional rockwell instructions",            GROUP_6502},
+   { "sp",              KEY_SP,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register",       GROUP_6502},
 
    { 0, 0, 0, 0, "Additional 65C816 options:", GROUP_65816},
 
@@ -218,6 +247,7 @@ static struct argp_option options[] = {
    { "emul",          KEY_EMUL,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the E flag",                        GROUP_65816},
    { "ms",              KEY_MS,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the M flag",                        GROUP_65816},
    { "xs",              KEY_XS,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the X flag",                        GROUP_65816},
+   { "sp",              KEY_SP,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register",       GROUP_65816},
    { 0 }
 };
 
@@ -353,14 +383,18 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->mem_model = 0;
       }
       break;
-   case KEY_C02:
-      arguments->cpu_type = CPU_65C02;
-      break;
-   case KEY_C816:
-      arguments->cpu_type = CPU_65C816;
-      break;
-   case KEY_ROCKWELL:
-      arguments->cpu_type = CPU_65C02_ROCKWELL;
+   case KEY_CPU:
+      if (arg && strlen(arg) > 0) {
+         i = 0;
+         while (cpu_names[i].cpu_name) {
+            if (strcasecmp(arg, cpu_names[i].cpu_name) == 0) {
+               arguments->cpu_type = cpu_names[i].cpu_type;
+               return 0;
+            }
+            i++;
+         }
+      }
+      argp_error(state, "unsupported cpu type: %s", arg);
       break;
    case KEY_MACHINE:
       i = 0;
@@ -1136,7 +1170,7 @@ int main(int argc, char *argv[]) {
    arguments.idx_vda          = 11;
    arguments.idx_rst          = 14;
    arguments.idx_phi2         = 15;
-   arguments.vec_rst          = 0xA9D9CD; // These are the defaults for the beeb
+   arguments.vec_rst          = -1;
    arguments.machine          = MACHINE_DEFAULT;
 
    arguments.show_address     = 1;
@@ -1147,7 +1181,7 @@ int main(int argc, char *argv[]) {
    arguments.show_cycles      = 0;
 
    arguments.bbctube          = 0;
-   arguments.cpu_type         = CPU_6502;
+   arguments.cpu_type         = CPU_UNKNOWN;
    arguments.undocumented     = 0;
    arguments.e_flag           = -1;
    arguments.sp_reg           = -1;
@@ -1210,7 +1244,7 @@ int main(int argc, char *argv[]) {
 
    // Machine specific stuff
 
-   if (arguments.vec_rst <= 0) {
+   if (arguments.vec_rst < 0) {
       switch (arguments.machine) {
       case MACHINE_BEEB:
          arguments.vec_rst = 0xA9D9CD;
@@ -1220,6 +1254,17 @@ int main(int argc, char *argv[]) {
          break;
       case MACHINE_ELK:
          arguments.vec_rst = 0xA9D8D2;
+         break;
+      }
+   }
+
+   if (arguments.cpu_type == CPU_UNKNOWN) {
+      switch (arguments.machine) {
+      case MACHINE_MASTER:
+         arguments.cpu_type = CPU_65C02;
+         break;
+      default:
+         arguments.cpu_type = CPU_6502;
          break;
       }
    }

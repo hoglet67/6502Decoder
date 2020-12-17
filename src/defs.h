@@ -9,6 +9,7 @@
 #define MACHINE_ELK     3
 
 typedef enum {
+   CPU_UNKNOWN,
    CPU_6502,
    CPU_65C02,
    CPU_65C02_ROCKWELL,
