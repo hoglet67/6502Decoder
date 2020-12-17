@@ -499,7 +499,6 @@ static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruc
       pb = PB;
    } else {
       // We must be in native mode
-      pb = sample_q[2].data;
       emulation_mode_off();
       i = 3;
       pb = sample_q[2].data;
