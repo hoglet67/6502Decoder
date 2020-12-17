@@ -477,6 +477,11 @@ static void em_6502_init(arguments_t *args) {
    }
    bbctube = args->bbctube;
 
+   // Initialize the SP
+   if (args->sp_reg >= 0) {
+      S = args->sp_reg & 0xff;
+   }
+
    // This flag tells the sync-less cycle count estimation to infer additional cycles on the master
    // It's needed when rdy is not being explicitely sampled
    master_nordy = (args->machine == MACHINE_MASTER) && (args->idx_rdy < 0);
