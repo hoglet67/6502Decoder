@@ -471,9 +471,6 @@ static void em_6502_init(arguments_t *args) {
       exit(1);
    }
    bbctube = args->bbctube;
-
-   // Initialize Memory
-   memory_init(0x10000);
    // Initialize the SP
    if (args->sp_reg >= 0) {
       S = args->sp_reg & 0xff;

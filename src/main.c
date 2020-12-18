@@ -1277,26 +1277,17 @@ int main(int argc, char *argv[]) {
          break;
       }
    }
-   switch (arguments.machine) {
-   case MACHINE_BEEB:
-   case MACHINE_MASTER:
-      memory_set_rom_latch_addr(0xfe30);
-      memory_set_io_window(0xfc00, 0xff00);
-      if (arguments.bbctube) {
-         memory_set_tube_window(0xfee0, 0xfee8);
-      }
-      break;
-   case MACHINE_ELK:
-      memory_set_rom_latch_addr(0xfe05);
-      memory_set_io_window(0xfc00, 0xff00);
-      if (arguments.bbctube) {
-         memory_set_tube_window(0xfce0, 0xfce8);
-      }
-      break;
-   }
 
    // Initialize memory modelling
    // (em->init actually mallocs the memory)
+   if (arguments.cpu_type == CPU_65C816) {
+      // 16MB
+      memory_init(0x1000000, arguments.machine, arguments.bbctube);
+   } else {
+      // 64KB
+      memory_init(0x10000, arguments.machine, arguments.bbctube);
+   }
+
    memory_set_modelling(  arguments.mem_model       & 0x0f);
    memory_set_rd_logging((arguments.mem_model >> 4) & 0x0f);
    memory_set_wr_logging((arguments.mem_model >> 8) & 0x0f);

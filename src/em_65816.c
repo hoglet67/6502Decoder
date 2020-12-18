@@ -806,8 +806,6 @@ static void em_65816_init(arguments_t *args) {
       printf("em_65816_init called with unsupported cpu_type (%d)\n", args->cpu_type);
       exit(1);
    }
-   // Initialize Memory
-   memory_init(0x1000000);
    if (args->e_flag >= 0) {
       E  = args->e_flag & 1;
       if (E) {
