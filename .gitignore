@@ -19,4 +19,5 @@ test/**/*.dif
 fx2sharp/fx2sharp/bin
 fx2sharp/fx2sharp/obj
 fx2sharp/.vs
+fx2sharp/packages
 decode6502.exe

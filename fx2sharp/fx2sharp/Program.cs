@@ -1,23 +1,42 @@
 ﻿using CyUSB;
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using System.Threading;
 
 namespace fx2sharp
 {
 
+    public class CmdLineArgumentException : ArgumentException
+    {
+        public CmdLineArgumentException(string message, string argument)
+            : base(message, argument)
+        {
+        }
+    }
+
+    public class FX2SharpException : Exception
+    {
+        public int ReturnCode { get; }
+
+        public FX2SharpException(string message, int returnCode)
+            : base(message)
+        {
+            ReturnCode = returnCode;
+        }
+
+    }
+
     public enum FirmwareConfigDirection
     {
-        None,
         In,
         Out
     }
 
     public enum FirmwareConfigIFClock
     {
-        None,
         Internal30,
         Internal48,
         External
@@ -25,14 +44,12 @@ namespace fx2sharp
 
     public enum FirmwareConfigFifoMode
     {
-        None,
         Sync,
         Async
     }
 
     public enum FirmwareConfigBuffering
     {
-        None,
         Double,
         Triple,
         Quadruple
@@ -40,12 +57,10 @@ namespace fx2sharp
 
     public enum FirmwareConfigCPUClock
     {
-        None,
         CPU12,
         CPU24,
         CPU48
     }
-
 
     public class bufandlen
     {
@@ -186,6 +201,8 @@ namespace fx2sharp
     class Program
     {
         const int E_OK = 0;
+        const int E_ARGUMENT = 1;
+        const int E_USER_BREAK = 2;
         const int E_ENDPOINT = 95;
         const int E_CFG_FAIL = 96;
         const int E_GO_FAIL = 97;
@@ -193,6 +210,8 @@ namespace fx2sharp
         const int E_FIRMWARE = 99;
         const int E_NODEV = 100;
         const int E_UNEX = 101;
+        const int E_BUFFERS_EXHAUSTED = 102;
+        const int E_TIMEOUT = 103;
 
         const byte FX2_RESET_RESET = 1;
         const byte FX2_RESET_GO = 0;
@@ -205,348 +224,386 @@ namespace fx2sharp
         const byte EP_BULK_IN = 0x86;
         const byte EP_BULK_OUT = 0x02;
 
+        static CancellationTokenSource ct_source = new CancellationTokenSource();
+        static CancellationToken ct_token = ct_source.Token;
 
-        static bool Cancelled = false;
+        static void Usage(TextWriter sw)
+        {
+            sw.Write("USAGE: fx2pipe [option|assignment...] <input/output filename>\n"
+        + "Long options:\n"
+        + "  --help       print this\n"
+        + "  --version    print version information\n"
+        + "  --debug      print debugging info\n"
+        + "Short options: (Can be compined into single option)\n"
+        + "  -i           run in IN direction, i.e. read data from USB EP6 (default)\n"
+        + "  -o           run in OUT direction, i.e. write data to USB EP2\n"
+        + "  -0           no stdio; send NULs / throw away read data (for timing)\n"
+        + "  -8,-w        use 8bit / 16bit (default) wide fifo bus on FX2 side\n"
+        + "  -2,-3,-4     use double, triple or quad (default) buffered FX2 fifo\n"
+        + "  -s,-a        run in sync (default) / async slave fifo mode\n"
+        + "  -O,-I        shortcut for -o0, -i0, respectively\n"
+        + "Assignments: (Leading '-' can be left away)\n"
+        + "  -d=NN        use n-th (unconfigured) FX2 device (start with NN=0, default)\n"
+        + "  -d=VID:PID[:N] use N-th device with specified VID and PID\n"
+        + "  -n=NNN       stop after NNN bytes; suffix k,M,G for mult. with 2^10,20,30\n"
+        + "  -bs=NNN      set IO block size to NNN, max 16384 (default 16384)\n"
+        + "  -ps=NN       set pipeline size (number of URBs; default 16)\n"
+        + "  -bufs=NN     number of spare byte buffers (default 64)\n"
+        //        + "  -sched=P[,N] set scheduling policy P (\"fifo\" or \"rr\") and prio N\n"
+        + "  -fw=PATH     use specified firmware IHX file instead of built-in one\n"
+        + "               omit path to not download any firmware (just reset device)\n"
+        + "  -ifclk=[x|30[o]|48[o]][i] specify interface clock:\n"
+        + "               x -> external; 30,48 -> internal clock 30/48MHz, suffix 'o'\n"
+        + "               to enable output to IFCLK pin, 'i' to invert IFCLK\n"
+        + "  -cko=[12|24|48][o|z][i] specify 8051 frequency in MHz (default: 48) and\n"
+        + "               CLKOUT pin: output 'o' (default), tristate 'z', invert 'i'\n"
+        + "  -discard=NN  Number of bytes to discard when reading from fifos (default 16k)\n"
+        + "               ; suffix k,M,G for mult. with 2^10,20,30\n"
+        + "\n"
+        + "input/output filename can be specified as -- for stdin/stdout"
+        + "\n"
+        + "fx2sharp - pipe data in or out of an Cypress FX2 device (CY7C6801x[A])\n"
+        + "\n"
+        + "Copyright(c) 2020 by Dominic Beesley & David Banks; License: GPL\n"
+        + "\n"
+        + "based on fx2pipe: Copyright (c) 2006--2011 by Wolfgang Wieser; License: GPL\n");
+        }
 
+        static void Version(TextWriter sw)
+        {
+
+            string githash = GetGitHash();
+
+            githash = (githash == null) ? "" : " --" + githash;
+
+            sw.WriteLine($"Version: 0.01{githash}");
+
+
+        }
+
+        /// <summary> Gets the git hash value from the assembly
+        /// or null if it cannot be found. </summary>
+        public static string GetGitHash()
+        {
+            var asm = typeof(Program).Assembly;
+            var attrs = asm.GetCustomAttributes<AssemblyMetadataAttribute>();
+            return attrs.FirstOrDefault(a => a.Key == "GitHash")?.Value;
+        }
+
+        static long readKMG(string parm)
+        {
+            long mult = 1;
+            if (parm.ToLower().EndsWith("k"))
+            {
+                mult = 1024;
+                parm = parm.Substring(0, parm.Length - 1);
+            }
+            else if (parm.ToLower().EndsWith("m"))
+            {
+                mult = 1024 * 1024;
+                parm = parm.Substring(0, parm.Length - 1);
+            }
+            if (parm.ToLower().EndsWith("g"))
+            {
+                mult = 1024 * 1024 * 1024;
+                parm = parm.Substring(0, parm.Length - 1);
+            }
+
+            long v;
+            if (!long.TryParse(parm, out v))
+                throw new CmdLineArgumentException($"Cannot parse \"{parm}\" as a number", "-n");
+            else
+                return v * mult;
+
+        }
 
         static unsafe int Main(string[] args)
         {
-
-            Console.CancelKeyPress += delegate (object sender, ConsoleCancelEventArgs e)
-            {
-                e.Cancel = true;
-                Cancelled = true;
-            };
-
             try
             {
+                bool noIO = false;
+                string devSpec = "";
+                long captureLimit = -1;
+                int blocksize = 16384;
+                int uiblen = 16;
+                string firmwarepath = Path.Combine(
+                    Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location),
+                    "fx2pipe_hoglet.hex"
+                );
+                Stream fs = null;
+                bool debug = false;
+                int bufs = 64;
+                long discard = 16384;
 
-                using (var usbDevices = new USBDeviceList(CyConst.DEVICES_CYUSB))
+                //configure firmware
+                FirmwareConfig cfg_fw = new FirmwareConfig();
+                cfg_fw.CPUClock = FirmwareConfigCPUClock.CPU48;
+                cfg_fw.CPUClockInvert = false;
+                cfg_fw.CPUClockOut = true;
+                cfg_fw.Direction = FirmwareConfigDirection.In;
+                cfg_fw.Fifo8bit = false;
+                cfg_fw.FifoBufferMode = FirmwareConfigBuffering.Quadruple;
+                cfg_fw.FifoMode = FirmwareConfigFifoMode.Async;
+                cfg_fw.IFClock = FirmwareConfigIFClock.Internal48;
+                cfg_fw.IFClockInvert = false;
+                cfg_fw.IFClockOut = false;
+
+                // Decode command line parameters
+                int i = 0;
+                while (i < args.Length && args[i].StartsWith("-"))
                 {
-                    using (CyFX2Device fx2 = Connect(usbDevices))
+                    string arg = args[i];
+                    string sw = arg;
+                    string parm = "";
+                    int ie = sw.IndexOf("=");
+                    if (ie >= 0)
                     {
-                        if (fx2 != null)
+                        parm = sw.Substring(ie + 1).Trim();
+                        sw = sw.Substring(0, ie).Trim();
+                    }
+
+                    switch (sw)
+                    {
+                        case "--help":
+                            Usage(Console.Out);
+                            return E_OK;
+                        case "--version":
+                            Version(Console.Out);
+                            return E_OK;
+                        case "--debug":
+                            debug = true;
+                            break;
+                        case "-i":
+                            cfg_fw.Direction = FirmwareConfigDirection.In;
+                            break;
+                        case "-I":
+                            cfg_fw.Direction = FirmwareConfigDirection.In;
+                            noIO = true;
+                            break;
+                        case "-o":
+                            cfg_fw.Direction = FirmwareConfigDirection.Out;
+                            break;
+                        case "-O":
+                            cfg_fw.Direction = FirmwareConfigDirection.Out;
+                            noIO = true;
+                            break;
+                        case "-0":
+                            noIO = true;
+                            break;
+                        case "-8":
+                            cfg_fw.Fifo8bit = true;
+                            break;
+                        case "-w":
+                            cfg_fw.Fifo8bit = false;
+                            break;
+                        case "-2":
+                            cfg_fw.FifoBufferMode = FirmwareConfigBuffering.Double;
+                            break;
+                        case "-3":
+                            cfg_fw.FifoBufferMode = FirmwareConfigBuffering.Triple;
+                            break;
+                        case "-4":
+                            cfg_fw.FifoBufferMode = FirmwareConfigBuffering.Quadruple;
+                            break;
+                        case "-s":
+                            cfg_fw.FifoMode = FirmwareConfigFifoMode.Sync;
+                            break;
+                        case "-a":
+                            cfg_fw.FifoMode = FirmwareConfigFifoMode.Async;
+                            break;
+                        case "-d":
+                            devSpec = parm;
+                            break;
+                        case "-n":
+                            if (parm == "")
+                                captureLimit = -1;
+                            else
+                                captureLimit = readKMG(parm);
+                            break;
+                        case "-discard":
+                            if (parm == "")
+                                discard = -1;
+                            else
+                                discard = readKMG(parm);
+                            break;
+                        case "-bs":
+                            if (!int.TryParse(parm, out blocksize))
+                                throw new CmdLineArgumentException($"Cannot parse \"{parm}\" as a number", "-bs");
+                            if (blocksize < 128 || blocksize > 16384)
+                                throw new CmdLineArgumentException($"Blocksize must be 128 <= bs <=16384", "-bs");
+                            break;
+                        case "-ps":
+                            if (!int.TryParse(parm, out uiblen))
+                                throw new CmdLineArgumentException($"Cannot parse \"{parm}\" as a number", "-ps");
+                            if (uiblen < 4 | uiblen > 64)
+                                throw new CmdLineArgumentException($"Pipeline must be 4<= ps <=64", "-ps");
+                            break;
+                        case "-fw":
+                            if (!File.Exists(parm))
+                                throw new CmdLineArgumentException($"Firmware path \"{parm}\" is not a file", "-fw");
+                            firmwarepath = parm;
+                            break;
+                        case "-ifclk":
+                            if (parm == "")
+                                throw new CmdLineArgumentException("Bad -ifclk param", "-ifclk");
+                            if (parm.ToLower().EndsWith("i"))
+                            {
+                                cfg_fw.IFClockInvert = true;
+                                parm = parm.Substring(0, parm.Length - 1);
+                            }
+                            else
+                                cfg_fw.IFClockInvert = false;
+
+                            switch (parm)
+                            {
+                                case "x":
+                                    cfg_fw.IFClock = FirmwareConfigIFClock.External;
+                                    cfg_fw.IFClockOut = false;
+                                    break;
+                                case "30":
+                                    cfg_fw.IFClock = FirmwareConfigIFClock.Internal30;
+                                    cfg_fw.IFClockOut = false;
+                                    break;
+                                case "30o":
+                                    cfg_fw.IFClock = FirmwareConfigIFClock.Internal30;
+                                    cfg_fw.IFClockOut = true;
+                                    break;
+                                case "48":
+                                    cfg_fw.IFClock = FirmwareConfigIFClock.Internal48;
+                                    cfg_fw.IFClockOut = false;
+                                    break;
+                                case "48o":
+                                    cfg_fw.IFClock = FirmwareConfigIFClock.Internal48;
+                                    cfg_fw.IFClockOut = true;
+                                    break;
+                                default:
+                                    throw new CmdLineArgumentException($"Unrecoginised option {parm}", "-ifclk");
+                            }
+                            break;
+
+                        case "-cko":
+                            cfg_fw.CPUClockInvert = false;
+                            cfg_fw.CPUClockOut = false;
+
+                            if (parm.EndsWith("i"))
+                            {
+                                cfg_fw.CPUClockInvert = true;
+                                parm = parm.Substring(0, parm.Length - 1);
+                            }
+
+                            if (parm.EndsWith("o"))
+                            {
+                                cfg_fw.CPUClockOut = true;
+                                parm = parm.Substring(0, parm.Length - 1);
+                            }
+                            else if (parm.EndsWith("z"))
+                            {
+                                cfg_fw.CPUClockOut = false;
+                                parm = parm.Substring(0, parm.Length - 1);
+                            }
+
+                            switch (parm)
+                            {
+                                case "12":
+                                    cfg_fw.CPUClock = FirmwareConfigCPUClock.CPU12;
+                                    break;
+                                case "24":
+                                    cfg_fw.CPUClock = FirmwareConfigCPUClock.CPU24;
+                                    break;
+                                case "48":
+                                    cfg_fw.CPUClock = FirmwareConfigCPUClock.CPU12;
+                                    break;
+                                default:
+                                    throw new CmdLineArgumentException($"Unrecognized option {parm}", "-cko");
+                            }
+
+                            break;
+
+                        case "-bufs":
+                            if (!int.TryParse(parm, out bufs))
+                                throw new CmdLineArgumentException($"Bad bufs {parm}", "-bufs");
+                            break;
+
+                        default:
+                            throw new CmdLineArgumentException($"Unrecognized option \"{arg}\"", sw);
+                    }
+
+                    i++;
+                }
+
+                if (!noIO)
+                {
+                    if (i != args.Length - 1)
+                    {
+                        Console.Error.WriteLine("Incorrect number of arguments");
+                        return E_ARGUMENT;
+                    }
+                    string filename = args[i];
+                    if (filename == "--")
+                    {
+                        fs = (cfg_fw.Direction == FirmwareConfigDirection.In) ? Console.OpenStandardInput() : Console.OpenStandardOutput();
+                    }
+                    else
+                    {
+                        try
                         {
-                            Console.WriteLine($"Found: {fx2.ToString()} ");
-
-
-                            Console.WriteLine("RESET");
-                            //reset device
-                            if (!WriteReset(fx2, true))
-                            {
-                                Console.Error.WriteLine("RESET failed");
-                                return E_RESET_FAIL;
-                            }
-                            Thread.Sleep(500);
-
-
-                            Console.WriteLine("UPLOAD FIRMWARE");
-                            string firmname = Path.Combine(
-                                    Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location),
-                                    "fx2pipe_hoglet.hex"
-                                    );
-                            //upload firmware
-                            if (!fx2.LoadRAM(firmname))
-                            {
-                                Console.Error.WriteLine("Failed to program Firmware");
-                                return E_FIRMWARE;
-                            }
-
-
-                            Console.WriteLine("RESTART");
-                            //reset device
-                            if (!WriteReset(fx2, false))
-                            {
-                                Console.Error.WriteLine("RESTART failed");
-                                return E_RESET_FAIL;
-                            }
-                            Thread.Sleep(500);
-
+                            fs = new FileStream(filename, (cfg_fw.Direction == FirmwareConfigDirection.In) ? FileMode.Open : FileMode.Create);
                         }
-                        if (fx2 != null)
+                        catch (Exception ex)
                         {
-                            Console.WriteLine($"Found: {fx2.ToString()} ");
-
-                            Console.WriteLine("RESET");
-                            //reset device
-                            if (!WriteReset(fx2, true))
-                            {
-                                Console.Error.WriteLine("RESET failed");
-                                return E_RESET_FAIL;
-                            }
-                            Thread.Sleep(500);
-
-
-                            //configure firmware
-                            FirmwareConfig cfg = new FirmwareConfig();
-                            cfg.CPUClock = FirmwareConfigCPUClock.CPU48;
-                            cfg.CPUClockInvert = false;
-                            cfg.CPUClockOut = true;
-                            cfg.Direction = FirmwareConfigDirection.In;
-                            cfg.Fifo8bit = false;
-                            cfg.FifoBufferMode = FirmwareConfigBuffering.Quadruple;
-                            cfg.FifoMode = FirmwareConfigFifoMode.Async;
-                            cfg.IFClock = FirmwareConfigIFClock.Internal48;
-                            cfg.IFClockInvert = false;
-                            cfg.IFClockOut = false;
-
-
-                            Console.WriteLine("UPLOAD CONFIG");
-                            //byte[] cfgbytes = cfg.ToBytes();
-                            //byte[] cfgbytes = new byte[] { 0x21, 0xcb, 0xa0, 0x11, 0x12 }; //hog
-                            //byte[] cfgbytes = new byte[] { 0x12, 0xcb, 0xae, 0x0d, 0x12 }; //elm
-                            byte[] cfgbytes = new byte[] { 0x12, 0xcb, 0xe0, 0x0d, 0x12 }; //hog2
-                            Console.WriteLine($"CFG: {cfgbytes[0]:X2}:{cfgbytes[1]:X2}:{cfgbytes[2]:X2}:{cfgbytes[3]:X2}:{cfgbytes[4]:X2}");
-                            if (!WriteRAM(fx2, FW_CFG_A, cfgbytes))
-                            {
-                                Console.Error.WriteLine("Write config failed");
-                                return E_CFG_FAIL;
-                            }
-
-                            WriteRAM(fx2, 0x1020, new byte[] { 1, 2, 3, 4, 5, 6 });
-
-                            DumpMem(fx2, 0x1000, 0x10);
-                            DumpMem(fx2, 0x1010, 0x10);
-                            DumpMem(fx2, 0x1020, 0x10);
-                            DumpMem(fx2, 0x1030, 0x10);
-
-                            DumpMem(fx2, 0x1000, 0x40);
-
-                            DumpMem(fx2, 0xE600, 0x40);
-
-                            DumpMem(fx2, 0x0000, 0x080);
-
-
-                            Console.WriteLine("RESTART DEV");
-                            //restart device
-                            if (!WriteReset(fx2, false))
-                            {
-                                Console.Error.WriteLine("START failed");
-                                return E_GO_FAIL;
-                            }
-
-                            Console.WriteLine("Wait for restart...");
-                            Thread.Sleep(1000);
+                            Console.Error.WriteLine($"Error opening file \"{filename}\": {ex.Message}");
+                            return E_ARGUMENT;
                         }
-                        else
-                        {
-                            Console.Error.WriteLine("Cannot find fx2 device");
-                            return E_NODEV;
-                        }
+                    }
 
-                        fx2.AltIntfc = 1;
-                        CyBulkEndPoint e = fx2.EndPointOf(EP_BULK_IN) as CyBulkEndPoint;
-
-                        //CyBulkEndPoint e = fx2.EndPointOf(EP_BULK_IN) as CyBulkEndPoint;
-
-                        if (e == null)
-                        {
-                            Console.Error.WriteLine("Cannot get endpoint");
-                            return E_ENDPOINT;
-                        }
-
-                        
-                        const int OVQSZ = 64; // number of overlapped USB i/o requests to queue
-
-                        const int BUFFERSMAX = 1000;
-                        const int BUFFERSIZE = 512;
-                        const int DISCARD = 100;
-                        const int MAX = 10000;
-                        const int BUFFERSMIN = 16;
-
-                        byte[] bigbuffer = new byte[MAX * BUFFERSIZE];
-                        int bigbufferptr = 0;
-
-
-                        //                        ConcurrentBag<byte[]> bufferPool = new ConcurrentBag<byte[]>();
-                        Queue<bufandlen> bufferPool = new Queue<bufandlen>();
-                        for (int i = 0; i < BUFFERSMIN; i++)
-                        {
-                            bufferPool.Enqueue(new bufandlen { buf = new byte[BUFFERSIZE], len = 0 });
-                        }
-
-                        BlockingCollection<bufandlen> bc = new BlockingCollection<bufandlen>(BUFFERSMAX);
-
-                        long count = 0;
-                        int bcmax = 0;
-                        int szmin = BUFFERSIZE;
-                        int extcount = 0;
-
-                        //start a pair of Tasks, one to read from USB, the other to write
-                        var prodThread = new Thread(() =>
-                        {
-                            int i;
-
-                            byte[][] cmdBufs = new byte[OVQSZ][];
-                            byte[][] xferBufs = new byte[OVQSZ][];
-                            byte[][] ovLaps = new byte[OVQSZ][];
-
-                            try
-                            {
-                                Thread.CurrentThread.Priority = ThreadPriority.Highest;
-
-                                // Setup the queue buffers
-                                for (i = 0; i < OVQSZ; i++)
-
-                                {
-                                    cmdBufs[i] = new byte[CyConst.SINGLE_XFER_LEN + ((e.XferMode == XMODE.BUFFERED) ? BUFFERSIZE : 0)];
-                                    xferBufs[i] = new byte[BUFFERSIZE];
-                                    ovLaps[i] = new byte[CyConst.OverlapSignalAllocSize];
-                                    fixed (byte* tmp0 = ovLaps[i])
-                                    {
-                                        OVERLAPPED* ovLapStatus = (OVERLAPPED*)tmp0;
-                                        ovLapStatus->hEvent = PInvoke.CreateEvent(0, 0, 0, 0);
-                                    }
-
-                                }
-
-                                // Pre-load the queue with requests
-
-                                int len = BUFFERSIZE;
-                                for (i = 0; i < OVQSZ; i++)
-                                    e.BeginDataXfer(ref cmdBufs[i], ref xferBufs[i], ref len, ref ovLaps[i]);
-
-
-                                i = 0;
-                                long ctr = 0;
-                                int lenmin = BUFFERSIZE;
-                                while (!Cancelled && ctr < MAX)
-                                {
-                                    fixed (byte* tmp0 = ovLaps[i])
-                                    {
-                                        OVERLAPPED* ovLapStatus = (OVERLAPPED*)tmp0;
-                                        if (!e.WaitForXfer(ovLapStatus->hEvent, 500))
-                                        {
-                                            e.Abort();
-                                            PInvoke.WaitForSingleObject(ovLapStatus->hEvent, CyConst.INFINITE);
-                                        }
-                                    }
-
-                                    if (e.FinishDataXfer(ref cmdBufs[i], ref xferBufs[i], ref len, ref ovLaps[i]))
-                                    {
-                                        if (len != 0)
-                                        {
-                                            if (ctr > DISCARD)
-                                            {
-                                                /*bufandlen ret = null;
-
-                                                if (!bufferPool.TryTake(out buf))
-                                                {
-                                                    buf = new byte[BUFFERSIZE];
-                                                }
-                                                lock (bufferPool)
-                                                {
-                                                    ret = bufferPool.FirstOrDefault();
-                                                }
-                                                if (ret == null)
-                                                {
-                                                    ret = new bufandlen { buf = new byte[BUFFERSIZE] };
-                                                    extcount++;
-                                                }
-
-
-                                                ret.len = mylen;
-                                                Array.Copy(mybuf, ret.buf, mylen);
-
-                                                bc.Add(ret);
-                                                */
-                                                Array.Copy(xferBufs[i], 0, bigbuffer, bigbufferptr, len);
-                                                bigbufferptr += len;
-                                                lenmin = len;
-
-                                            }
-                                            ctr++;
-                                        }
-                                        else
-                                        {
-                                            throw new Exception("0");
-                                        }
-
-                                    }
-                                    else
-                                        throw new Exception($"FAIL! {e.LastError}");
-
-                                    len = BUFFERSIZE;
-
-                                    e.BeginDataXfer(ref cmdBufs[i], ref xferBufs[i], ref len, ref ovLaps[i]);
-
-
-
-                                    i = (i + 1) % OVQSZ;
-
-
-
-
-
-                                    int bcc = bc.Count;
-                                    if (bcc > bcmax)
-                                        bcmax = bcc;
-                                    if (lenmin != 0 && lenmin < szmin)
-                                        szmin = lenmin;
-
-                                }
-
-                                bc.CompleteAdding();
-                            }
-                            finally
-                            {
-                                for (i = 0; i < OVQSZ; i++)
-                                {
-                                    fixed (byte* tmp0 = ovLaps[i])
-                                    {
-                                        OVERLAPPED* ovLapStatus = (OVERLAPPED*)tmp0;
-                                        if (ovLapStatus->hEvent != null)
-                                        {
-                                            PInvoke.CloseHandle(ovLapStatus->hEvent);
-                                        }
-                                    }
-
-                                }
-                            }
-                        });
-
-                        /*
-                        var consThread = new Thread(() =>
-                        {
-                            Console.WriteLine("STREAMING...");
-                            using (var f = new FileStream("d:\\temp\\test.bin", FileMode.Create, FileAccess.Write))
-                            {
-
-                                foreach (var tp in bc.GetConsumingEnumerable())
-                                {
-
-                                    f.Write(tp.buf, 0, tp.len);
-                                    count += tp.len;
-                                    Array.Clear(tp.buf, 0, tp.buf.Length);
-                                    lock(bufferPool)
-                                        bufferPool.Enqueue(tp);
-                                }
-
-                            }
-                        });
-
-                        consThread.Start();
-                        Thread.Sleep(10);
-                        */
-                        prodThread.Start();
-
-                        prodThread.Join();
-                        //consThread.Join();
-                        using (var f = new FileStream("d:\\temp\\test.bin", FileMode.Create, FileAccess.Write))
-                        {
-                            f.Write(bigbuffer, 0, bigbufferptr);
-                        }
-
-
-                        Console.WriteLine($"Wrote {count} bytes [{bcmax} {szmin} {extcount}]");
-
+                }
+                else
+                {
+                    if (i != args.Length)
+                    {
+                        Console.Error.WriteLine("Incorrect number of arguments");
+                        return E_ARGUMENT;
                     }
                 }
 
 
-                Console.WriteLine("OK!");
-                Console.ReadLine();
-                return E_OK;
+
+                try
+                {
+                    DoIt(
+                        cfg_fw
+                        , devSpec
+                        , captureLimit
+                        , blocksize
+                        , uiblen
+                        , firmwarepath
+                        , fs
+                        , debug
+                        , bufs
+                        , discard
+                        );
+                    return E_OK;
+                }
+                finally
+                {
+                    if (fs != null)
+                    {
+                        fs.Close();
+                        fs.Dispose();
+                        fs = null;
+                    }
+                }
+
+            }
+            catch (CmdLineArgumentException a_ex)
+            {
+                Console.Error.WriteLine($"Bad command line argument \"{a_ex.ParamName}\": {a_ex.Message}");
+                return E_ARGUMENT;
+            }
+            catch (FX2SharpException fx2_ex)
+            {
+                Console.Error.WriteLine(fx2_ex.Message);
+                return fx2_ex.ReturnCode;
             }
             catch (Exception ex)
             {
@@ -554,6 +611,385 @@ namespace fx2sharp
                 return E_UNEX;
             }
         }
+
+        static unsafe void DoIt(
+            FirmwareConfig cfg_fw,
+            string devSpec,
+            long captureLimit,
+            int blocksize,
+            int uiblen,
+            string firmwarepath,
+            Stream fs,
+            bool debug,
+            int bufs,
+            long discard
+        )
+        {
+
+
+            Console.CancelKeyPress += delegate (object sender, ConsoleCancelEventArgs e)
+            {
+                e.Cancel = true;
+                ct_source.Cancel();                
+            };
+
+            using (var usbDevices = new USBDeviceList(CyConst.DEVICES_CYUSB))
+            {
+                using (CyFX2Device fx2 = Connect(usbDevices, devSpec))
+                {
+                    if (debug)
+                        Console.Error.WriteLine($"Found: {fx2.ToString()} ");
+
+
+                    Console.WriteLine("RESET");
+                    //reset device
+                    if (!WriteReset(fx2, true))
+                        throw new FX2SharpException("RESET failed", E_RESET_FAIL);
+                    Thread.Sleep(100);
+
+
+                    if (debug)
+                        Console.Error.WriteLine("UPLOAD FIRMWARE");
+                    //upload firmware
+                    if (!fx2.LoadRAM(firmwarepath))
+                        throw new FX2SharpException("Failed to program Firmware", E_FIRMWARE);
+
+                    if (debug)
+                        Console.Error.WriteLine("RESTART");
+
+                    //reset device
+                    if (!WriteReset(fx2, false))
+                        throw new FX2SharpException("RESTART failed", E_RESET_FAIL);
+
+                    Thread.Sleep(100);
+
+                    Console.WriteLine("RESET");
+
+                    //reset device
+                    if (!WriteReset(fx2, true))
+                        throw new FX2SharpException("RESET failed", E_RESET_FAIL);
+
+                    Thread.Sleep(100);
+
+
+                    if (debug)
+                        Console.Error.WriteLine("UPLOAD CONFIG");
+
+                    byte[] cfgbytes = cfg_fw.ToBytes();
+                    //byte[] cfgbytes = new byte[] { 0x21, 0xcb, 0xa0, 0x11, 0x12 }; //hog
+                    //byte[] cfgbytes = new byte[] { 0x12, 0xcb, 0xae, 0x0d, 0x12 }; //elm
+                    //byte[] cfgbytes = new byte[] { 0x12, 0xcb, 0xe0, 0x0d, 0x12 }; //hog2
+
+                    if (debug)
+                        Console.Error.WriteLine($"CFG: {cfgbytes[0]:X2}:{cfgbytes[1]:X2}:{cfgbytes[2]:X2}:{cfgbytes[3]:X2}:{cfgbytes[4]:X2}");
+
+                    if (!WriteRAM(fx2, FW_CFG_A, cfgbytes))
+                        throw new FX2SharpException("Write config failed", E_CFG_FAIL);
+
+                    if (debug)
+                    {
+                        WriteRAM(fx2, 0x1020, new byte[] { 1, 2, 3, 4, 5, 6 });
+
+                        DumpMem(Console.Error, fx2, 0x1000, 0x10);
+                        DumpMem(Console.Error, fx2, 0x1010, 0x10);
+                        DumpMem(Console.Error, fx2, 0x1020, 0x10);
+                        DumpMem(Console.Error, fx2, 0x1030, 0x10);
+
+                        DumpMem(Console.Error, fx2, 0x1000, 0x40);
+
+                        DumpMem(Console.Error, fx2, 0xE600, 0x40);
+
+                        DumpMem(Console.Error, fx2, 0x0000, 0x080);
+                    }
+
+
+                    if (debug)
+                        Console.Error.WriteLine("RESTART DEV");
+                    //restart device
+                    if (!WriteReset(fx2, false))
+                        throw new FX2SharpException("START failed", E_GO_FAIL);
+
+                    if (debug)
+                        Console.Error.WriteLine("Wait for restart...");
+
+                    Thread.Sleep(100);
+
+                    fx2.AltIntfc = 1;
+                    CyBulkEndPoint e = fx2.EndPointOf(EP_BULK_IN) as CyBulkEndPoint;
+
+                    if (e == null)
+                        throw new FX2SharpException("Cannot get endpoint", E_ENDPOINT);
+
+
+
+                    //bufferpool holds a collection of "free" buffers, to be used by 
+                    //the producer thread
+                    BlockingCollection<bufandlen> bufferPool = new BlockingCollection<bufandlen>();
+                    for (int i = 0; i < bufs; i++)
+                    {
+                        bufferPool.Add(new bufandlen { buf = new byte[blocksize], len = 0 });
+                    }
+
+                    BlockingCollection<bufandlen> bc = new BlockingCollection<bufandlen>(bufs);
+
+                    long count = 0;
+                    int bcmax = 0;
+                    int szmin = blocksize;
+                    int extcount = 0;
+
+                    //start a pair of Thread, one producer, one consumer
+
+                    Thread prodThread = null, consThread = null;
+                    ThreadParams prodParams = new ThreadParams(
+                        uiblen,
+                        blocksize,
+                        e,
+                        (captureLimit + (long)blocksize - 1) / (long)blocksize,
+                        bufferPool,
+                        bc,
+                        (discard + blocksize - 1) / blocksize,
+                        fs
+                        );
+                    ThreadParams consParams = new ThreadParams(
+                        uiblen,
+                        blocksize,
+                        e,
+                        (captureLimit + (long)blocksize - 1) / (long)blocksize,
+                        bufferPool,
+                        bc,
+                        (discard + blocksize - 1) / blocksize,
+                        fs
+                        );
+
+                    if (cfg_fw.Direction == FirmwareConfigDirection.In)
+                    {
+                        if (fs == null)
+                            consThread = new Thread(() => NullConsumer(consParams));
+                        else
+                            consThread = new Thread(() => StreamConsumer(consParams));
+
+                        prodThread = new Thread(() => UsbProducer(prodParams));
+
+                        consThread.Start();
+
+                        Thread.Sleep(10);
+
+                        prodThread.Start();
+
+                        prodThread.Join();
+                        consThread.Join();
+
+                    }
+                    else
+                    {
+/*
+                        consThread = new Thread(() => UsbConsumer(consParams));
+
+                        if (fs == null)
+                            prodThread = new Thread(() => NullProducer(prodParams));
+                        else
+                            prodThread = new Thread(() => StreamProducer(prodParams));
+                        prodThread.Start();
+
+                        Thread.Sleep(10);
+
+                        consThread.Start();
+*/                
+                    }
+
+
+                    Console.WriteLine($"Wrote {count} bytes [{bcmax} {szmin} {extcount}]");
+
+                }
+            }
+
+
+            if (debug)
+                Console.Error.WriteLine("OK!");
+        }
+
+        public class ThreadParams
+        {
+            public int Uiblen { get; }
+            public int Blocksize { get; }
+            public CyBulkEndPoint Endpoint { get; }
+
+            public long CaptureLimitBlocks { get; }
+
+            public BlockingCollection<bufandlen> BufferPool { get; }
+            public BlockingCollection<bufandlen> FilledBuffers { get; }
+
+            public long Discard { get; }
+
+            public Stream IOStream { get; }
+
+            public ThreadParams(
+                int uibLen,
+                int blockSize,
+                CyBulkEndPoint endpoint,
+                long captureLimitBlocks,
+                BlockingCollection<bufandlen> bufferPool,
+                BlockingCollection<bufandlen> filledBuffers,
+                long discard,
+                Stream ioStream
+                )
+            {
+                this.Uiblen = uibLen;
+                this.Blocksize = blockSize;
+                this.Endpoint = endpoint;
+                this.CaptureLimitBlocks = captureLimitBlocks;
+                this.BufferPool = bufferPool;
+                this.FilledBuffers = filledBuffers;
+                this.Discard = discard;
+                this.IOStream = ioStream;
+            }
+        }
+
+        static void NullConsumer(ThreadParams p)
+        {
+            foreach (var ret in p.FilledBuffers)
+            {
+                p.BufferPool.Add(ret);
+            }
+        }
+
+        static void StreamConsumer(ThreadParams p)
+        {
+            foreach (var ret in p.FilledBuffers)
+            {
+                p.IOStream.Write(ret.buf, 0, ret.len);
+
+                p.BufferPool.Add(ret);
+            }
+        }
+
+        static unsafe void UsbProducer(ThreadParams p)
+        {
+            int i;
+
+            byte[][] cmdBufs = new byte[p.Uiblen][];
+            byte[][] xferBufs = new byte[p.Uiblen][];
+            byte[][] ovLaps = new byte[p.Uiblen][];
+
+            try
+            {
+                Thread.CurrentThread.Priority = ThreadPriority.Highest;
+
+                // Setup the queue buffers
+                for (i = 0; i < p.Uiblen; i++)
+
+                {
+                    cmdBufs[i] = new byte[CyConst.SINGLE_XFER_LEN + ((p.Endpoint.XferMode == XMODE.BUFFERED) ? p.Blocksize : 0)];
+                    xferBufs[i] = new byte[p.Blocksize];
+                    ovLaps[i] = new byte[CyConst.OverlapSignalAllocSize];
+                    fixed (byte* tmp0 = ovLaps[i])
+                    {
+                        OVERLAPPED* ovLapStatus = (OVERLAPPED*)tmp0;
+                        ovLapStatus->hEvent = PInvoke.CreateEvent(0, 0, 0, 0);
+                    }
+
+                }
+
+                // Pre-load the queue with requests
+
+                int len = p.Blocksize;
+                for (i = 0; i < p.Blocksize; i++)
+                    p.Endpoint.BeginDataXfer(ref cmdBufs[i], ref xferBufs[i], ref len, ref ovLaps[i]);
+
+
+                i = 0;
+                long ctr = 0;
+                int lenmin = p.Blocksize;
+                while (!ct_token.IsCancellationRequested && ctr < p.CaptureLimitBlocks)
+                {
+                    fixed (byte* tmp0 = ovLaps[i])
+                    {
+                        OVERLAPPED* ovLapStatus = (OVERLAPPED*)tmp0;
+                        if (!p.Endpoint.WaitForXfer(ovLapStatus->hEvent, 500))
+                        {
+                            p.Endpoint.Abort();
+                            PInvoke.WaitForSingleObject(ovLapStatus->hEvent, CyConst.INFINITE);
+                        }
+                    }
+
+                    if (p.Endpoint.FinishDataXfer(ref cmdBufs[i], ref xferBufs[i], ref len, ref ovLaps[i]))
+                    {
+                        if (len != 0)
+                        {
+                            if (ctr > p.Discard)
+                            {
+                                bufandlen ret = null;
+
+                                if (!p.BufferPool.TryTake(out ret))
+                                {
+                                    throw new FX2SharpException("Out of buffers", E_BUFFERS_EXHAUSTED);
+                                }
+
+                                ret.len = len;
+                                Array.Copy(xferBufs[i], ret.buf, len);
+
+                                p.FilledBuffers.Add(ret);
+                            }
+                            ctr++;
+                        }
+                        else
+                        {
+                            throw new FX2SharpException("USB Timeout", E_TIMEOUT);
+                        }
+
+                    }
+                    else
+                        throw new FX2SharpException($"USB FAIL! {p.Endpoint.LastError}", E_ENDPOINT);
+
+                    len = p.Blocksize;
+
+                    p.Endpoint.BeginDataXfer(ref cmdBufs[i], ref xferBufs[i], ref len, ref ovLaps[i]);
+                    
+                    i = (i + 1) % p.Uiblen;                                                                          
+                }
+
+            }
+            finally
+            {
+                p.FilledBuffers.CompleteAdding();
+
+                for (i = 0; i < p.Uiblen; i++)
+                {
+                    fixed (byte* tmp0 = ovLaps[i])
+                    {
+                        OVERLAPPED* ovLapStatus = (OVERLAPPED*)tmp0;
+                        if (ovLapStatus->hEvent != null)
+                        {
+                            PInvoke.CloseHandle(ovLapStatus->hEvent);
+                        }
+                    }
+
+                }
+            }
+        }
+
+        /*
+        var consThread = new Thread(() =>
+        {
+            Console.WriteLine("STREAMING...");
+            using (var f = new FileStream("d:\\temp\\test.bin", FileMode.Create, FileAccess.Write))
+            {
+
+                foreach (var tp in bc.GetConsumingEnumerable())
+                {
+
+                    f.Write(tp.buf, 0, tp.len);
+                    count += tp.len;
+                    Array.Clear(tp.buf, 0, tp.buf.Length);
+                    lock(bufferPool)
+                        bufferPool.Enqueue(tp);
+                }
+
+            }
+        });
+        */
+
+
 
         static byte[] ReadRAM(CyFX2Device fx2, ushort addr, int len)
         {
@@ -595,24 +1031,69 @@ namespace fx2sharp
 
         }
 
-        static CyFX2Device Connect(USBDeviceList usbDevices)
+        static CyFX2Device Connect(USBDeviceList usbDevices, string devSpec)
         {
             CyFX2Device fx2 = null;
+
+            int matchctr = -1;
+            int vid = -1;
+            int pid = -1;
+            int n = -1;
+
+            if (devSpec != "")
+            {
+                try
+                {
+                    string[] comp = devSpec.Split(new char[] { ':' });
+                    if (comp.Length == 1)
+                    {
+                        if (!int.TryParse(comp[0], out n))
+                            throw new Exception();
+                    }
+                    else if (comp.Length == 2)
+                    {
+                        if (!int.TryParse(comp[0], out vid) || !int.TryParse(comp[1], out pid))
+                            throw new Exception();
+                    }
+                    else if (comp.Length == 3)
+                    {
+                        if (!int.TryParse(comp[0], out vid) || !int.TryParse(comp[1], out pid) || !int.TryParse(comp[2], out n))
+                            throw new Exception();
+                    }
+                    else
+                        throw new Exception();
+                }
+                catch (Exception)
+                {
+                    throw new CmdLineArgumentException($"Bad device spec \"{devSpec}\"", "-d=");
+                }
+            }
 
             foreach (USBDevice u in usbDevices)
             {
                 if (u is CyFX2Device)
                 {
                     if (fx2 == null)
-                        fx2 = u as CyFX2Device;
+                    {
+                        if (vid == -1 || (u.VendorID == vid && u.ProductID == pid))
+                        {
+                            matchctr++;
+                            if (n == -1 || matchctr == n)
+                                fx2 = u as CyFX2Device;
+                        }
+                    }
                     else
                         throw new Exception("More than one!");
                 }
             }
+
+            if (fx2 == null)
+                throw new FX2SharpException("Device not found", E_NODEV);
+
             return fx2;
         }
 
-        static void DumpMem(CyFX2Device fx2, ushort addr, int len)
+        static void DumpMem(TextWriter w, CyFX2Device fx2, ushort addr, int len)
         {
             //read memory and dump 
             byte[] b = ReadRAM(fx2, addr, len);
@@ -620,12 +1101,12 @@ namespace fx2sharp
             {
                 if (i % 16 == 0)
                 {
-                    Console.WriteLine();
-                    Console.Write($"{(addr + i):X4} : ");
+                    w.WriteLine();
+                    w.Write($"{(addr + i):X4} : ");
                 }
-                Console.Write($" {b[i]:X2}");
+                w.Write($" {b[i]:X2}");
             }
-            Console.WriteLine();
+            w.WriteLine();
         }
 
     }
