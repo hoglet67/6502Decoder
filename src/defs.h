@@ -3,12 +3,15 @@
 
 #include <inttypes.h>
 
-#define MACHINE_DEFAULT 0
-#define MACHINE_BEEB    1
-#define MACHINE_MASTER  2
-#define MACHINE_ELK     3
+typedef enum {
+   MACHINE_DEFAULT,
+   MACHINE_BEEB,
+   MACHINE_MASTER,
+   MACHINE_ELK
+} machine_t;
 
 typedef enum {
+   CPU_UNKNOWN,
    CPU_6502,
    CPU_65C02,
    CPU_65C02_ROCKWELL,
@@ -55,6 +58,7 @@ int  write_s   (char *buffer, const char *s);
 
 typedef struct {
    cpu_t cpu_type;
+   machine_t machine;
    int idx_data;
    int idx_rnw;
    int idx_sync;
@@ -64,7 +68,6 @@ typedef struct {
    int idx_vda;
    int idx_vpa;
    int vec_rst;
-   int machine;
    int show_address;
    int show_hex;
    int show_instruction;

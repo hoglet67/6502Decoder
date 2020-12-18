@@ -18,10 +18,10 @@ machine_names=(
 
 declare -A machine_options
 
-machine_options[master]="--machine=master -c --vecrst=A9E364"
-machine_options[beeb]="--machine=default --vecrst=A9D9CD"
-machine_options[elk]="--machine=elk --vecrst=A9D8D2"
-machine_options[beebr65c02]="--machine=default -c -r --vecrst=A9D9CD"
+machine_options[master]="--machine=master"
+machine_options[beeb]="--machine=beeb"
+machine_options[elk]="--machine=elk"
+machine_options[beebr65c02]="--machine=beeb --cpu=r65c02"
 
 data_names=(
     reset

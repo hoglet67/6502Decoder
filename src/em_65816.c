@@ -96,8 +96,6 @@ typedef struct {
 
 static const char default_state[] = "A=???? X=???? Y=???? SP=???? N=? V=? M=? X=? D=? I=? Z=? C=? E=? PB=?? DB=?? DP=????";
 
-static int c02;
-
 static InstrType *instr_table;
 
 AddrModeType addr_mode_table[] = {
@@ -501,7 +499,6 @@ static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruc
       pb = PB;
    } else {
       // We must be in native mode
-      pb = sample_q[2].data;
       emulation_mode_off();
       i = 3;
       pb = sample_q[2].data;
@@ -803,15 +800,12 @@ static int get_accumulator() {
 static void em_65816_init(arguments_t *args) {
    switch (args->cpu_type) {
    case CPU_65C816:
-      c02 = 1;
       instr_table = instr_table_65c816;
       break;
    default:
       printf("em_65816_init called with unsupported cpu_type (%d)\n", args->cpu_type);
       exit(1);
    }
-   // Initialize Memory
-   memory_init(0x1000000);
    if (args->e_flag >= 0) {
       E  = args->e_flag & 1;
       if (E) {

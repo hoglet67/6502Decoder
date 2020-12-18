@@ -7,16 +7,18 @@
 
 // Sideways ROM
 
-#define SWROM_START         0x8000
-#define SWROM_ADDR_BITS     14
-#define SWROM_ADDR_MASK     ((1 << SWROM_ADDR_BITS) - 1)
-#define SWROM_SIZE          (1 << SWROM_ADDR_BITS)
-#define SWROM_END           (SWROM_START + SWROM_SIZE)
+#define SWROM_SIZE          0x4000
 #define SWROM_NUM_BANKS     16
 
+// Standard sideways ROM (upto 16 banks)
 static int *swrom         = NULL;
-static int rom_latch_addr = -1;
-static int rom_latch_data = -1;
+static int rom_latch      = 0;
+
+// Extra Master registers
+static int acccon_latch   = 0;
+static int *lynne;           // 20KB overlaid at 3000-7FFF
+static int *hazel;           //  8KB overlaid at C000-DFFF
+static int *andy;            //  4KB overlaid at 8000-8FFF
 
 // Main Memory
 
@@ -27,21 +29,14 @@ static int mem_wr_logging = 0;
 static int addr_digits    = 0;
 
 // IO
-static int io_low         = -1;
-static int io_high        = -1;
 static int tube_low       = -1;
 static int tube_high      = -1;
 
 static char buffer[256];
 
-static inline int *get_memptr(int ea) {
-   if (ea >= SWROM_START && ea < SWROM_END && rom_latch_data >= 0) {
-      return swrom + (rom_latch_data << SWROM_ADDR_BITS) + (ea & SWROM_ADDR_MASK);
-   } else {
-      return memory + ea;
-   }
-}
-
+// Machine specific memory rd/wr handlers
+static void (*memory_read_fn)(int data, int ea);
+static int (*memory_write_fn)(int data, int ea);
 
 static inline int write_addr(char *bp, int ea) {
    int shift = (addr_digits - 1) << 2; // 6 => 20
@@ -54,13 +49,236 @@ static inline int write_addr(char *bp, int ea) {
 }
 
 
-void memory_init(int size) {
-   memory = malloc(size * sizeof(int));
-   for (int i = 0; i < size; i++) {
-      memory[i] = -1;
+static inline void log_memory_access(char *msg, int data, int ea, int ignored) {
+   char *bp = buffer;
+   bp += write_s(bp, msg);
+   bp += write_addr(bp, ea);
+   bp += write_s(bp, " = ");
+   write_hex2(bp, data);
+   bp += 2;
+   if (ignored) {
+   bp += write_s(bp, " (ignored)");
    }
-   addr_digits = 0;
+   *bp++ = 0;
+   puts(buffer);
+}
+
+
+static inline void log_memory_fail(int ea, int expected, int actual) {
+   char *bp = buffer;
+   bp += write_s(bp, "memory modelling failed at ");
+   bp += write_addr(bp, ea);
+   bp += write_s(bp, ": expected ");
+   write_hex2(bp, expected);
+   bp += 2;
+   bp += write_s(bp, " actual ");
+   write_hex2(bp, actual);
+   bp += 2;
+   *bp++ = 0;
+   puts(buffer);
+}
+
+static void set_tube_window(int low, int high) {
+   tube_low = low;
+   tube_high = high;
+}
+
+static int *init_ram(int size) {
+   int *ram =  malloc(size * sizeof(int));
+   for (int i = 0; i < size; i++) {
+      ram[i] = -1;
+   }
+   return ram;
+}
+
+// ==================================================
+// Beeb Memory Handlers
+// ==================================================
+
+static inline int *get_memptr_beeb(int ea) {
+   if (ea >= 0x8000 && ea < 0xC000) {
+      return swrom + (rom_latch << 14) + (ea & 0x3FFF);
+   } else {
+      return memory + ea;
+   }
+}
+
+static void memory_read_beeb(int data, int ea) {
+   if (ea < 0xfc00 || ea >= 0xff00) {
+      int *memptr = get_memptr_beeb(ea);
+      if (*memptr >=0 && *memptr != data) {
+         log_memory_fail(ea, *memptr, data);
+         failflag |= 1;
+      }
+      *memptr = data;
+   }
+}
+
+static int memory_write_beeb(int data, int ea) {
+   int *memptr = get_memptr_beeb(ea);
+   *memptr = data;
+   if (ea == 0xfe30) {
+      rom_latch = data & 0x0f;
+   }
+   return 0;
+}
+
+static void init_beeb(int logtube) {
+   swrom = init_ram(SWROM_NUM_BANKS * SWROM_SIZE);
+   memory_read_fn  = memory_read_beeb;
+   memory_write_fn = memory_write_beeb;
+   if (logtube) {
+      set_tube_window(0xfee0, 0xfee8);
+   }
+}
+
+// ==================================================
+// Master Memory Handlers
+// ==================================================
+
+static inline int *get_memptr_master(int ea) {
+   // TODO: Implementing Lynne (shadow RAM) needs context (i.e. PC)
+   if ((acccon_latch & 0x08) && ea >= 0xc000 && ea < 0xe000) {
+      return hazel + (ea & 0x1FFF);
+   } else if ((rom_latch & 0x80) && ea >= 0x8000 && ea < 0x9000) {
+      return andy + (ea & 0x0FFF);
+   } else if (ea >= 0x8000 && ea < 0xC000) {
+      return swrom + ((rom_latch & 0xf) << 14) + (ea & 0x3FFF);
+   } else {
+      return memory + ea;
+   }
+}
+
+static void memory_read_master(int data, int ea) {
+   if (ea < 0xfc00 || ea >= 0xff00) {
+      int *memptr = get_memptr_master(ea);
+      if (*memptr >=0 && *memptr != data) {
+         log_memory_fail(ea, *memptr, data);
+         failflag |= 1;
+      }
+      *memptr = data;
+   }
+}
+
+static int memory_write_master(int data, int ea) {
+   if (ea == 0xfe30) {
+      rom_latch = data & 0x8f;
+   }
+   if (ea == 0xfe34) {
+      acccon_latch = data & 0xff;
+   }
+   // Determine if the access is writeable
+   if ((ea < 0x8000) ||
+       (ea < 0x9000 && (rom_latch & 0x80)) ||
+       (ea < 0xc000 && ((rom_latch & 0x0c) == 0x04)) ||
+       (ea >= 0xc000 && ea < 0xe000 && (acccon_latch & 0x08)) ||
+       (ea >= 0xfc00 && ea < 0xff00)) {
+      int *memptr = get_memptr_master(ea);
+      *memptr = data;
+      return 0;
+   } else {
+      return 1;
+   }
+}
+
+static void init_master(int logtube) {
+   swrom = init_ram(SWROM_NUM_BANKS * SWROM_SIZE);
+   lynne = init_ram(20480); // 20KB overlaid at 3000-7FFF
+   hazel = init_ram(8192);  //  8KB overlaid at C000-DFFF
+   andy  = init_ram(4096);  //  4KB overlaid at 8000-8FFF
+   memory_read_fn  = memory_read_master;
+   memory_write_fn = memory_write_master;
+   if (logtube) {
+      set_tube_window(0xfee0, 0xfee8);
+   }
+}
+
+// ==================================================
+// Elk Memory Handlers
+// ==================================================
+
+static inline int *get_memptr_elk(int ea) {
+   if (ea >= 0x8000 && ea < 0xC000) {
+      return swrom + (rom_latch << 14) + (ea & 0x3FFF);
+   } else {
+      return memory + ea;
+   }
+}
+
+static void memory_read_elk(int data, int ea) {
+   if (ea < 0xfc00 || ea >= 0xff00) {
+      int *memptr = get_memptr_elk(ea);
+      if (*memptr >=0 && *memptr != data) {
+         log_memory_fail(ea, *memptr, data);
+         failflag |= 1;
+      }
+      *memptr = data;
+   }
+}
+
+static int memory_write_elk(int data, int ea) {
+   int *memptr = get_memptr_elk(ea);
+   *memptr = data;
+   if (ea == 0xfe05) {
+      rom_latch = data & 0x0f;
+   }
+   return 0;
+}
+
+static void init_elk(int logtube) {
+   swrom = init_ram(SWROM_NUM_BANKS * SWROM_SIZE);
+   memory_read_fn  = memory_read_elk;
+   memory_write_fn = memory_write_elk;
+   if (logtube) {
+      set_tube_window(0xfce0, 0xfce8);
+   }
+}
+
+// ==================================================
+// Default Memory Handlers
+// ==================================================
+
+static void memory_read_default(int data, int ea) {
+   if (memory[ea] >= 0 && memory[ea] != data) {
+      log_memory_fail(ea,memory[ea], data);
+      failflag |= 1;
+   }
+   memory[ea] = data;
+}
+
+static int memory_write_default(int data, int ea) {
+   memory[ea] = data;
+   return 0;
+}
+
+static void init_default(int logtube) {
+   memory_read_fn  = memory_read_default;
+   memory_write_fn = memory_write_default;
+}
+
+// ==================================================
+// Public Methods
+// ==================================================
+
+void memory_init(int size, machine_t machine, int logtube) {
+   memory = init_ram(size);
+   // Setup the machine specific memory read/write handler
+   switch (machine) {
+   case MACHINE_BEEB:
+      init_beeb(logtube);
+      break;
+   case MACHINE_MASTER:
+      init_master(logtube);
+      break;
+   case MACHINE_ELK:
+      init_elk(logtube);
+      break;
+   default:
+      init_default(logtube);
+      break;
+   }
    // Calculate the number of digits to represent an address
+   addr_digits = 0;
    size--;
    while (size) {
       size >>= 1;
@@ -75,24 +293,6 @@ void memory_destroy() {
    }
    if (memory) {
       free(memory);
-   }
-}
-
-void memory_set_io_window(int low, int high) {
-   io_low = low;
-   io_high = high;
-}
-
-void memory_set_tube_window(int low, int high) {
-   tube_low = low;
-   tube_high = high;
-}
-
-void memory_set_rom_latch_addr(int addr) {
-   rom_latch_addr = addr;
-   swrom = malloc(SWROM_NUM_BANKS * SWROM_SIZE * sizeof(int));
-   for (int i = 0; i < SWROM_NUM_BANKS * SWROM_SIZE; i++) {
-      swrom[i] = -1;
    }
 }
 
@@ -111,35 +311,13 @@ void memory_set_wr_logging(int bitmask) {
 void memory_read(int data, int ea, mem_access_t type) {
    assert(ea >= 0);
    assert(data >= 0);
+   // Log memory read
    if (mem_rd_logging & (1 << type)) {
-      char *bp = buffer;
-      bp += write_s(bp, "memory  read: ");
-      bp += write_addr(bp, ea);
-      bp += write_s(bp, " = ");
-      write_hex2(bp, data);
-      bp += 2;
-      *bp++ = 0;
-      puts(buffer);
+      log_memory_access("Memory Rd: ", data, ea, 0);
    }
+   // Delegate memory read to machine specific handler
    if (mem_model & (1 << type)) {
-      if (ea < io_low || ea >= io_high) {
-         int *memptr = get_memptr(ea);
-         if (*memptr >=0 && *memptr != data) {
-            char *bp = buffer;
-            bp += write_s(bp, "memory modelling failed at ");
-            bp += write_addr(bp, ea);
-            bp += write_s(bp, ": expected ");
-            write_hex2(bp, *memptr);
-            bp += 2;
-            bp += write_s(bp, " actual ");
-            write_hex2(bp, data);
-            bp += 2;
-            *bp++ = 0;
-            puts(buffer);
-            failflag |= 1;
-         }
-         *memptr = data;
-      }
+      (*memory_read_fn)(data, ea);
    }
    // Pass on to tube decoding
    if (ea >= tube_low && ea <= tube_high) {
@@ -150,31 +328,21 @@ void memory_read(int data, int ea, mem_access_t type) {
 void memory_write(int data, int ea, mem_access_t type) {
    assert(ea >= 0);
    assert(data >= 0);
-   if (mem_wr_logging & (1 << type)) {
-      char *bp = buffer;
-      bp += write_s(bp, "memory write: ");
-      bp += write_addr(bp, ea);
-      bp += write_s(bp, " = ");
-      write_hex2(bp, data);
-      bp += 2;
-      *bp++ = 0;
-      puts(buffer);
-   }
-   // TODO: chack this...Data can be negative, which means the memory becomes undefined again
+   // Delegate memory write to machine specific handler
+   int ignored = 0;
    if (mem_model & (1 << type)) {
-      int *memptr = get_memptr(ea);
-      *memptr = data;
+      ignored = (*memory_write_fn)(data, ea);
+   }
+   // Log memory write
+   if (mem_wr_logging & (1 << type)) {
+      log_memory_access("Memory Wr: ", data, ea, ignored);
    }
    // Pass on to tube decoding
    if (ea >= tube_low && ea <= tube_high) {
       tube_write(ea & 7, data);
    }
-   // Update the ROM latch
-   if (ea == rom_latch_addr) {
-      rom_latch_data = (data >= 0) ? (data & 15) : -1;
-   }
 }
 
 int memory_read_raw(int ea) {
-   return *get_memptr(ea);
+   return memory[ea];
 }

@@ -1,6 +1,8 @@
 #ifndef MEMORY_H
 #define MEMORY_H
 
+#include "defs.h"
+
 typedef enum {
    MEM_INSTR    = 0,
    MEM_POINTER  = 1,
@@ -8,20 +10,13 @@ typedef enum {
    MEM_STACK    = 3,
 } mem_access_t;
 
-void memory_init(int size);
-
+void memory_init(int size, machine_t machine, int logtube);
 
 void memory_set_modelling(int bitmask);
 
 void memory_set_rd_logging(int bitmask);
 
 void memory_set_wr_logging(int bitmask);
-
-void memory_set_io_window(int low, int high);
-
-void memory_set_tube_window(int low, int high);
-
-void memory_set_rom_latch_addr(int addr);
 
 void memory_read(int data, int ea, mem_access_t type);
 

@@ -28,7 +28,7 @@ done
 
 DECODE=../decode6502
 
-common_options="-d2 -8 -a -h -i -y -s --sp=01E0 --phi2= --rdy= --rst="
+common_options="--machine=beeb --debug=0 --mem=FFF --cpu=65816 -a -h -i -y -s --sp=01E0 --phi2= --rdy= --rst="
 
 declare -A test_options
 
@@ -41,7 +41,7 @@ test_options[romcopy_hipoke_17]="--emul=1 --pb=00 --db=00 --dp=0000"
             test_options[reset]="--emul=1 --pb=00 --db=00 --dp=0000"
              test_options[test]="--emul=1 --pb=00 --db=00 --dp=0000"
        test_options[hog816_emu]="--emul=1 --pb=00 --db=00 --dp=0000"
-    test_options[dormann_d6502]="--emul=1 --pb=00 --db=00 --dp=0000 --sp= --quiet"
+    test_options[dormann_d6502]="--emul=1 --pb=00 --db=00 --dp=0000 --sp= --quiet --mem=00F"
            test_options[dp2100]="--emul=1 --pb=00 --db=00 --dp=0000"
            test_options[dp2101]="--emul=1 --pb=00 --db=00 --dp=0000"
            test_options[dp2180]="--emul=1 --pb=00 --db=00 --dp=0000"
