@@ -1641,12 +1641,68 @@ static int op_TYA(operand_t operand, ea_t ea) {
    return -1;
 }
 
-static int op_RMB(operand_t operand, ea_t ea) {
-   return operand;
+static int op_RMB0(operand_t operand, ea_t ea) {
+   return operand & ~0x01;
 }
 
-static int op_SMB(operand_t operand, ea_t ea) {
-   return operand;
+static int op_RMB1(operand_t operand, ea_t ea) {
+   return operand & ~0x02;
+}
+
+static int op_RMB2(operand_t operand, ea_t ea) {
+   return operand & ~0x04;
+}
+
+static int op_RMB3(operand_t operand, ea_t ea) {
+   return operand & ~0x08;
+}
+
+static int op_RMB4(operand_t operand, ea_t ea) {
+   return operand & ~0x10;
+}
+
+static int op_RMB5(operand_t operand, ea_t ea) {
+   return operand & ~0x20;
+}
+
+static int op_RMB6(operand_t operand, ea_t ea) {
+   return operand & ~0x40;
+}
+
+static int op_RMB7(operand_t operand, ea_t ea) {
+   return operand & ~0x80;
+}
+
+static int op_SMB0(operand_t operand, ea_t ea) {
+   return operand | 0x01;
+}
+
+static int op_SMB1(operand_t operand, ea_t ea) {
+   return operand | 0x02;
+}
+
+static int op_SMB2(operand_t operand, ea_t ea) {
+   return operand | 0x04;
+}
+
+static int op_SMB3(operand_t operand, ea_t ea) {
+   return operand | 0x08;
+}
+
+static int op_SMB4(operand_t operand, ea_t ea) {
+   return operand | 0x10;
+}
+
+static int op_SMB5(operand_t operand, ea_t ea) {
+   return operand | 0x20;
+}
+
+static int op_SMB6(operand_t operand, ea_t ea) {
+   return operand | 0x40;
+}
+
+static int op_SMB7(operand_t operand, ea_t ea) {
+   return operand | 0x80;
 }
 
 // ====================================================================
@@ -1661,7 +1717,7 @@ static InstrType instr_table_65c02[] = {
    /* 04 */   { "TSB",  0, ZP    , 5, 0, RMWOP,    op_TSB},
    /* 05 */   { "ORA",  0, ZP    , 3, 0, READOP,   op_ORA},
    /* 06 */   { "ASL",  0, ZP    , 5, 0, RMWOP,    op_ASL},
-   /* 07 */   { "RMB0", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 07 */   { "RMB0", 0, ZP    , 5, 0, RMWOP ,   op_RMB0},
    /* 08 */   { "PHP",  0, IMP   , 3, 0, OTHER,    op_PHP},
    /* 09 */   { "ORA",  0, IMM   , 2, 0, OTHER,    op_ORA},
    /* 0A */   { "ASL",  0, IMPA  , 2, 0, OTHER,    op_ASLA},
@@ -1677,7 +1733,7 @@ static InstrType instr_table_65c02[] = {
    /* 14 */   { "TRB",  0, ZP    , 5, 0, RMWOP,    op_TRB},
    /* 15 */   { "ORA",  0, ZPX   , 4, 0, READOP,   op_ORA},
    /* 16 */   { "ASL",  0, ZPX   , 6, 0, RMWOP,    op_ASL},
-   /* 17 */   { "RMB1", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 17 */   { "RMB1", 0, ZP    , 5, 0, RMWOP ,   op_RMB1},
    /* 18 */   { "CLC",  0, IMP   , 2, 0, OTHER,    op_CLC},
    /* 19 */   { "ORA",  0, ABSY  , 4, 0, READOP,   op_ORA},
    /* 1A */   { "INC",  0, IMPA  , 2, 0, OTHER,    op_INCA},
@@ -1693,7 +1749,7 @@ static InstrType instr_table_65c02[] = {
    /* 24 */   { "BIT",  0, ZP    , 3, 0, READOP,   op_BIT},
    /* 25 */   { "AND",  0, ZP    , 3, 0, READOP,   op_AND},
    /* 26 */   { "ROL",  0, ZP    , 5, 0, RMWOP,    op_ROL},
-   /* 27 */   { "RMB2", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 27 */   { "RMB2", 0, ZP    , 5, 0, RMWOP ,   op_RMB2},
    /* 28 */   { "PLP",  0, IMP   , 4, 0, OTHER,    op_PLP},
    /* 29 */   { "AND",  0, IMM   , 2, 0, OTHER,    op_AND},
    /* 2A */   { "ROL",  0, IMPA  , 2, 0, OTHER,    op_ROLA},
@@ -1709,7 +1765,7 @@ static InstrType instr_table_65c02[] = {
    /* 34 */   { "BIT",  0, ZPX   , 4, 0, READOP,   op_BIT},
    /* 35 */   { "AND",  0, ZPX   , 4, 0, READOP,   op_AND},
    /* 36 */   { "ROL",  0, ZPX   , 6, 0, RMWOP,    op_ROL},
-   /* 37 */   { "RMB3", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 37 */   { "RMB3", 0, ZP    , 5, 0, RMWOP ,   op_RMB3},
    /* 38 */   { "SEC",  0, IMP   , 2, 0, OTHER,    op_SEC},
    /* 39 */   { "AND",  0, ABSY  , 4, 0, READOP,   op_AND},
    /* 3A */   { "DEC",  0, IMPA  , 2, 0, OTHER,    op_DECA},
@@ -1725,7 +1781,7 @@ static InstrType instr_table_65c02[] = {
    /* 44 */   { "NOP",  0, ZP    , 3, 0, OTHER,    0},
    /* 45 */   { "EOR",  0, ZP    , 3, 0, READOP,   op_EOR},
    /* 46 */   { "LSR",  0, ZP    , 5, 0, RMWOP,    op_LSR},
-   /* 47 */   { "RMB4", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 47 */   { "RMB4", 0, ZP    , 5, 0, RMWOP ,   op_RMB4},
    /* 48 */   { "PHA",  0, IMP   , 3, 0, OTHER,    op_PHA},
    /* 49 */   { "EOR",  0, IMM   , 2, 0, OTHER,    op_EOR},
    /* 4A */   { "LSR",  0, IMPA  , 2, 0, OTHER,    op_LSRA},
@@ -1741,7 +1797,7 @@ static InstrType instr_table_65c02[] = {
    /* 54 */   { "NOP",  0, ZPX   , 4, 0, OTHER,    0},
    /* 55 */   { "EOR",  0, ZPX   , 4, 0, READOP,   op_EOR},
    /* 56 */   { "LSR",  0, ZPX   , 6, 0, RMWOP,    op_LSR},
-   /* 57 */   { "RMB5", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 57 */   { "RMB5", 0, ZP    , 5, 0, RMWOP ,   op_RMB5},
    /* 58 */   { "CLI",  0, IMP   , 2, 0, OTHER,    op_CLI},
    /* 59 */   { "EOR",  0, ABSY  , 4, 0, READOP,   op_EOR},
    /* 5A */   { "PHY",  0, IMP   , 3, 0, OTHER,    op_PHY},
@@ -1757,7 +1813,7 @@ static InstrType instr_table_65c02[] = {
    /* 64 */   { "STZ",  0, ZP    , 3, 0, WRITEOP,  op_STZ},
    /* 65 */   { "ADC",  0, ZP    , 3, 1, READOP,   op_ADC},
    /* 66 */   { "ROR",  0, ZP    , 5, 0, RMWOP,    op_ROR},
-   /* 67 */   { "RMB6", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 67 */   { "RMB6", 0, ZP    , 5, 0, RMWOP ,   op_RMB6},
    /* 68 */   { "PLA",  0, IMP   , 4, 0, OTHER,    op_PLA},
    /* 69 */   { "ADC",  0, IMM   , 2, 1, OTHER,    op_ADC},
    /* 6A */   { "ROR",  0, IMPA  , 2, 0, OTHER,    op_RORA},
@@ -1773,7 +1829,7 @@ static InstrType instr_table_65c02[] = {
    /* 74 */   { "STZ",  0, ZPX   , 4, 0, WRITEOP,  op_STZ},
    /* 75 */   { "ADC",  0, ZPX   , 4, 1, READOP,   op_ADC},
    /* 76 */   { "ROR",  0, ZPX   , 6, 0, RMWOP,    op_ROR},
-   /* 77 */   { "RMB7", 0, ZP    , 5, 0, READOP,   op_RMB},
+   /* 77 */   { "RMB7", 0, ZP    , 5, 0, RMWOP ,   op_RMB7},
    /* 78 */   { "SEI",  0, IMP   , 2, 0, OTHER,    op_SEI},
    /* 79 */   { "ADC",  0, ABSY  , 4, 1, READOP,   op_ADC},
    /* 7A */   { "PLY",  0, IMP   , 4, 0, OTHER,    op_PLY},
@@ -1789,7 +1845,7 @@ static InstrType instr_table_65c02[] = {
    /* 84 */   { "STY",  0, ZP    , 3, 0, WRITEOP,  op_STY},
    /* 85 */   { "STA",  0, ZP    , 3, 0, WRITEOP,  op_STA},
    /* 86 */   { "STX",  0, ZP    , 3, 0, WRITEOP,  op_STX},
-   /* 87 */   { "SMB0", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* 87 */   { "SMB0", 0, ZP    , 5, 0, RMWOP,    op_SMB0},
    /* 88 */   { "DEY",  0, IMP   , 2, 0, OTHER,    op_DEY},
    /* 89 */   { "BIT",  0, IMM   , 2, 0, OTHER,    op_BIT_IMM},
    /* 8A */   { "TXA",  0, IMP   , 2, 0, OTHER,    op_TXA},
@@ -1805,7 +1861,7 @@ static InstrType instr_table_65c02[] = {
    /* 94 */   { "STY",  0, ZPX   , 4, 0, WRITEOP,  op_STY},
    /* 95 */   { "STA",  0, ZPX   , 4, 0, WRITEOP,  op_STA},
    /* 96 */   { "STX",  0, ZPY   , 4, 0, WRITEOP,  op_STX},
-   /* 97 */   { "SMB1", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* 97 */   { "SMB1", 0, ZP    , 5, 0, RMWOP,    op_SMB1},
    /* 98 */   { "TYA",  0, IMP   , 2, 0, OTHER,    op_TYA},
    /* 99 */   { "STA",  0, ABSY  , 5, 0, WRITEOP,  op_STA},
    /* 9A */   { "TXS",  0, IMP   , 2, 0, OTHER,    op_TXS},
@@ -1821,7 +1877,7 @@ static InstrType instr_table_65c02[] = {
    /* A4 */   { "LDY",  0, ZP    , 3, 0, READOP,   op_LDY},
    /* A5 */   { "LDA",  0, ZP    , 3, 0, READOP,   op_LDA},
    /* A6 */   { "LDX",  0, ZP    , 3, 0, READOP,   op_LDX},
-   /* A7 */   { "SMB2", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* A7 */   { "SMB2", 0, ZP    , 5, 0, RMWOP,    op_SMB2},
    /* A8 */   { "TAY",  0, IMP   , 2, 0, OTHER,    op_TAY},
    /* A9 */   { "LDA",  0, IMM   , 2, 0, OTHER,    op_LDA},
    /* AA */   { "TAX",  0, IMP   , 2, 0, OTHER,    op_TAX},
@@ -1837,7 +1893,7 @@ static InstrType instr_table_65c02[] = {
    /* B4 */   { "LDY",  0, ZPX   , 4, 0, READOP,   op_LDY},
    /* B5 */   { "LDA",  0, ZPX   , 4, 0, READOP,   op_LDA},
    /* B6 */   { "LDX",  0, ZPY   , 4, 0, READOP,   op_LDX},
-   /* B7 */   { "SMB3", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* B7 */   { "SMB3", 0, ZP    , 5, 0, RMWOP,    op_SMB3},
    /* B8 */   { "CLV",  0, IMP   , 2, 0, OTHER,    op_CLV},
    /* B9 */   { "LDA",  0, ABSY  , 4, 0, READOP,   op_LDA},
    /* BA */   { "TSX",  0, IMP   , 2, 0, OTHER,    op_TSX},
@@ -1853,7 +1909,7 @@ static InstrType instr_table_65c02[] = {
    /* C4 */   { "CPY",  0, ZP    , 3, 0, READOP,   op_CPY},
    /* C5 */   { "CMP",  0, ZP    , 3, 0, READOP,   op_CMP},
    /* C6 */   { "DEC",  0, ZP    , 5, 0, RMWOP,    op_DEC},
-   /* C7 */   { "SMB4", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* C7 */   { "SMB4", 0, ZP    , 5, 0, RMWOP,    op_SMB4},
    /* C8 */   { "INY",  0, IMP   , 2, 0, OTHER,    op_INY},
    /* C9 */   { "CMP",  0, IMM   , 2, 0, OTHER,    op_CMP},
    /* CA */   { "DEX",  0, IMP   , 2, 0, OTHER,    op_DEX},
@@ -1869,7 +1925,7 @@ static InstrType instr_table_65c02[] = {
    /* D4 */   { "NOP",  0, ZPX   , 4, 0, OTHER,    0},
    /* D5 */   { "CMP",  0, ZPX   , 4, 0, READOP,   op_CMP},
    /* D6 */   { "DEC",  0, ZPX   , 6, 0, RMWOP,    op_DEC},
-   /* D7 */   { "SMB5", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* D7 */   { "SMB5", 0, ZP    , 5, 0, RMWOP,    op_SMB5},
    /* D8 */   { "CLD",  0, IMP   , 2, 0, OTHER,    op_CLD},
    /* D9 */   { "CMP",  0, ABSY  , 4, 0, READOP,   op_CMP},
    /* DA */   { "PHX",  0, IMP   , 3, 0, OTHER,    op_PHX},
@@ -1885,7 +1941,7 @@ static InstrType instr_table_65c02[] = {
    /* E4 */   { "CPX",  0, ZP    , 3, 0, READOP,   op_CPX},
    /* E5 */   { "SBC",  0, ZP    , 3, 1, READOP,   op_SBC},
    /* E6 */   { "INC",  0, ZP    , 5, 0, RMWOP,    op_INC},
-   /* E7 */   { "SMB6", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* E7 */   { "SMB6", 0, ZP    , 5, 0, RMWOP,    op_SMB6},
    /* E8 */   { "INX",  0, IMP   , 2, 0, OTHER,    op_INX},
    /* E9 */   { "SBC",  0, IMM   , 2, 1, OTHER,    op_SBC},
    /* EA */   { "NOP",  0, IMP   , 2, 0, OTHER,    0},
@@ -1901,7 +1957,7 @@ static InstrType instr_table_65c02[] = {
    /* F4 */   { "NOP",  0, ZPX   , 4, 0, OTHER,    0},
    /* F5 */   { "SBC",  0, ZPX   , 4, 1, READOP,   op_SBC},
    /* F6 */   { "INC",  0, ZPX   , 6, 0, RMWOP,    op_INC},
-   /* F7 */   { "SMB7", 0, ZP    , 5, 0, READOP,   op_SMB},
+   /* F7 */   { "SMB7", 0, ZP    , 5, 0, RMWOP,    op_SMB7},
    /* F8 */   { "SED",  0, IMP   , 2, 0, OTHER,    op_SED},
    /* F9 */   { "SBC",  0, ABSY  , 4, 1, READOP,   op_SBC},
    /* FA */   { "PLX",  0, IMP   , 4, 0, OTHER,    op_PLX},
