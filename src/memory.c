@@ -311,13 +311,13 @@ void memory_set_wr_logging(int bitmask) {
 void memory_read(int data, int ea, mem_access_t type) {
    assert(ea >= 0);
    assert(data >= 0);
+   // Log memory read
+   if (mem_rd_logging & (1 << type)) {
+      log_memory_access("Memory Rd: ", data, ea, 0);
+   }
    // Delegate memory read to machine specific handler
    if (mem_model & (1 << type)) {
       (*memory_read_fn)(data, ea);
-   }
-   // Log memory read
-   if (mem_rd_logging & (1 << type)) {
-      log_memory_access("Memory  Rd: ", data, ea, 0);
    }
    // Pass on to tube decoding
    if (ea >= tube_low && ea <= tube_high) {
