@@ -1,6 +1,7 @@
 ﻿using CyUSB;
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -248,7 +249,7 @@ namespace fx2sharp
         + "  -n=NNN       stop after NNN bytes; suffix k,M,G for mult. with 2^10,20,30\n"
         + "  -bs=NNN      set IO block size to NNN, max 16384 (default 16384)\n"
         + "  -ps=NN       set pipeline size (number of URBs; default 16)\n"
-        + "  -bufs=NN     number of spare byte buffers (default 64)\n"
+        + "  -bufs=NN     number of spare buffers (default 64)\n"
         //        + "  -sched=P[,N] set scheduling policy P (\"fifo\" or \"rr\") and prio N\n"
         + "  -fw=PATH     use specified firmware IHX file instead of built-in one\n"
         + "               omit path to not download any firmware (just reset device)\n"
@@ -333,7 +334,7 @@ namespace fx2sharp
                 Stream fs = null;
                 bool debug = false;
                 int bufs = 64;
-                long discard = 16384;
+                long discard = 256*1024;
 
                 //configure firmware
                 FirmwareConfig cfg_fw = new FirmwareConfig();
@@ -547,7 +548,7 @@ namespace fx2sharp
                     {
                         try
                         {
-                            fs = new FileStream(filename, (cfg_fw.Direction == FirmwareConfigDirection.In) ? FileMode.Open : FileMode.Create);
+                            fs = new FileStream(filename, (cfg_fw.Direction == FirmwareConfigDirection.In) ? FileMode.Create : FileMode.Open);
                         }
                         catch (Exception ex)
                         {
@@ -640,8 +641,8 @@ namespace fx2sharp
                     if (debug)
                         Console.Error.WriteLine($"Found: {fx2.ToString()} ");
 
-
-                    Console.WriteLine("RESET");
+                    if (debug)
+                        Console.Error.WriteLine("RESET");
                     //reset device
                     if (!WriteReset(fx2, true))
                         throw new FX2SharpException("RESET failed", E_RESET_FAIL);
@@ -663,7 +664,8 @@ namespace fx2sharp
 
                     Thread.Sleep(100);
 
-                    Console.WriteLine("RESET");
+                    if (debug)
+                        Console.Error.WriteLine("RESET");
 
                     //reset device
                     if (!WriteReset(fx2, true))
@@ -732,19 +734,17 @@ namespace fx2sharp
 
                     BlockingCollection<bufandlen> bc = new BlockingCollection<bufandlen>(bufs);
 
-                    long count = 0;
-                    int bcmax = 0;
-                    int szmin = blocksize;
-                    int extcount = 0;
-
                     //start a pair of Thread, one producer, one consumer
+
+                    if (debug)
+                        Console.Error.WriteLine("Streaming...");
 
                     Thread prodThread = null, consThread = null;
                     ThreadParams prodParams = new ThreadParams(
                         uiblen,
                         blocksize,
                         e,
-                        (captureLimit + (long)blocksize - 1) / (long)blocksize,
+                        (captureLimit == -1)?-1:(captureLimit + (long)blocksize - 1) / (long)blocksize,
                         bufferPool,
                         bc,
                         (discard + blocksize - 1) / blocksize,
@@ -754,12 +754,15 @@ namespace fx2sharp
                         uiblen,
                         blocksize,
                         e,
-                        (captureLimit + (long)blocksize - 1) / (long)blocksize,
+                        (captureLimit == -1) ? -1 : (captureLimit + (long)blocksize - 1) / (long)blocksize,
                         bufferPool,
                         bc,
                         (discard + blocksize - 1) / blocksize,
                         fs
                         );
+
+                    Stopwatch sw = new Stopwatch();
+                    sw.Start();
 
                     if (cfg_fw.Direction == FirmwareConfigDirection.In)
                     {
@@ -797,8 +800,11 @@ namespace fx2sharp
 */                
                     }
 
+                    sw.Stop();
 
-                    Console.WriteLine($"Wrote {count} bytes [{bcmax} {szmin} {extcount}]");
+                    // this is bogus as it doesn't take into account discard (need a way of catering for that without slowing thread)
+                    if (debug)
+                        Console.Error.WriteLine($"Transfered {prodParams.Transfered}in/{consParams.Transfered}out in {sw.ElapsedMilliseconds}ms => {(double)prodParams.Transfered/(double)(1024*sw.ElapsedMilliseconds)}MB/s ");
 
                 }
             }
@@ -823,6 +829,8 @@ namespace fx2sharp
 
             public Stream IOStream { get; }
 
+            public long Transfered { get; set; }
+
             public ThreadParams(
                 int uibLen,
                 int blockSize,
@@ -842,6 +850,7 @@ namespace fx2sharp
                 this.FilledBuffers = filledBuffers;
                 this.Discard = discard;
                 this.IOStream = ioStream;
+                this.Transfered = 0;
             }
         }
 
@@ -849,15 +858,19 @@ namespace fx2sharp
         {
             foreach (var ret in p.FilledBuffers)
             {
+                p.Transfered += ret.len;
+
                 p.BufferPool.Add(ret);
             }
         }
 
         static void StreamConsumer(ThreadParams p)
         {
-            foreach (var ret in p.FilledBuffers)
+            foreach (var ret in p.FilledBuffers.GetConsumingEnumerable())
             {
                 p.IOStream.Write(ret.buf, 0, ret.len);
+
+                p.Transfered += ret.len;
 
                 p.BufferPool.Add(ret);
             }
@@ -893,15 +906,26 @@ namespace fx2sharp
                 // Pre-load the queue with requests
 
                 int len = p.Blocksize;
-                for (i = 0; i < p.Blocksize; i++)
+                for (i = 0; i < p.Uiblen; i++)
                     p.Endpoint.BeginDataXfer(ref cmdBufs[i], ref xferBufs[i], ref len, ref ovLaps[i]);
 
 
                 i = 0;
                 long ctr = 0;
                 int lenmin = p.Blocksize;
-                while (!ct_token.IsCancellationRequested && ctr < p.CaptureLimitBlocks)
+                while (!ct_token.IsCancellationRequested && (p.CaptureLimitBlocks == -1 || ctr < p.CaptureLimitBlocks))
                 {
+                    bool skip = p.Discard != -1 && ctr < p.Discard;
+
+                    bufandlen ret = null;
+                    if (!skip)
+                    {
+                        if (!p.BufferPool.TryTake(out ret))
+                        {
+                            throw new FX2SharpException("Out of buffers", E_BUFFERS_EXHAUSTED);
+                        }
+                    }
+
                     fixed (byte* tmp0 = ovLaps[i])
                     {
                         OVERLAPPED* ovLapStatus = (OVERLAPPED*)tmp0;
@@ -916,19 +940,14 @@ namespace fx2sharp
                     {
                         if (len != 0)
                         {
-                            if (ctr > p.Discard)
+                            if (!skip)
                             {
-                                bufandlen ret = null;
-
-                                if (!p.BufferPool.TryTake(out ret))
-                                {
-                                    throw new FX2SharpException("Out of buffers", E_BUFFERS_EXHAUSTED);
-                                }
-
+                    
                                 ret.len = len;
                                 Array.Copy(xferBufs[i], ret.buf, len);
 
                                 p.FilledBuffers.Add(ret);
+                                p.Transfered += len;
                             }
                             ctr++;
                         }
@@ -967,29 +986,6 @@ namespace fx2sharp
                 }
             }
         }
-
-        /*
-        var consThread = new Thread(() =>
-        {
-            Console.WriteLine("STREAMING...");
-            using (var f = new FileStream("d:\\temp\\test.bin", FileMode.Create, FileAccess.Write))
-            {
-
-                foreach (var tp in bc.GetConsumingEnumerable())
-                {
-
-                    f.Write(tp.buf, 0, tp.len);
-                    count += tp.len;
-                    Array.Clear(tp.buf, 0, tp.buf.Length);
-                    lock(bufferPool)
-                        bufferPool.Enqueue(tp);
-                }
-
-            }
-        });
-        */
-
-
 
         static byte[] ReadRAM(CyFX2Device fx2, ushort addr, int len)
         {
