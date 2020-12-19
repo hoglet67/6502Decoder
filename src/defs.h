@@ -37,6 +37,7 @@ typedef struct {
    uint8_t       data;
    int8_t         rnw; // -1 indicates unknown
    int8_t         rst; // -1 indicates unknown
+   int8_t           e; // -1 indicates unknown (65816 e pin)
 } sample_t;
 
 
@@ -67,6 +68,7 @@ typedef struct {
    int idx_rst;
    int idx_vda;
    int idx_vpa;
+   int idx_e;
    int vec_rst;
    int show_address;
    int show_hex;

@@ -956,6 +956,16 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    // Unpack the instruction bytes
    int opcode = sample_q[0].data;
 
+   // Update the E flag if this e pin is being sampled
+   int new_E = sample_q[0].e;
+   if (new_E >= 0) {
+      if (E >= 0 && E != new_E) {
+         printf("correcting e flag\n");
+         failflag |= 1;
+      }
+      E = new_E;
+   }
+
    // lookup the entry for the instruction
    InstrType *instr = &instr_table[opcode];
 
