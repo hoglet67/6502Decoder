@@ -158,8 +158,16 @@ static void Initialize(void)
 	PORTACFG = 0x00;
 	SYNCDELAY; // maybe not needed
 
-	// All default polarities: except SLWR active high,...
-	FIFOPINPOLAR=0x04;
+	// All default polarities: except SLWR,...
+	if (cfg_data[1] & 0x10) {
+	   // SLWR active low, use the rising edge as the sample clock
+	   FIFOPINPOLAR=0x00;
+	   // this is selected if -ifclk=i is specified
+	} else {
+	   // SLWR active high, use the falling edge as the sample clock
+	   // this is the default, and works forthe 6502
+	   FIFOPINPOLAR=0x04;
+	}
 	SYNCDELAY;
 
 	// Reset...
