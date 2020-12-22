@@ -531,6 +531,39 @@ static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruc
    PC = vector;
 }
 
+static int get_8bit_cycles(sample_t *sample_q) {
+   int opcode = sample_q[0].data;
+   int op1    = sample_q[1].data;
+   int op2    = sample_q[2].data;
+   InstrType *instr = &instr_table[opcode];
+   int cycle_count = instr->cycles;
+
+   // One cycle penalty if DP is not page aligned
+   int dpextra = (instr->mode <= ZP && DP >= 0 && (DP & 0xff)) ? 1 : 0;
+
+   // Account for extra cycle in a page crossing in (indirect), Y (not stores)
+   // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
+   if ((instr->mode == INDY) && (instr->optype != WRITEOP) && Y >= 0) {
+      int base = (sample_q[3 + dpextra].data << 8) + sample_q[2 + dpextra].data;
+      if ((base & 0xff00) != ((base + Y) & 0xff00)) {
+         cycle_count++;
+      }
+   }
+
+   // Account for extra cycle in a page crossing in absolute indexed (not stores or rmw) in emulated mode
+   if (((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype == READOP)) {
+      int index = (instr->mode == ABSX) ? X : Y;
+      if (index >= 0) {
+         int base = op1 + (op2 << 8);
+         if ((base & 0xff00) != ((base + index) & 0xff00)) {
+            cycle_count++;
+         }
+      }
+   }
+
+   return cycle_count + dpextra;
+}
+
 static int get_num_cycles(sample_t *sample_q, int intr_seen) {
    int opcode = sample_q[0].data;
    int op1    = sample_q[1].data;
@@ -958,38 +991,41 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
 
    // Update the E flag if this e pin is being sampled
    int new_E = sample_q[0].e;
-   if (new_E >= 0) {
-      if (E >= 0 && E != new_E) {
+   if (new_E >= 0 && E != new_E) {
+      if (E >= 0) {
          printf("correcting e flag\n");
          failflag |= 1;
       }
       E = new_E;
+      if (E) {
+         emulation_mode_on();
+      } else {
+         emulation_mode_off();
+      }
    }
 
    // lookup the entry for the instruction
    InstrType *instr = &instr_table[opcode];
 
+   // Infer MS from instruction length
+   if (MS < 0 && instr->m_extra) {
+      int cycles = get_8bit_cycles(sample_q);
+      check_and_set_ms((num_cycles > cycles) ? 0 : 1);
+   }
+
+   // Infer XS from instruction length
+   if (XS < 0 && instr->x_extra) {
+      int cycles = get_8bit_cycles(sample_q);
+      check_and_set_xs((num_cycles > cycles) ? 0 : 1);
+   }
+
+   // Work out outcount, taking account of 8/16 bit immediates
    int opcount = 0;
-   // Immediate operands can be 16-bit
    if (instr->mode == IMM) {
-      if (instr->m_extra) {
-         if (num_cycles == 3) {
-            opcount = 1;
-            check_and_set_ms(0); // infer 16-bit mode for A/M
-         } else {
-            check_and_set_ms(1); // infer 8-bit mode for A/M
-         }
-      }
-      if (instr->x_extra) {
-         if (num_cycles == 3) {
-            opcount = 1;
-            check_and_set_xs(0); // infer 16-bit mode for X/Y
-         } else {
-            check_and_set_xs(1); // infer 8-bit mode for X/Y
-         }
+      if ((instr->m_extra && MS == 0) || (instr->x_extra && XS == 0)) {
+         opcount = 1;
       }
    }
-   // TODO: Infer MS and XS where possible in other addressing modes
    opcount += instr->len - 1;
 
    int op1 = (opcount < 1) ? 0 : sample_q[1].data;
