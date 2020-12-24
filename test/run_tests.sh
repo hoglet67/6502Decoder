@@ -7,7 +7,7 @@ EXTENDED_TEST_FILE_NAME="extended_tests.zip"
 
 MAXDIFFSIZE=500000000
 
-common_options="--phi2="
+common_options="--phi2= --mem=FFF"
 
 machine_names=(
     beeb

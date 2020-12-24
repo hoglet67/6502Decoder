@@ -28,7 +28,7 @@ done
 
 DECODE=../decode6502
 
-common_options="--machine=beeb --debug=0 --mem=FFF --cpu=65816 -a -h -i -y -s --sp=01E0 --phi2= --rdy= --rst="
+common_options="--machine=beeb --debug=0 --mem=FFF --cpu=65816 -a -h -i -y -s --sp=01E0 --phi2= --rdy= --rst= --e="
 
 declare -A test_options
 
