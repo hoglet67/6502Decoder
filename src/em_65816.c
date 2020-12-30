@@ -542,7 +542,7 @@ static int get_8bit_cycles(sample_t *sample_q) {
    int dpextra = (instr->mode <= ZP && DP >= 0 && (DP & 0xff)) ? 1 : 0;
 
    // Account for extra cycle in a page crossing in (indirect), Y (not stores)
-   // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
+   // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> [ <page crossing>] <operand> [ <extra cycle in dec mode> ]
    if ((instr->mode == INDY) && (instr->optype != WRITEOP) && Y >= 0) {
       int base = (sample_q[3 + dpextra].data << 8) + sample_q[2 + dpextra].data;
       if ((base & 0xff00) != ((base + Y) & 0xff00)) {
@@ -616,7 +616,7 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
    }
 
    // Account for extra cycle in a page crossing in (indirect), Y (not stores)
-   // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> [ <page crossing>] <<operand> [ <extra cycle in dec mode> ]
+   // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> [ <page crossing>] <operand> [ <extra cycle in dec mode> ]
    if ((instr->mode == INDY) && (instr->optype != WRITEOP) && Y >= 0) {
       int base = (sample_q[3 + dpextra].data << 8) + sample_q[2 + dpextra].data;
       if ((base & 0xff00) != ((base + Y) & 0xff00)) {
@@ -1090,7 +1090,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    // Memory Modelling: Pointer indirection
    switch (instr->mode) {
    case INDY:
-      // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> [ <page crossing>] <<operand>
+      // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> [ <page crossing>] <operand>
       if (DP >= 0) {
          if (wrap) {
             memory_read(sample_q[2 + dpextra].data, (DP & 0xFF00) +                op1, MEM_POINTER);
@@ -1144,7 +1144,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       break;
    case IDLY:
       // e.g. LDA [80],Y
-      // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> <bank> [ <page crossing>] <<operand>
+      // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> <bank> <operand>
       if (DP >= 0) {
          memory_read(sample_q[2 + dpextra].data, DP + op1    , MEM_POINTER);
          memory_read(sample_q[3 + dpextra].data, DP + op1 + 1, MEM_POINTER);
@@ -1294,7 +1294,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       }
       break;
    case INDY:
-      // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> [ <page crossing>] <<operand>
+      // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> [ <page crossing>] <operand>
       index = Y;
       if (index >= 0 && DB >= 0) {
          ea = (sample_q[3 + dpextra].data << 8) + sample_q[2 + dpextra].data;
@@ -1352,7 +1352,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       break;
    case IDLY:
       // e.g. LDA [80],Y
-      // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> <bank> [ <page crossing>] <<operand>
+      // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> <bank> <operand>
       index = Y;
       if (index >= 0) {
          ea = (sample_q[4 + dpextra].data << 16) + (sample_q[3 + dpextra].data << 8) + sample_q[2 + dpextra].data;
