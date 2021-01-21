@@ -38,14 +38,28 @@ static char buffer[256];
 static void (*memory_read_fn)(int data, int ea);
 static int (*memory_write_fn)(int data, int ea);
 
+// Pre-calculate a label for each 4K page in memory
+// These are manipulated as the ROM and ACCCON latches are modified
+static char bank_id[32];
+
+#define TO_HEX(value) ((value) + ((value) < 10 ? '0' : 'A' - 10))
+
 static inline int write_addr(char *bp, int ea) {
+   if (ea >= 0x10000) {
+      *bp++ = ' ';
+      *bp++ = ' ';
+   } else {
+      char *bid = bank_id + ((ea & 0xF000) >> 11);
+      *bp++ = *bid++;
+      *bp++ = *bid++;
+   }
    int shift = (addr_digits - 1) << 2; // 6 => 20
    for (int i = 0; i < addr_digits; i++) {
       int value = (ea >> shift) & 0xf;
-      *bp++ = value + (value < 10 ? '0' : 'A' - 10);
+      *bp++ = TO_HEX(value);
       shift -= 4;
    }
-   return addr_digits;
+   return addr_digits + 2;
 }
 
 
@@ -91,6 +105,46 @@ static int *init_ram(int size) {
    return ram;
 }
 
+
+static void set_rom_latch(int data) {
+   rom_latch = data;
+   // Update the bank id string
+   char *bid = bank_id + 16;
+   char c = TO_HEX(data & 0xf);
+   if (data & 0x80) {
+      // Andy RAM is paged in to &8000-&8FFF
+      *bid++ = 'R';
+   } else {
+      *bid++ = c;
+   }
+   *bid++ = ':';
+   *bid++ = c;
+   *bid++ = ':';
+   *bid++ = c;
+   *bid++ = ':';
+   *bid++ = c;
+   *bid++ = ':';
+}
+
+static void set_acccon_latch(int data) {
+   acccon_latch = data;
+   // Update the bank id string
+   char *bid = bank_id + 24;
+   if (data & 0x08) {
+      // Hazel RAM is paged into &C000-&DFFF
+      *bid++ = 'R';
+      *bid++ = ':';
+      *bid++ = 'R';
+      *bid++ = ':';
+   } else {
+      // OS is pages into &C000-&DFFF
+      *bid++ = ' ';
+      *bid++ = ' ';
+      *bid++ = ' ';
+      *bid++ = ' ';
+   }
+}
+
 // ==================================================
 // Beeb Memory Handlers
 // ==================================================
@@ -115,11 +169,11 @@ static void memory_read_beeb(int data, int ea) {
 }
 
 static int memory_write_beeb(int data, int ea) {
+   if (ea == 0xfe30) {
+      set_rom_latch(data & 0xf);
+   }
    int *memptr = get_memptr_beeb(ea);
    *memptr = data;
-   if (ea == 0xfe30) {
-      rom_latch = data & 0x0f;
-   }
    return 0;
 }
 
@@ -162,10 +216,10 @@ static void memory_read_master(int data, int ea) {
 
 static int memory_write_master(int data, int ea) {
    if (ea == 0xfe30) {
-      rom_latch = data & 0x8f;
+      set_rom_latch(data & 0x8f);
    }
    if (ea == 0xfe34) {
-      acccon_latch = data & 0xff;
+      set_acccon_latch(data & 0xff);
    }
    // Determine if the access is writeable
    if ((ea < 0x8000) ||
@@ -217,11 +271,11 @@ static void memory_read_elk(int data, int ea) {
 }
 
 static int memory_write_elk(int data, int ea) {
+   if (ea == 0xfe05) {
+      set_rom_latch(data & 0xf);
+   }
    int *memptr = get_memptr_elk(ea);
    *memptr = data;
-   if (ea == 0xfe05) {
-      rom_latch = data & 0x0f;
-   }
    return 0;
 }
 
@@ -285,6 +339,10 @@ void memory_init(int size, machine_t machine, int logtube) {
       addr_digits++;
    }
    addr_digits = (addr_digits + 3) >> 2;
+   // Initialize bank labels (2 chars per 4K page)
+   for (int i = 0; i < 32; i++) {
+      bank_id[i] = ' ';
+   }
 }
 
 void memory_destroy() {
@@ -313,7 +371,7 @@ void memory_read(int data, int ea, mem_access_t type) {
    assert(data >= 0);
    // Log memory read
    if (mem_rd_logging & (1 << type)) {
-      log_memory_access("Memory Rd: ", data, ea, 0);
+      log_memory_access("Rd: ", data, ea, 0);
    }
    // Delegate memory read to machine specific handler
    if (mem_model & (1 << type)) {
@@ -335,7 +393,7 @@ void memory_write(int data, int ea, mem_access_t type) {
    }
    // Log memory write
    if (mem_wr_logging & (1 << type)) {
-      log_memory_access("Memory Wr: ", data, ea, ignored);
+      log_memory_access("Wr: ", data, ea, ignored);
    }
    // Pass on to tube decoding
    if (ea >= tube_low && ea <= tube_high) {

@@ -84,6 +84,7 @@ The default sample bit assignments for the 65C816 signals are:\n\
  -  vpa: bit  9\n\
  -  rdy: bit 10\n\
  -  vda: bit 11\n\
+ -    e: bit 12\n\
  -  rst: bit 14\n\
  - phi2: bit 15\n\
 \n\
@@ -157,6 +158,7 @@ enum {
    KEY_SYNC,
    KEY_VDA,
    KEY_VPA,
+   KEY_E,
    KEY_PB,
    KEY_DB,
    KEY_DP,
@@ -233,6 +235,7 @@ static struct argp_option options[] = {
    { "sync",          KEY_SYNC, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sync (default  9) (6502/65C02)",      GROUP_SIGDEFS},
    { "vpa",            KEY_VPA, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for vpa  (default  9) (65C816)",          GROUP_SIGDEFS},
    { "vda",            KEY_VDA, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for vda  (default 11) (65C816)",          GROUP_SIGDEFS},
+   { "e",                KEY_E, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for e    (default 12) (65C816)",          GROUP_SIGDEFS},
 
    { 0, 0, 0, 0, "Additional 6502/65C02 options:", GROUP_6502},
 
@@ -318,6 +321,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->idx_vpa = atoi(arg);
       } else {
          arguments->idx_vpa = -1;
+      }
+      break;
+   case KEY_E:
+      if (arg && strlen(arg) > 0) {
+         arguments->idx_e = atoi(arg);
+      } else {
+         arguments->idx_e = -1;
       }
       break;
    case KEY_EMUL:
@@ -945,6 +955,7 @@ void decode(FILE *stream) {
    int idx_rst   = arguments.idx_rst;
    int idx_vda   = arguments.idx_vda;
    int idx_vpa   = arguments.idx_vpa;
+   int idx_e     = arguments.idx_e;
 
    // Default Pin values
    int bus_data  =  0;
@@ -955,6 +966,7 @@ void decode(FILE *stream) {
    int pin_rst   =  1;
    int pin_vda   =  0;
    int pin_vpa   =  0;
+   int pin_e     =  0;
 
    int num;
 
@@ -1029,6 +1041,9 @@ void decode(FILE *stream) {
                   if (idx_vpa >= 0) {
                      pin_vpa = (sample >> idx_vpa) & 1;
                   }
+                  if (idx_e >= 0) {
+                     pin_e = (sample >> idx_e) & 1;
+                  }
                } else {
                   if (idx_sync >= 0) {
                      pin_sync = (sample >> idx_sync) & 1;
@@ -1064,6 +1079,9 @@ void decode(FILE *stream) {
                         if (idx_vpa >= 0) {
                            pin_vpa = (sample >> idx_vpa) & 1;
                         }
+                        if (idx_e >= 0) {
+                           pin_e = (sample >> idx_e) & 1;
+                        }
                      } else {
                         if (idx_sync >= 0) {
                            pin_sync = (sample >> idx_sync) & 1;
@@ -1088,6 +1106,9 @@ void decode(FILE *stream) {
                      }
                      if (idx_vpa >= 0) {
                         pin_vpa = (last_sample >> idx_vpa) & 1;
+                     }
+                     if (idx_e >= 0) {
+                        pin_e = (last_sample >> idx_e) & 1;
                      }
                      if (idx_rst >= 0) {
                         pin_rst = (last_sample >> idx_rst) & 1;
@@ -1148,6 +1169,11 @@ void decode(FILE *stream) {
             } else {
                s.rst = pin_rst;
             }
+            if (idx_e < 0) {
+               s.e = -1;
+            } else {
+               s.e = pin_e;
+            }
             queue_sample(&s);
          }
       }
@@ -1197,6 +1223,7 @@ int main(int argc, char *argv[]) {
    arguments.idx_vpa          = UNSPECIFIED;
    arguments.idx_rdy          = UNSPECIFIED;
    arguments.idx_vda          = UNSPECIFIED;
+   arguments.idx_e            = UNSPECIFIED;
    arguments.idx_rst          = UNSPECIFIED;
    arguments.idx_phi2         = UNSPECIFIED;
 
@@ -1249,6 +1276,10 @@ int main(int argc, char *argv[]) {
       }
       if (arguments.idx_vda != UNSPECIFIED) {
          fprintf(stderr, "--vda is incompatible with byte mode\n");
+         return 1;
+      }
+      if (arguments.idx_e != UNSPECIFIED) {
+         fprintf(stderr, "--e is incompatible with byte mode\n");
          return 1;
       }
    }
@@ -1313,6 +1344,10 @@ int main(int argc, char *argv[]) {
          fprintf(stderr, "--vpa is only applicable to the 65C816\n");
          return 1;
       }
+      if (arguments.idx_e != UNSPECIFIED) {
+         fprintf(stderr, "--e is only applicable to the 65C816\n");
+         return 1;
+      }
       if (arguments.pb_reg != UNSPECIFIED) {
          fprintf(stderr, "--pb is only applicable to the 65C816\n");
          return 1;
@@ -1357,6 +1392,9 @@ int main(int argc, char *argv[]) {
    }
    if (arguments.idx_vda == UNSPECIFIED) {
       arguments.idx_vda = 11;
+   }
+   if (arguments.idx_e == UNSPECIFIED) {
+      arguments.idx_e = 12;
    }
    if (arguments.idx_rst == UNSPECIFIED) {
       arguments.idx_rst= 14;
