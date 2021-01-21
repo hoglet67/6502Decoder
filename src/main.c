@@ -264,6 +264,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
    switch (key) {
    case KEY_DATA:
       arguments->idx_data = atoi(arg);
+      break;
    case KEY_RNW:
       if (arg && strlen(arg) > 0) {
          arguments->idx_rnw = atoi(arg);
