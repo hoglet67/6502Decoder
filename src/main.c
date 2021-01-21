@@ -1238,7 +1238,11 @@ int main(int argc, char *argv[]) {
    arguments.ms_flag          = UNSPECIFIED;
    arguments.xs_flag          = UNSPECIFIED;
 
+   printf("RNW:%d\n",(int)arguments.idx_rnw);
+
    argp_parse(&argp, argc, argv, 0, 0, &arguments);
+
+   printf("RNW:%d\n",(int)arguments.idx_rnw);
 
    if (arguments.trigger_start < 0) {
       triggered = 1;
@@ -1374,6 +1378,8 @@ int main(int argc, char *argv[]) {
       }
    }
 
+   printf("RNW:%d\n",(int)arguments.idx_rnw);
+
    // Implement default pins mapping for unspecified pins
    if (arguments.idx_data == UNSPECIFIED) {
       arguments.idx_data = 0;
@@ -1427,6 +1433,8 @@ int main(int argc, char *argv[]) {
          return 2;
       }
    }
+
+   printf("RNW:%d\n",(int)arguments.idx_rnw);
 
    decode(stream);
    fclose(stream);

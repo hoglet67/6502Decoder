@@ -4,7 +4,7 @@
     <ProjectView>ShowAllFiles</ProjectView>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|AnyCPU'">
-    <StartArguments>--debug -n=16M d:\temp\temp.bin</StartArguments>
+    <StartArguments>--debug -n=1M d:\temp\temp.bin</StartArguments>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|AnyCPU'">
     <StartArguments>-n=16M --debug d:\temp\temp.bin</StartArguments>
