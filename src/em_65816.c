@@ -51,7 +51,7 @@ typedef struct {
    const char *fmt;
 } AddrModeType;
 
-typedef uint32_t operand_t;
+typedef int operand_t;
 
 typedef int ea_t;
 
@@ -1254,7 +1254,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
 
    // Operand 2 is the value written back in a store or read-modify-write
    // See RMW comment above for bus cycles
-   uint32_t operand2 = operand;
+   operand_t operand2 = operand;
    if (instr->optype == RMWOP) {
       if (E == 0 && MS == 0) {
          // 16-bit - byte ordering is high then low
@@ -1396,8 +1396,8 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
 
       // Model memory reads
       if (ea >= 0 && (instr->optype == READOP || instr->optype == RMWOP)) {
-         int oplo = operand < 0 ? -1 : (operand & 0xff);
-         int ophi = operand < 0 ? -1 : ((operand >> 8) & 0xff);
+         int oplo = (operand & 0xff);
+         int ophi = ((operand >> 8) & 0xff);
          if (size == 0) {
             memory_read(oplo,  ea              , MEM_DATA);
             memory_read(ophi, (ea + 1) & 0xffff, MEM_DATA);

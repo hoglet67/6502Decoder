@@ -42,7 +42,7 @@ typedef struct {
    const char *fmt;
 } AddrModeType;
 
-typedef uint32_t operand_t;
+typedef int operand_t;
 
 typedef int ea_t;
 
@@ -461,7 +461,9 @@ static void em_6502_init(arguments_t *args) {
       break;
    case CPU_65C02_ROCKWELL:
       rockwell = 1;
-      // fall through to
+      c02 = 1;
+      instr_table = instr_table_65c02;
+      break;
    case CPU_65C02:
       c02 = 1;
       instr_table = instr_table_65c02;
@@ -695,7 +697,7 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
 
       // Operand 2 is the value written back in a store or read-modify-write
       // See RMW comment above for bus cycles
-      uint32_t operand2 = operand;
+      operand_t operand2 = operand;
       if (instr->optype == RMWOP || instr->optype == WRITEOP) {
          operand2 = sample_q[num_cycles - 1].data;
       }
