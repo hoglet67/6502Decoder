@@ -11,6 +11,15 @@
 #include "memory.h"
 #include "profiler.h"
 
+// Value use to indicate a pin (or register) has not been assigned by
+// the user, so should take the default value.
+#define UNSPECIFIED -2
+
+// Value used to indicate a pin (or register) is undefined. For a pin,
+// this means unconnected. For a register this means it will default
+// to a value of undefined (?).
+#define UNDEFINED -1
+
 int sample_count = 0;
 
 #define BUFSIZE 8192
@@ -269,42 +278,42 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       if (arg && strlen(arg) > 0) {
          arguments->idx_rnw = atoi(arg);
       } else {
-         arguments->idx_rnw = -1;
+         arguments->idx_rnw = UNDEFINED;
       }
       break;
    case KEY_SYNC:
       if (arg && strlen(arg) > 0) {
          arguments->idx_sync = atoi(arg);
       } else {
-         arguments->idx_sync = -1;
+         arguments->idx_sync = UNDEFINED;
       }
       break;
    case KEY_RDY:
       if (arg && strlen(arg) > 0) {
          arguments->idx_rdy = atoi(arg);
       } else {
-         arguments->idx_rdy = -1;
+         arguments->idx_rdy = UNDEFINED;
       }
       break;
    case KEY_PHI2:
       if (arg && strlen(arg) > 0) {
          arguments->idx_phi2 = atoi(arg);
       } else {
-         arguments->idx_phi2 = -1;
+         arguments->idx_phi2 = UNDEFINED;
       }
       break;
    case KEY_RST:
       if (arg && strlen(arg) > 0) {
          arguments->idx_rst = atoi(arg);
       } else {
-         arguments->idx_rst = -1;
+         arguments->idx_rst = UNDEFINED;
       }
       break;
    case KEY_VECRST:
       if (arg && strlen(arg) > 0) {
          arguments->vec_rst = strtol(arg, (char **)NULL, 16);
       } else {
-         arguments->vec_rst = -1;
+         arguments->vec_rst = UNDEFINED;
       }
       break;
    case KEY_BBCTUBE:
@@ -314,70 +323,70 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       if (arg && strlen(arg) > 0) {
          arguments->idx_vda = atoi(arg);
       } else {
-         arguments->idx_vda = -1;
+         arguments->idx_vda = UNDEFINED;
       }
       break;
    case KEY_VPA:
       if (arg && strlen(arg) > 0) {
          arguments->idx_vpa = atoi(arg);
       } else {
-         arguments->idx_vpa = -1;
+         arguments->idx_vpa = UNDEFINED;
       }
       break;
    case KEY_E:
       if (arg && strlen(arg) > 0) {
          arguments->idx_e = atoi(arg);
       } else {
-         arguments->idx_e = -1;
+         arguments->idx_e = UNDEFINED;
       }
       break;
    case KEY_EMUL:
       if (arg && strlen(arg) > 0) {
          arguments->e_flag = strtol(arg, (char **)NULL, 16);
       } else {
-         arguments->e_flag = -1;
+         arguments->e_flag = UNDEFINED;
       }
       break;
    case KEY_SP:
       if (arg && strlen(arg) > 0) {
          arguments->sp_reg = strtol(arg, (char **)NULL, 16);
       } else {
-         arguments->sp_reg = -1;
+         arguments->sp_reg = UNDEFINED;
       }
       break;
    case KEY_PB:
       if (arg && strlen(arg) > 0) {
          arguments->pb_reg = strtol(arg, (char **)NULL, 16);
       } else {
-         arguments->pb_reg = -1;
+         arguments->pb_reg = UNDEFINED;
       }
       break;
    case KEY_DB:
       if (arg && strlen(arg) > 0) {
          arguments->db_reg = strtol(arg, (char **)NULL, 16);
       } else {
-         arguments->db_reg = -1;
+         arguments->db_reg = UNDEFINED;
       }
       break;
    case KEY_DP:
       if (arg && strlen(arg) > 0) {
          arguments->dp_reg = strtol(arg, (char **)NULL, 16);
       } else {
-         arguments->dp_reg = -1;
+         arguments->dp_reg = UNDEFINED;
       }
       break;
    case KEY_MS:
       if (arg && strlen(arg) > 0) {
          arguments->ms_flag = strtol(arg, (char **)NULL, 16);
       } else {
-         arguments->ms_flag = -1;
+         arguments->ms_flag = UNDEFINED;
       }
       break;
    case KEY_XS:
       if (arg && strlen(arg) > 0) {
          arguments->xs_flag = strtol(arg, (char **)NULL, 16);
       } else {
-         arguments->xs_flag = -1;
+         arguments->xs_flag = UNDEFINED;
       }
       break;
    case KEY_SKIP:
@@ -1188,8 +1197,6 @@ void decode(FILE *stream) {
 // Main program entry point
 // ====================================================================
 
-#define UNSPECIFIED -2
-
 int main(int argc, char *argv[]) {
    // General options
    arguments.cpu_type         = CPU_UNKNOWN;
@@ -1396,7 +1403,7 @@ int main(int argc, char *argv[]) {
       arguments.idx_e = 12;
    }
    if (arguments.idx_rst == UNSPECIFIED) {
-      arguments.idx_rst= 14;
+      arguments.idx_rst = 14;
    }
    if (arguments.idx_phi2 == UNSPECIFIED) {
       arguments.idx_phi2 = 15;
