@@ -96,8 +96,8 @@ enum RESP_enum {
    RESP_ERROR_2
 };
 
-static int resp_state = RESP_IDLE;
-static int resp_length = 0;
+static unsigned int resp_state = RESP_IDLE;
+static unsigned int resp_length = 0;
 
 static void expect_response(int state, int length) {
    if (resp_state != RESP_IDLE) {
@@ -139,7 +139,7 @@ void r1_h2p_state_machine(uint8_t data) {
    static int a = -1;
    static int x = -1;
    static int y = -1;
-   static int state = R1_IDLE;
+   static unsigned int state = R1_IDLE;
 
 #ifdef DEBUG
    printf("tube write: R1 = %02x\n", data);
@@ -176,7 +176,7 @@ void r2_h2p_state_machine(uint8_t data) {
    static int cy = -1;
    static int errno = -1;
    static uint8_t buffer[512];
-   static int index = 0;
+   static unsigned int index = 0;
 #ifdef DEBUG
    printf("tube write: R2 = %02x\n", data);
 #endif
@@ -322,7 +322,7 @@ void r4_h2p_state_machine(uint8_t data) {
    static int        id = -1;
    static uint32_t addr = 0;
    static int      sync = -1;
-   static int     state = R4_IDLE;
+   static unsigned int     state = R4_IDLE;
 
 #ifdef DEBUG
    printf("tube write: R4 = %02x\n", data);
@@ -381,10 +381,10 @@ void r2_p2h_state_machine(uint8_t data) {
    static int a = -1;
    static int x = -1;
    static int y = -1;
-   static int in_length = -1;
-   static int state = R2_IDLE;
+   static unsigned int in_length = 0;
+   static unsigned int state = R2_IDLE;
    static uint8_t buffer[512];
-   static int index = 0;
+   static unsigned int index = 0;
 
 #ifdef DEBUG
    printf("tube read:  R2 = %02x\n", data);
