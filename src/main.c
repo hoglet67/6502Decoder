@@ -173,7 +173,8 @@ enum {
    KEY_DP,
    KEY_EMUL,
    KEY_MS,
-   KEY_XS
+   KEY_XS,
+   KEY_SHOWROM = 'r'
 };
 
 
@@ -233,6 +234,7 @@ static struct argp_option options[] = {
    { "state",        KEY_STATE,         0,                   0, "Show register/flag state",                          GROUP_OUTPUT},
    { "cycles",      KEY_CYCLES,         0,                   0, "Show number of bus cycles",                         GROUP_OUTPUT},
    { "bbcfwa",      KEY_BBCFWA,         0,                   0, "Show BBC floating-point work areas",                GROUP_OUTPUT},
+   { "showromno",   KEY_SHOWROM,         0,                   0, "Show BBC rom no for address 8000..BFFF",            GROUP_OUTPUT},
 
    { 0, 0, 0, 0, "Signal defintion options:", GROUP_SIGDEFS},
 
@@ -443,6 +445,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       break;
    case KEY_ADDR:
       arguments->show_address = 1;
+      break;
+   case KEY_SHOWROM:
+      arguments->show_romno = 1;
       break;
    case KEY_HEX:
       arguments->show_hex = 1;
@@ -744,6 +749,20 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
             } else {
                write_hex2(bp, pb);
                bp += 2;
+            }
+         }
+         if (arguments.show_romno) {
+            if (pc >= 0x8000 && pc <= 0xBFFF) {
+               int romno = em->read_memory(0xF4);
+               if (romno < 0)
+                  *bp++ = '?';
+               else {
+                  write_hex1(bp++, romno & 0x0F);
+               }
+               *bp++ = ':';
+            } else {
+               *bp++ = ' ';
+               *bp++ = ' ';
             }
          }
          if (pc < 0) {
@@ -1246,11 +1265,7 @@ int main(int argc, char *argv[]) {
    arguments.ms_flag          = UNSPECIFIED;
    arguments.xs_flag          = UNSPECIFIED;
 
-   printf("RNW:%d\n",(int)arguments.idx_rnw);
-
    argp_parse(&argp, argc, argv, 0, 0, &arguments);
-
-   printf("RNW:%d\n",(int)arguments.idx_rnw);
 
    if (arguments.trigger_start < 0) {
       triggered = 1;
@@ -1386,8 +1401,6 @@ int main(int argc, char *argv[]) {
       }
    }
 
-   printf("RNW:%d\n",(int)arguments.idx_rnw);
-
    // Implement default pins mapping for unspecified pins
    if (arguments.idx_data == UNSPECIFIED) {
       arguments.idx_data = 0;
@@ -1442,7 +1455,7 @@ int main(int argc, char *argv[]) {
       }
    }
 
-   printf("RNW:%d\n",(int)arguments.idx_rnw);
+   
 
    decode(stream);
    fclose(stream);

@@ -95,6 +95,7 @@ typedef struct {
    int trigger_stop;
    int trigger_skipint;
    char *filename;
+   int show_romno;
 } arguments_t;
 
 typedef struct {
