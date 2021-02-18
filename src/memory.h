@@ -24,6 +24,10 @@ void memory_write(int data, int ea, mem_access_t type);
 
 int memory_read_raw(int ea);
 
+int memory_read_raw(int ea);
+
 void memory_destroy();
+
+int write_bankid(char *buffer, int ea);
 
 #endif

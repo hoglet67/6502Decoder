@@ -234,7 +234,7 @@ static struct argp_option options[] = {
    { "state",        KEY_STATE,         0,                   0, "Show register/flag state",                          GROUP_OUTPUT},
    { "cycles",      KEY_CYCLES,         0,                   0, "Show number of bus cycles",                         GROUP_OUTPUT},
    { "bbcfwa",      KEY_BBCFWA,         0,                   0, "Show BBC floating-point work areas",                GROUP_OUTPUT},
-   { "showromno",   KEY_SHOWROM,         0,                   0, "Show BBC rom no for address 8000..BFFF",            GROUP_OUTPUT},
+   { "showromno",   KEY_SHOWROM,        0,                   0, "Show BBC rom no for address 8000..BFFF",            GROUP_OUTPUT},
 
    { 0, 0, 0, 0, "Signal defintion options:", GROUP_SIGDEFS},
 
@@ -251,7 +251,7 @@ static struct argp_option options[] = {
    { 0, 0, 0, 0, "Additional 6502/65C02 options:", GROUP_6502},
 
    { "undocumented", KEY_UNDOC,        0,                   0, "Enable undocumented opcodes",                        GROUP_6502},
-   { "sp",              KEY_SP,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register",       GROUP_6502},
+   { "sp",              KEY_SP,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register",       GROUP_6502},
 
    { 0, 0, 0, 0, "Additional 65C816 options:", GROUP_65816},
 
@@ -261,7 +261,7 @@ static struct argp_option options[] = {
    { "emul",          KEY_EMUL,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the E flag",                        GROUP_65816},
    { "ms",              KEY_MS,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the M flag",                        GROUP_65816},
    { "xs",              KEY_XS,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the X flag",                        GROUP_65816},
-   { "sp",              KEY_SP,     "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register",       GROUP_65816},
+   { "sp",              KEY_SP,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register",       GROUP_65816},
    { 0 }
 };
 
@@ -752,18 +752,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
             }
          }
          if (arguments.show_romno) {
-            if (pc >= 0x8000 && pc <= 0xBFFF) {
-               int romno = em->read_memory(0xF4);
-               if (romno < 0)
-                  *bp++ = '?';
-               else {
-                  write_hex1(bp++, romno & 0x0F);
-               }
-               *bp++ = ':';
-            } else {
-               *bp++ = ' ';
-               *bp++ = ' ';
-            }
+            bp += write_bankid(bp, pc);
          }
          if (pc < 0) {
             *bp++ = '?';
@@ -1348,6 +1337,11 @@ int main(int argc, char *argv[]) {
       memory_init(0x10000, arguments.machine, arguments.bbctube);
    }
 
+   // Turn on memory write logging if show rom bank option (-r) is selected
+   if (arguments.show_romno) {
+      arguments.mem_model |= (1 << MEM_DATA) | (1 << MEM_STACK);
+   }
+
    memory_set_modelling(  arguments.mem_model       & 0x0f);
    memory_set_rd_logging((arguments.mem_model >> 4) & 0x0f);
    memory_set_wr_logging((arguments.mem_model >> 8) & 0x0f);
@@ -1455,7 +1449,7 @@ int main(int argc, char *argv[]) {
       }
    }
 
-   
+
 
    decode(stream);
    fclose(stream);

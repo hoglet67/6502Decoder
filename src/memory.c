@@ -44,8 +44,8 @@ static char bank_id[32];
 
 #define TO_HEX(value) ((value) + ((value) < 10 ? '0' : 'A' - 10))
 
-static inline int write_addr(char *bp, int ea) {
-   if (ea >= 0x10000) {
+int write_bankid(char *bp, int ea) {
+  if (ea < 0 || ea >= 0x10000) {
       *bp++ = ' ';
       *bp++ = ' ';
    } else {
@@ -53,6 +53,11 @@ static inline int write_addr(char *bp, int ea) {
       *bp++ = *bid++;
       *bp++ = *bid++;
    }
+  return 2;
+}
+
+static inline int write_addr(char *bp, int ea) {
+   bp += write_bankid(bp, ea);
    int shift = (addr_digits - 1) << 2; // 6 => 20
    for (int i = 0; i < addr_digits; i++) {
       int value = (ea >> shift) & 0xf;
@@ -109,7 +114,7 @@ static int *init_ram(int size) {
 static void set_rom_latch(int data) {
    rom_latch = data;
    // Update the bank id string
-   char *bid = bank_id + 16;
+   char *bid = bank_id + 16; // 8xxx
    char c = TO_HEX(data & 0xf);
    if (data & 0x80) {
       // Andy RAM is paged in to &8000-&8FFF
@@ -127,22 +132,35 @@ static void set_rom_latch(int data) {
 }
 
 static void set_acccon_latch(int data) {
+   char *bid;
    acccon_latch = data;
-   // Update the bank id string
-   char *bid = bank_id + 24;
-   if (data & 0x08) {
-      // Hazel RAM is paged into &C000-&DFFF
-      *bid++ = 'R';
-      *bid++ = ':';
-      *bid++ = 'R';
-      *bid++ = ':';
-   } else {
-      // OS is pages into &C000-&DFFF
-      *bid++ = ' ';
-      *bid++ = ' ';
-      *bid++ = ' ';
-      *bid++ = ' ';
+   // Update the bank id string for Lynnn (Shadow RAM) based on bit 2
+   bid = bank_id + 6; // 3xxx
+   for (int i = 0; i < 5; i++) {
+      if (data & 0x04) {
+         // Shadow RAM is paged into &3000-7FFF
+         *bid++ = 'S';
+         *bid++ = ':';
+      } else {
+         // Normal RAM is paged into &3000-7FFF
+         *bid++ = ' ';
+         *bid++ = ' ';
+      }
    }
+   // Update the bank id string Hazel (MOS Overlay) based on bit 3
+   bid = bank_id + 24; // Cxxx
+   for (int i = 0; i < 2; i++) {
+      if (data & 0x08) {
+         // Hazel RAM is paged into &C000-&DFFF
+         *bid++ = 'H';
+         *bid++ = ':';
+      } else {
+         // OS is pages into &C000-&DFFF
+         *bid++ = ' ';
+         *bid++ = ' ';
+      }
+   }
+
 }
 
 // ==================================================
