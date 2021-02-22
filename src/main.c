@@ -241,7 +241,7 @@ static struct argp_option options[] = {
    { "data",          KEY_DATA, "BITNUM",                   0, "Bit number for data (default  0)",                   GROUP_SIGDEFS},
    { "rnw",            KEY_RNW, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for rnw  (default  8)",                   GROUP_SIGDEFS},
    { "rdy",            KEY_RDY, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for rdy  (default 10)",                   GROUP_SIGDEFS},
-   { "phi2",          KEY_PHI2, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for phi2 (default 11)",                   GROUP_SIGDEFS}, // TODO change to 15
+   { "phi2",          KEY_PHI2, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for phi2 (default 15)",                   GROUP_SIGDEFS},
    { "rst",            KEY_RST, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for rst  (default 14)",                   GROUP_SIGDEFS},
    { "sync",          KEY_SYNC, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sync (default  9) (6502/65C02)",      GROUP_SIGDEFS},
    { "vpa",            KEY_VPA, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for vpa  (default  9) (65C816)",          GROUP_SIGDEFS},
@@ -1090,20 +1090,8 @@ void decode(FILE *stream) {
                      if (idx_rnw >= 0) {
                         pin_rnw = (sample >> idx_rnw ) & 1;
                      }
-                     if (c816) {
-                        if (idx_vda >= 0) {
-                           pin_vda = (sample >> idx_vda) & 1;
-                        }
-                        if (idx_vpa >= 0) {
-                           pin_vpa = (sample >> idx_vpa) & 1;
-                        }
-                        if (idx_e >= 0) {
-                           pin_e = (sample >> idx_e) & 1;
-                        }
-                     } else {
-                        if (idx_sync >= 0) {
-                           pin_sync = (sample >> idx_sync) & 1;
-                        }
+                     if (idx_sync >= 0) {
+                        pin_sync = (sample >> idx_sync) & 1;
                      }
                      if (idx_rst >= 0) {
                         pin_rst = (sample >> idx_rst) & 1;
