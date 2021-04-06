@@ -619,6 +619,7 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
    // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> [ <page crossing>] <operand> [ <extra cycle in dec mode> ]
    if ((instr->mode == INDY) && (instr->optype != WRITEOP) && Y >= 0) {
       int base = (sample_q[3 + dpextra].data << 8) + sample_q[2 + dpextra].data;
+      // TODO: take account of page crossing with 16-bit Y
       if ((base & 0xff00) != ((base + Y) & 0xff00)) {
          cycle_count++;
       }
@@ -1279,7 +1280,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    switch (instr->mode) {
    case ZP:
       if (DP >= 0) {
-         ea = (DP + op1);
+         ea = (DP + op1) & 0xffff; // always bank 0
       }
       break;
    case ZPX:
@@ -1289,7 +1290,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          if (wrap) {
             ea = (DP & 0xff00) + ((op1 + index) & 0xff);
          } else {
-            ea = DP + op1 + index;
+            ea = (DP + op1 + index) & 0xffff; // always bank 0
          }
       }
       break;
@@ -1391,6 +1392,9 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
 
    if (instr->emulate) {
 
+      // Is direct page access, as this wraps within bank 0
+      int isDP = instr->mode == ZP || instr->mode == ZPX || instr->mode == ZPY;
+
       // Determine memory access size
       int size = instr->x_extra ? XS : instr->m_extra ? MS : 1;
 
@@ -1399,8 +1403,12 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          int oplo = (operand & 0xff);
          int ophi = ((operand >> 8) & 0xff);
          if (size == 0) {
-            memory_read(oplo,  ea              , MEM_DATA);
-            memory_read(ophi, (ea + 1) & 0xffff, MEM_DATA);
+            memory_read(oplo,  ea    , MEM_DATA);
+            if (isDP) {
+               memory_read(ophi,  (ea + 1) & 0xffff, MEM_DATA);
+            } else {
+               memory_read(ophi,  ea + 1, MEM_DATA);
+            }
          } else if (size > 0) {
             memory_read(oplo, ea, MEM_DATA);
          }
@@ -1425,7 +1433,11 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          if (ea >= 0) {
             memory_write(operand2 & 0xff,  ea, MEM_DATA);
             if (size == 0) {
-               memory_write((operand2 >> 8) & 0xff, (ea + 1) & 0xffff, MEM_DATA);
+               if (isDP) {
+                  memory_write((operand2 >> 8) & 0xff, (ea + 1) & 0xffff, MEM_DATA);
+               } else {
+                  memory_write((operand2 >> 8) & 0xff, ea + 1, MEM_DATA);
+               }
             }
          }
       }
