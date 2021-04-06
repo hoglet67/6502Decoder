@@ -545,7 +545,7 @@ static int get_8bit_cycles(sample_t *sample_q) {
    // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> [ <page crossing>] <operand> [ <extra cycle in dec mode> ]
    if ((instr->mode == INDY) && (instr->optype != WRITEOP) && Y >= 0) {
       int base = (sample_q[3 + dpextra].data << 8) + sample_q[2 + dpextra].data;
-      if ((base & 0xff00) != ((base + Y) & 0xff00)) {
+      if ((base & 0x1ff00) != ((base + Y) & 0x1ff00)) {
          cycle_count++;
       }
    }
@@ -555,7 +555,7 @@ static int get_8bit_cycles(sample_t *sample_q) {
       int index = (instr->mode == ABSX) ? X : Y;
       if (index >= 0) {
          int base = op1 + (op2 << 8);
-         if ((base & 0xff00) != ((base + index) & 0xff00)) {
+         if ((base & 0x1ff00) != ((base + index) & 0x1ff00)) {
             cycle_count++;
          }
       }
@@ -621,7 +621,7 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
    if ((instr->mode == INDY) && (instr->optype != WRITEOP) && Y >= 0) {
       int base = (sample_q[3 + dpextra].data << 8) + sample_q[2 + dpextra].data;
       // TODO: take account of page crossing with 16-bit Y
-      if ((base & 0xff00) != ((base + Y) & 0xff00)) {
+      if ((base & 0x1ff00) != ((base + Y) & 0x1ff00)) {
          cycle_count++;
       }
    }
@@ -632,7 +632,7 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
       int index = (instr->mode == ABSX) ? X : Y;
       if (index >= 0) {
          int base = op1 + (op2 << 8);
-         if ((base & 0xff00) != ((base + index) & 0xff00)) {
+         if ((base & 0x1ff00) != ((base + index) & 0x1ff00)) {
             correction = 1;
          } else {
             correction = 0;
