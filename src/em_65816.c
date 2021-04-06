@@ -1323,7 +1323,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    case ABSY:
       index = instr->mode == ABSX ? X : Y;
       if (index >= 0 && DB >= 0) {
-         ea = (DB << 16) + (((op2 << 8 | op1) + index) & 0xffff);
+         ea = ((DB << 16) + (op2 << 8) + op1 + index) & 0xffffff;
       }
       break;
    case BRA:
