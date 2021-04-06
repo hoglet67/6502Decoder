@@ -571,7 +571,8 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
    InstrType *instr = &instr_table[opcode];
    int cycle_count = instr->cycles;
 
-   if (intr_seen) {
+   // Interrupt, BRK, COP
+   if (intr_seen || opcode == 0x00 || opcode == 0x02) {
       return (E == 0) ? 8 : 7;
    }
 
@@ -924,8 +925,8 @@ static int em_65816_match_interrupt(sample_t *sample_q, int num_samples) {
    // TODO: the heuristic only works in emulation mode
    if (sample_q[0].rnw >= 0) {
       // If we have the RNW pin connected, then just look for these three writes in succession
-      // Currently can't detect a BRK being interrupted
-      if (sample_q[0].data == 0x00) {
+      // Currently can't detect a BRK or COP being interrupted
+      if (sample_q[0].data == 0x00 || sample_q[0].data == 0x02) {
          return 0;
       }
       if (sample_q[2].rnw == 0 && sample_q[3].rnw == 0 && sample_q[4].rnw == 0) {
