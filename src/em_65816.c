@@ -878,6 +878,10 @@ static void em_65816_init(arguments_t *args) {
          for (int j = 0; m1_ops[j]; j++) {
             if (!strcmp(instr->mnemonic, m1_ops[j])) {
                instr->m_extra++;
+               if (instr->optype == READOP && (instr->mode == ABSX || instr->mode == ABSY)) {
+                  // add 1 further cycle if x=0: ABS,X or ABS,Y
+                  instr->x_extra++;
+               }
                break;
             }
          }
@@ -892,12 +896,12 @@ static void em_65816_init(arguments_t *args) {
          for (int j = 0; x1_ops[j]; j++) {
             if (!strcmp(instr->mnemonic, x1_ops[j])) {
                instr->x_extra++;
+               if (instr->mode == ABSX || instr->mode == ABSY) {
+                  // add 1 further cycle if x=0: LDX ABS,Y or LDY ABS,X
+                  instr->x_extra++;
+               }
                break;
             }
-         }
-         // if ABSX ot ABXY add
-         if (instr->mode == ABSX || instr->mode == ABSY) {
-            instr->x_extra++;
          }
       }
       // Copy the length and format from the address mode, for efficiency
