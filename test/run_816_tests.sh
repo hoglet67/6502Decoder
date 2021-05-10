@@ -33,6 +33,7 @@ common_options="--machine=beeb --debug=0 --mem=FFF --cpu=65816 -a -h -i -y -s --
 declare -A test_options
 
 # Tests to run in emulation mode
+            test_options[drass]="--emul=1 --pb=00 --db=00 --dp=0000"
               test_options[brk]="--emul=1 --pb=00 --db=00 --dp=0000"
           test_options[optest1]="--emul=1 --pb=00 --db=00 --dp=0000 --sp=01FD"
           test_options[optest2]="--emul=1 --pb=00 --db=00 --dp=0000 --sp=01FD"
