@@ -612,7 +612,6 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
       // Now just pass BRK onto the interrupt handler
       interrupt(sample_q, num_cycles, instruction, 2);
       // And we are done
-      interrupt(sample_q, num_cycles, instruction, 2);
       return;
    } else if (opcode == 0x20) {
       instruction->pc = (((sample_q[3].data << 8) + sample_q[4].data) - 2) & 0xffff;
