@@ -1770,6 +1770,8 @@ static int op_MV(int data, int sba, int dba, int dir) {
       Y = -1;
       PC = -1;
    }
+   // Set the Data Bank to the destination bank
+   DB = dba;
    return -1;
 }
 
