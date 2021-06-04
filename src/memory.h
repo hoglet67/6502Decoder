@@ -8,6 +8,7 @@ typedef enum {
    MEM_POINTER  = 1,
    MEM_DATA     = 2,
    MEM_STACK    = 3,
+   MEM_FETCH    = 4,
 } mem_access_t;
 
 void memory_init(int size, machine_t machine, int logtube);

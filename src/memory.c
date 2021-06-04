@@ -19,6 +19,7 @@ static int acccon_latch   = 0;
 static int *lynne;           // 20KB overlaid at 3000-7FFF
 static int *hazel;           //  8KB overlaid at C000-DFFF
 static int *andy;            //  4KB overlaid at 8000-8FFF
+static int vdu_op;           // the last instruction fetch was by the VDU driver
 
 // Main Memory
 
@@ -135,6 +136,7 @@ static void set_acccon_latch(int data) {
    char *bid;
    acccon_latch = data;
    // Update the bank id string for Lynnn (Shadow RAM) based on bit 2
+   // TODO: this is not sufficient; needs to take account of vdu_op which changes each instruction
    bid = bank_id + 6; // 3xxx
    for (int i = 0; i < 5; i++) {
       if (data & 0x04) {
@@ -209,11 +211,12 @@ static void init_beeb(int logtube) {
 // ==================================================
 
 static inline int *get_memptr_master(int ea) {
-   // TODO: Implementing Lynne (shadow RAM) needs context (i.e. PC)
    if ((acccon_latch & 0x08) && ea >= 0xc000 && ea < 0xe000) {
       return hazel + (ea & 0x1FFF);
    } else if ((rom_latch & 0x80) && ea >= 0x8000 && ea < 0x9000) {
       return andy + (ea & 0x0FFF);
+   } else if (ea >= 0x3000 && ea < 0x8000 && (acccon_latch & (vdu_op ? 0x02 : 0x04))) {
+      return lynne + (ea - 0x3000);
    } else if (ea >= 0x8000 && ea < 0xC000) {
       return swrom + ((rom_latch & 0xf) << 14) + (ea & 0x3FFF);
    } else {
@@ -387,6 +390,11 @@ void memory_set_wr_logging(int bitmask) {
 void memory_read(int data, int ea, mem_access_t type) {
    assert(ea >= 0);
    assert(data >= 0);
+   // Update the vdu_op state every fetch (used by the master only)
+   if (type == MEM_FETCH) {
+      vdu_op = ((acccon_latch & 0x08) == 0x00) && ((ea & 0xffe000) == 0xc000);
+      type = MEM_INSTR;
+   }
    // Log memory read
    if (mem_rd_logging & (1 << type)) {
       log_memory_access("Rd: ", data, ea, 0);

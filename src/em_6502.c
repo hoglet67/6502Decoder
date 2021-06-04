@@ -592,7 +592,7 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
    // Memory Modelling: Instruction fetches
    if (PC >= 0) {
       int pc = PC;
-      memory_read(opcode, pc++, MEM_INSTR);
+      memory_read(opcode, pc++, MEM_FETCH);
       if (opcount >= 1) {
          memory_read(op1, pc++, MEM_INSTR);
       }

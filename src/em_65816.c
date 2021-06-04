@@ -1044,7 +1044,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    // Memory Modelling: Instruction fetches
    if (PB >= 0 && PC >= 0) {
       int pc = (PB << 16) + PC;
-      memory_read(opcode, pc++, MEM_INSTR);
+      memory_read(opcode, pc++, MEM_FETCH);
       if (opcount >= 1) {
          memory_read(op1, pc++, MEM_INSTR);
       }
