@@ -872,7 +872,7 @@ int decode_instruction(sample_t *sample_q, int num_samples) {
    // Flag to indicate the sample type is missing (sync/vda/vpa unconnected)
    int notype = sample_q[0].type == UNKNOWN;
 
-   if (arguments.idx_rst < 0) {
+   if (sample_q[0].rst < 0) {
       // We use a heuristic, based on what we expect to see on the data
       // bus in cycles 5, 6 and 7, i.e. RSTVECL, RSTVECH, RSTOPCODE
       int veclo  = (arguments.vec_rst      ) & 0xff;
