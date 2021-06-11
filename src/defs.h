@@ -13,8 +13,10 @@ typedef enum {
 typedef enum {
    CPU_UNKNOWN,
    CPU_6502,
+   CPU_6502_ARLET,
    CPU_65C02,
    CPU_65C02_ROCKWELL,
+   CPU_65C02_ARLET,
    CPU_65C816
 } cpu_t;
 

@@ -77,10 +77,11 @@ typedef struct {
 
 static const char default_state[] = "A=?? X=?? Y=?? SP=?? N=? V=? D=? I=? Z=? C=?";
 
-static int rockwell;
-static int c02;
-static int bbctube;
-static int master_nordy;
+static int rockwell     = 0;
+static int arlet        = 0;
+static int c02          = 0;
+static int bbctube      = 0;
+static int master_nordy = 0;
 
 static InstrType *instr_table;
 
@@ -119,6 +120,12 @@ static int Z = -1;
 static int C = -1;
 
 static char ILLEGAL[] = "???";
+
+// JSR cycle positions
+// <opcode> <op1> <read dummy> <write pch> <write pcl> <op2>
+
+static int jsr_pch = 3;
+static int jsr_pcl = 4;
 
 // ====================================================================
 // Forward declarations
@@ -280,11 +287,11 @@ static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
    }
 
    // Account for extra cycle in a page crossing in absolute indexed (not stores)
-   if (((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype != WRITEOP)) {
+   if ((((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype != WRITEOP)) || (arlet && instr->mode == IND1X)) {
       // 6502:  Need to exclude ASL/ROL/LSR/ROR/DEC/INC, which are 7 cycles regardless
       // 65C02: Need to exclude DEC/INC, which are 7 cycles regardless
-      if ((opcode != 0xDE) && (opcode != 0xFE) && (c02 || ((opcode != 0x1E) && (opcode != 0x3E) && (opcode != 0x5E) && (opcode != 0x7E)))) {
-         int index = (instr->mode == ABSX) ? X : Y;
+      if ((opcode != 0xDE) && (opcode != 0xFE) && ((c02 && !arlet) || ((opcode != 0x1E) && (opcode != 0x3E) && (opcode != 0x5E) && (opcode != 0x7E)))) {
+         int index = (instr->mode == ABSY) ? Y : X;
          if (index >= 0) {
             int base = op1 + (op2 << 8);
             if ((base & 0xff00) != ((base + index) & 0xff00)) {
@@ -456,12 +463,23 @@ static void em_6502_init(arguments_t *args) {
    switch (args->cpu_type) {
    case CPU_6502:
       instr_table = instr_table_6502;
-      c02 = 0;
-      rockwell = 0;
+      break;
+   case CPU_6502_ARLET:
+      arlet = 1;
+      jsr_pch = 2;
+      jsr_pcl = 3;
+      instr_table = instr_table_6502;
       break;
    case CPU_65C02_ROCKWELL:
       rockwell = 1;
       c02 = 1;
+      instr_table = instr_table_65c02;
+      break;
+   case CPU_65C02_ARLET:
+      arlet = 1;
+      c02 = 1;
+      jsr_pch = 2;
+      jsr_pcl = 3;
       instr_table = instr_table_65c02;
       break;
    case CPU_65C02:
@@ -482,14 +500,38 @@ static void em_6502_init(arguments_t *args) {
    // It's needed when rdy is not being explicitely sampled
    master_nordy = (args->machine == MACHINE_MASTER) && (args->idx_rdy < 0);
 
+   if (args->cpu_type == CPU_65C02_ARLET) {
+      // Arlet's 65C02 is really an NMOS 6502 with extra instructions
+      // The NMOS instructions have NMOS cycle counts
+      instr_table[0x6c].cycles = 5; // JMP (ind)
+      instr_table[0x7c].cycles = 5; // JMP (ind, X)
+      instr_table[0x1e].cycles = 7; // ASL absx
+      instr_table[0x3e].cycles = 7; // ROL absx
+      instr_table[0x5e].cycles = 7; // LSR absx
+      instr_table[0x7e].cycles = 7; // ROR absx
+      // CMOS instructions
+      instr_table[0x5c].cycles = 4; // NOP (should take 8 cycles)
+      for (int i = 0x00; i <= 0xf0; i+= 0x10) {
+         instr_table[i + 0x03].cycles = 2; // NOP (should take 1 cycle)
+         instr_table[i + 0x0B].cycles = 2; // NOP (should take 1 cycle)
+      }
+      for (int i = 0x00; i <= 0xff; i++) {
+         instr_table[i].decimalcorrect = 0; // Not cycle penalty for decimal correct
+         if (instr_table[i].mode == IND) {
+            instr_table[i].cycles = 6; // indirect addressing should take 5 cycles
+         }
+      }
+   }
+
    // If not supporting the Rockwell C02 extensions, tweak the cycle countes
-   if (args->cpu_type == CPU_65C02) {
-      // x7 (RMB/SMB): 5 cycles -> 1 cycles
-      // xF (BBR/BBS): 5 cycles -> 1 cycles
+   if (args->cpu_type == CPU_65C02 || args->cpu_type == CPU_65C02_ARLET) {
+      // x7 (RMB/SMB): 5 cycles -> 1 cycles (2 on Arlet's core)
+      // xF (BBR/BBS): 5 cycles -> 1 cycles (2 on Arlet's core)
+      int cycles = args->cpu_type == CPU_65C02_ARLET ? 2 : 1;
       for (int i = 0x07; i <= 0xff; i+= 0x08) {
          instr_table[i].mnemonic = ILLEGAL;
          instr_table[i].mode     = IMP;
-         instr_table[i].cycles   = 1;
+         instr_table[i].cycles   = cycles;
          instr_table[i].optype   = READOP;
          instr_table[i].len      = 1;
       }
@@ -614,7 +656,7 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
       // And we are done
       return;
    } else if (opcode == 0x20) {
-      instruction->pc = (((sample_q[3].data << 8) + sample_q[4].data) - 2) & 0xffff;
+      instruction->pc = (((sample_q[jsr_pch].data << 8) + sample_q[jsr_pcl].data) - 2) & 0xffff;
    } else {
       instruction->pc = PC;
    }
@@ -622,6 +664,11 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
    // Memory Modelling: Pointer indirection
    switch (instr->mode) {
    case IND:
+      //        C02: <opcode> <op1> <addrlo> <addrhi> <operand>
+      // Arlet  C02: <opcode> <op1> <addrlo> <addrlo> <addrhi> <operand>
+      memory_read(sample_q[arlet ? 3 : 2].data,   op1             , MEM_POINTER);
+      memory_read(sample_q[arlet ? 4 : 3].data, ((op1 + 1) & 0xff), MEM_POINTER);
+      break;
    case INDY:
       // <opcode> <op1> <addrlo> <addrhi> [ <page crossing>] <operand>
       memory_read(sample_q[2].data,   op1             , MEM_POINTER);
@@ -674,7 +721,7 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
       } else if (opcode == 0x20) {
          // JSR: the operand is the data pushed to the stack (PCH, PCL)
          // <opcode> <op1> <read dummy> <write pch> <write pcl> <op2>
-         operand = (sample_q[3].data << 8) + sample_q[4].data;
+         operand = (sample_q[jsr_pch].data << 8) + sample_q[jsr_pcl].data;
       } else if (opcode == 0x40) {
          // RTI: the operand is the data pulled from the stack (P, PCL, PCH)
          // <opcode> <op1> <read dummy> <read p> <read pcl> <read pch>
@@ -731,7 +778,7 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
          break;
       case IND:
          // <opcpde> <op1> <addrlo> <addrhi> <operand> [ <extra cycle in dec mode> ]
-         ea = (sample_q[3].data << 8) + sample_q[2].data;
+         ea = (sample_q[arlet ? 4 : 3].data << 8) + sample_q[arlet ? 3 : 2].data;
          break;
       case ABS:
          ea = op2 << 8 | op1;
@@ -979,6 +1026,10 @@ static int op_ADC(operand_t operand, ea_t ea) {
          // On 65C02 ADC, only the NZ flags are different to the 6502
          if (c02) {
             set_NZ(A);
+         }
+         // Arlet's core doesn't define the behaviour of the overflow flag in decimal mode
+         if (arlet) {
+            V = -1;
          }
       } else {
          // Normal mode ADC
@@ -1491,6 +1542,10 @@ static int op_SBC(operand_t operand, ea_t ea) {
                ah &= 0xF;
             }
             A = (al & 0xF) | ((ah & 0xF) << 4);
+         }
+         // Arlet's core doesn't define the behaviour of the overflow flag in decimal mode
+         if (arlet) {
+            V = -1;
          }
       } else {
          // Normal mode SBC

@@ -52,6 +52,7 @@ static char disbuf[256];
 static cpu_emulator_t *em;
 
 static int c816;
+static int arlet;
 
 // This is a global, so it's visible to the emulator functions
 arguments_t arguments;
@@ -190,6 +191,8 @@ static cpu_name_t cpu_names[] = {
    {"SY6502",     CPU_6502},
    {"NMOS",       CPU_6502},
    {"02",         CPU_6502},
+   // 6502_ARLET
+   {"ARLET",      CPU_6502_ARLET},
    // 65C02
    {"65C02",      CPU_65C02},
    {"W65C02",     CPU_65C02},
@@ -198,6 +201,8 @@ static cpu_name_t cpu_names[] = {
    // 65C02_ROCKWELL
    {"R65C02",     CPU_65C02_ROCKWELL},
    {"ROCKWELL",   CPU_65C02_ROCKWELL},
+   // 65C02_ARLET
+   {"ARLETC02",   CPU_65C02_ARLET},
    // 65C816
    {"65816",      CPU_65C816},
    {"65C816",     CPU_65C816},
@@ -653,6 +658,47 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
    int intr_seen = em->match_interrupt(sample_q, num_samples);
 
    int num_cycles;
+
+   // This is a rather ugly hack to cope with a decode failure on Arlet's core.
+   //
+   if (arlet) {
+      int op = sample_q->data;
+      if (op == 0x08 || op == 0x48 || ((op == 0x5A || op == 0xDA) && (arguments.cpu_type == CPU_65C02_ARLET))) {
+         // PHP, PHA, PHX, PHY
+         //
+         //    Normal 6502   Arlet
+         // 0: 48 R SYNC     48 R SYNC <<<<< Push instruction
+         // 1: XX R          XX R
+         // 2: AA W          YY R
+         // 3: XX R SYNC     AA W SYNC <<<<< Next instruction
+         // 4: YY R          YY R
+         //
+         // Reorder the samples to make it look conventional:
+         //   3->2
+         //   1->3
+         // But preserve the original type (sync) value, as this is correct
+         sample_q[2].data = sample_q[3].data;
+         sample_q[2].rnw  = sample_q[3].rnw;
+         sample_q[3].data = sample_q[1].data;
+         sample_q[3].rnw  = sample_q[1].rnw;
+      }
+      if (op == 0x28 || op == 0x68 || ((op == 0x7A || op == 0xFA) && (arguments.cpu_type == CPU_65C02_ARLET))) {
+         // PLP, PLA, PLX, PLY
+         //
+         //    Normal 6502   Arlet
+         // 0: 68 R SYNC     68 R SYNC <<<<< Pull instruction
+         // 1: XX R          XX R
+         // 2: ?? R          YY R
+         // 3: AA R          AA R
+         // 4: XX R SYNC     YY R SYNC <<<<< Next instruction
+         // 5: YY R          YY R
+         //
+         // Reorder the samples to make it look conventional
+         //    1->4
+         // But preserve the original type (sync) value, as this is correct
+         sample_q[4].data = sample_q[1].data;
+      }
+   }
 
    if (rst_seen > 0) {
       num_cycles = rst_seen;
@@ -1419,6 +1465,8 @@ int main(int argc, char *argv[]) {
       c816 = 0;
       em = &em_6502;
    }
+
+   arlet = (arguments.cpu_type == CPU_6502_ARLET || arguments.cpu_type == CPU_65C02_ARLET);
 
    em->init(&arguments);
 
