@@ -255,7 +255,7 @@ static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruc
    PC = vector;
 }
 
-static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
+static int get_num_cycles(sample_t *sample_q, int intr_seen) {
 
    static int mhz1_phase = 1;
 
@@ -440,13 +440,29 @@ static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
    return cycle_count;
 }
 
-static int count_cycles_with_sync(sample_t *sample_q) {
+static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
+   int num_cycles = get_num_cycles(sample_q, intr_seen);
+   if (num_cycles >= 0) {
+      return num_cycles;
+   }
+   printf ("cycle prediction unknown\n");
+   return 1;
+}
+
+static int count_cycles_with_sync(sample_t *sample_q, int intr_seen) {
    if (sample_q[0].type == OPCODE) {
       for (int i = 1; i < DEPTH; i++) {
          if (sample_q[i].type == LAST) {
             return 0;
          }
          if (sample_q[i].type == OPCODE) {
+            // Validate the num_cycles passed in
+            int expected = get_num_cycles(sample_q, intr_seen);
+            if (expected >= 0) {
+               if (i != expected) {
+                  printf ("cycle prediction fail: expected %d actual %d\n", expected, i);
+               }
+            }
             return i;
          }
       }
@@ -588,7 +604,7 @@ static int em_6502_count_cycles(sample_t *sample_q, int intr_seen) {
    if (sample_q[0].type == UNKNOWN) {
       return count_cycles_without_sync(sample_q, intr_seen);
    } else {
-      return count_cycles_with_sync(sample_q);
+      return count_cycles_with_sync(sample_q, intr_seen);
    }
 }
 
