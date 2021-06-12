@@ -978,6 +978,14 @@ void queue_sample(sample_t *sample) {
    static sample_t sample_q[DEPTH];
    static int index = 0;
 
+   // This helped when clock noise affected Arlet's core
+   // (a better fix was to add 100pF cap to the clock)
+   //
+   // if (index > 0 && sample_q[index - 1].type == OPCODE && sample->type == OPCODE) {
+   //    printf("Skipping duplicate SYNC\n");
+   //    return;
+   // }
+
    sample_q[index++] = *sample;
 
    if (sample->type == LAST) {
