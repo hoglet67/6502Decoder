@@ -460,7 +460,7 @@ static int count_cycles_with_sync(sample_t *sample_q, int intr_seen) {
             int expected = get_num_cycles(sample_q, intr_seen);
             if (expected >= 0) {
                if (i != expected) {
-                  printf ("cycle prediction fail: expected %d actual %d\n", expected, i);
+                  printf ("opcode %02x: cycle prediction fail: expected %d actual %d\n", sample_q[0].data, expected, i);
                }
             }
             return i;
