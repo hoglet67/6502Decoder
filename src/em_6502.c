@@ -79,6 +79,7 @@ static const char default_state[] = "A=?? X=?? Y=?? SP=?? N=? V=? D=? I=? Z=? C=
 
 static int rockwell     = 0;
 static int arlet        = 0;
+static int aland        = 0;
 static int c02          = 0;
 static int bbctube      = 0;
 static int master_nordy = 0;
@@ -290,7 +291,7 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
    if ((((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype != WRITEOP)) || (arlet && instr->mode == IND1X)) {
       // 6502:  Need to exclude ASL/ROL/LSR/ROR/DEC/INC, which are 7 cycles regardless
       // 65C02: Need to exclude DEC/INC, which are 7 cycles regardless
-      if ((opcode != 0xDE) && (opcode != 0xFE) && ((c02 && !arlet) || ((opcode != 0x1E) && (opcode != 0x3E) && (opcode != 0x5E) && (opcode != 0x7E)))) {
+      if ((opcode != 0xDE) && (opcode != 0xFE) && ((c02 && !arlet && !aland) || ((opcode != 0x1E) && (opcode != 0x3E) && (opcode != 0x5E) && (opcode != 0x7E)))) {
          int index = (instr->mode == ABSY) ? Y : X;
          if (index >= 0) {
             int base = op1 + (op2 << 8);
@@ -498,6 +499,11 @@ static void em_6502_init(arguments_t *args) {
       jsr_pcl = 3;
       instr_table = instr_table_65c02;
       break;
+   case CPU_65C02_ALAND:
+      aland = 1;
+      c02 = 1;
+      instr_table = instr_table_65c02;
+      break;
    case CPU_65C02:
       c02 = 1;
       instr_table = instr_table_65c02;
@@ -539,8 +545,25 @@ static void em_6502_init(arguments_t *args) {
       }
    }
 
+   if (args->cpu_type == CPU_65C02_ALAND) {
+      // Alan D's 65C02 is mostly cycle accurate, with a few exceptions
+      instr_table[0x40].cycles = 7; // RTI
+      instr_table[0x1e].cycles = 7; // ASL absx
+      instr_table[0x3e].cycles = 7; // ROL absx
+      instr_table[0x5e].cycles = 7; // LSR absx
+      instr_table[0x7e].cycles = 7; // ROR absx
+      instr_table[0x44].cycles = 2; // NOP (should take 3 cycles)
+      instr_table[0x54].cycles = 2; // NOP (should take 4 cycles)
+      instr_table[0x5c].cycles = 4; // NOP (should take 8 cycles)
+      instr_table[0xd4].cycles = 2; // NOP (should take 4 cycles)
+      instr_table[0xf4].cycles = 2; // NOP (should take 4 cycles)
+      for (int i = 0x00; i <= 0xff; i++) {
+         instr_table[i].decimalcorrect = 0; // Not cycle penalty for decimal correct
+      }
+   }
+
    // If not supporting the Rockwell C02 extensions, tweak the cycle countes
-   if (args->cpu_type == CPU_65C02 || args->cpu_type == CPU_65C02_ARLET) {
+   if (args->cpu_type == CPU_65C02 || args->cpu_type == CPU_65C02_ARLET || args->cpu_type == CPU_65C02_ALAND) {
       // x7 (RMB/SMB): 5 cycles -> 1 cycles (2 on Arlet's core)
       // xF (BBR/BBS): 5 cycles -> 1 cycles (2 on Arlet's core)
       int cycles = args->cpu_type == CPU_65C02_ARLET ? 2 : 1;
@@ -740,8 +763,9 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
          operand = (sample_q[jsr_pch].data << 8) + sample_q[jsr_pcl].data;
       } else if (opcode == 0x40) {
          // RTI: the operand is the data pulled from the stack (P, PCL, PCH)
-         // <opcode> <op1> <read dummy> <read p> <read pcl> <read pch>
-         operand = (sample_q[5].data << 16) +  (sample_q[4].data << 8) + sample_q[3].data;
+         // C02:      <opcode> <op1> <read dummy> <read p>            <read pcl> <read pch>
+         // AlanDC02: <opcode> <op1> <read dummy> <read p> <read pcl> <read pcl> <read pch>
+         operand = (sample_q[num_cycles - 1].data << 16) +  (sample_q[num_cycles - 2].data << 8) + sample_q[3].data;
       } else if (opcode == 0x60) {
          // RTS: the operand is the data pulled from the stack (PCL, PCH)
          // <opcode> <op1> <read dummy> <read pcl> <read pch>

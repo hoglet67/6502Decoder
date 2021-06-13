@@ -17,6 +17,7 @@ typedef enum {
    CPU_65C02,
    CPU_65C02_ROCKWELL,
    CPU_65C02_ARLET,
+   CPU_65C02_ALAND,
    CPU_65C816
 } cpu_t;
 

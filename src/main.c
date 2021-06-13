@@ -203,6 +203,8 @@ static cpu_name_t cpu_names[] = {
    {"ROCKWELL",   CPU_65C02_ROCKWELL},
    // 65C02_ARLET
    {"ARLETC02",   CPU_65C02_ARLET},
+   // 65C02_ALAND
+   {"ALANDC02",   CPU_65C02_ALAND},
    // 65C816
    {"65816",      CPU_65C816},
    {"65C816",     CPU_65C816},
