@@ -1,0 +1,1 @@
+./decode6502.exe -c816 --emul=1 --ms=0 --xs=0 --phi2= --e= -ahsy </cygdrive/d/temp/temp.bin |less

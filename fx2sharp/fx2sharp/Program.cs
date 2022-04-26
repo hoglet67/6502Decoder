@@ -913,6 +913,7 @@ namespace fx2sharp
                 i = 0;
                 long ctr = 0;
                 int lenmin = p.Blocksize;
+                bool first = true;
                 while (!ct_token.IsCancellationRequested && (p.CaptureLimitBlocks == -1 || ctr < p.CaptureLimitBlocks))
                 {
                     bool skip = p.Discard != -1 && ctr < p.Discard;
@@ -929,11 +930,12 @@ namespace fx2sharp
                     fixed (byte* tmp0 = ovLaps[i])
                     {
                         OVERLAPPED* ovLapStatus = (OVERLAPPED*)tmp0;
-                        if (!p.Endpoint.WaitForXfer(ovLapStatus->hEvent, 500))
+                        if (!p.Endpoint.WaitForXfer(ovLapStatus->hEvent, (uint)(first?50000:500)))
                         {
                             p.Endpoint.Abort();
                             PInvoke.WaitForSingleObject(ovLapStatus->hEvent, CyConst.INFINITE);
                         }
+                        first = false;
                     }
 
                     if (p.Endpoint.FinishDataXfer(ref cmdBufs[i], ref xferBufs[i], ref len, ref ovLaps[i]))
