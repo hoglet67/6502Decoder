@@ -1,6 +1,7 @@
 *~
 #*
 decode6502
+matcher
 not_in_git/
 *.log
 *.bin
