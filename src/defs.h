@@ -7,7 +7,8 @@ typedef enum {
    MACHINE_DEFAULT,
    MACHINE_BEEB,
    MACHINE_MASTER,
-   MACHINE_ELK
+   MACHINE_ELK,
+   MACHINE_ATOM,
 } machine_t;
 
 typedef enum {

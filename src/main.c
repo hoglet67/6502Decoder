@@ -33,6 +33,7 @@ const char *machine_names[] = {
    "beeb",
    "master",
    "elk",
+   "atom",
    0
 };
 
@@ -1355,6 +1356,9 @@ int main(int argc, char *argv[]) {
          break;
       case MACHINE_ELK:
          arguments.vec_rst = 0xA9D8D2;
+         break;
+      case MACHINE_ATOM:
+         arguments.vec_rst = 0xA2FF3F;
          break;
       default:
          arguments.vec_rst = 0xFFFFFF;

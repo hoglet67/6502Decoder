@@ -310,6 +310,30 @@ static void init_elk(int logtube) {
 }
 
 // ==================================================
+// Atom Memory Handlers
+// ==================================================
+
+static void memory_read_atom(int data, int ea) {
+   if (ea < 0xA000) {
+      if (memory[ea] >= 0 && memory[ea] != data) {
+         log_memory_fail(ea,memory[ea], data);
+         failflag |= 1;
+      }
+   }
+   memory[ea] = data;
+}
+
+static int memory_write_atom(int data, int ea) {
+   memory[ea] = data;
+   return 0;
+}
+
+static void init_atom(int logtube) {
+   memory_read_fn  = memory_read_atom;
+   memory_write_fn = memory_write_atom;
+}
+
+// ==================================================
 // Default Memory Handlers
 // ==================================================
 
@@ -347,6 +371,9 @@ void memory_init(int size, machine_t machine, int logtube) {
       break;
    case MACHINE_ELK:
       init_elk(logtube);
+      break;
+   case MACHINE_ATOM:
+      init_atom(logtube);
       break;
    default:
       init_default(logtube);
