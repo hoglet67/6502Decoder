@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -1050,12 +1051,15 @@ namespace fx2sharp
                     }
                     else if (comp.Length == 2)
                     {
-                        if (!int.TryParse(comp[0], out vid) || !int.TryParse(comp[1], out pid))
+                        if (!int.TryParse(comp[0], System.Globalization.NumberStyles.HexNumber, CultureInfo.InvariantCulture, out vid) 
+                            || !int.TryParse(comp[1], System.Globalization.NumberStyles.HexNumber, CultureInfo.InvariantCulture, out pid))
                             throw new Exception();
                     }
                     else if (comp.Length == 3)
                     {
-                        if (!int.TryParse(comp[0], out vid) || !int.TryParse(comp[1], out pid) || !int.TryParse(comp[2], out n))
+                        if (!int.TryParse(comp[0], System.Globalization.NumberStyles.HexNumber, CultureInfo.InvariantCulture, out vid) 
+                            || !int.TryParse(comp[1], System.Globalization.NumberStyles.HexNumber, CultureInfo.InvariantCulture, out pid) 
+                            || !int.TryParse(comp[2], System.Globalization.NumberStyles.HexNumber, CultureInfo.InvariantCulture, out n))
                             throw new Exception();
                     }
                     else
