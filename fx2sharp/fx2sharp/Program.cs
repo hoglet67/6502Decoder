@@ -259,7 +259,7 @@ namespace fx2sharp
         + "               to enable output to IFCLK pin, 'i' to invert IFCLK\n"
         + "  -cko=[12|24|48][o|z][i] specify 8051 frequency in MHz (default: 48) and\n"
         + "               CLKOUT pin: output 'o' (default), tristate 'z', invert 'i'\n"
-        + "  -discard=NN  Number of bytes to discard when reading from fifos (default 16k)\n"
+        + "  -discard=NN  Number of bytes to discard when reading from fifos (default 256k)\n"
         + "               ; suffix k,M,G for mult. with 2^10,20,30\n"
         + "\n"
         + "input/output filename can be specified as -- for stdin/stdout"
@@ -884,6 +884,7 @@ namespace fx2sharp
             byte[][] cmdBufs = new byte[p.Uiblen][];
             byte[][] xferBufs = new byte[p.Uiblen][];
             byte[][] ovLaps = new byte[p.Uiblen][];
+            int[] lens = new int[p.Uiblen];
 
             try
             {
@@ -906,9 +907,11 @@ namespace fx2sharp
 
                 // Pre-load the queue with requests
 
-                int len = p.Blocksize;
                 for (i = 0; i < p.Uiblen; i++)
-                    p.Endpoint.BeginDataXfer(ref cmdBufs[i], ref xferBufs[i], ref len, ref ovLaps[i]);
+                {
+                    lens[i] = p.Blocksize;
+                    p.Endpoint.BeginDataXfer(ref cmdBufs[i], ref xferBufs[i], ref lens[i], ref ovLaps[i]);
+                }
 
 
                 i = 0;
@@ -919,15 +922,7 @@ namespace fx2sharp
                 {
                     bool skip = p.Discard != -1 && ctr < p.Discard;
 
-                    bufandlen ret = null;
-                    if (!skip)
-                    {
-                        if (!p.BufferPool.TryTake(out ret))
-                        {
-                            throw new FX2SharpException("Out of buffers", E_BUFFERS_EXHAUSTED);
-                        }
-                    }
-
+                
                     fixed (byte* tmp0 = ovLaps[i])
                     {
                         OVERLAPPED* ovLapStatus = (OVERLAPPED*)tmp0;
@@ -935,22 +930,32 @@ namespace fx2sharp
                         {
                             p.Endpoint.Abort();
                             PInvoke.WaitForSingleObject(ovLapStatus->hEvent, CyConst.INFINITE);
+                            skip = true;
                         }
                         first = false;
                     }
 
-                    if (p.Endpoint.FinishDataXfer(ref cmdBufs[i], ref xferBufs[i], ref len, ref ovLaps[i]))
+                    if (p.Endpoint.FinishDataXfer(ref cmdBufs[i], ref xferBufs[i], ref lens[i], ref ovLaps[i]))
                     {
-                        if (len != 0)
+                        if (lens[i] != 0)
                         {
                             if (!skip)
                             {
-                    
-                                ret.len = len;
-                                Array.Copy(xferBufs[i], ret.buf, len);
+                                bufandlen ret = null;
+                                if (!skip)
+                                {
+                                    if (!p.BufferPool.TryTake(out ret))
+                                    {
+                                        throw new FX2SharpException("Out of buffers", E_BUFFERS_EXHAUSTED);
+                                    }
+                                }
+
+
+                                ret.len = lens[i];
+                                Array.Copy(xferBufs[i], ret.buf, lens[i]);
 
                                 p.FilledBuffers.Add(ret);
-                                p.Transfered += len;
+                                p.Transfered += lens[i];
                             }
                             ctr++;
                         }
@@ -963,9 +968,9 @@ namespace fx2sharp
                     else
                         throw new FX2SharpException($"USB FAIL! {p.Endpoint.LastError}", E_ENDPOINT);
 
-                    len = p.Blocksize;
+                    lens[i] = p.Blocksize;
 
-                    p.Endpoint.BeginDataXfer(ref cmdBufs[i], ref xferBufs[i], ref len, ref ovLaps[i]);
+                    p.Endpoint.BeginDataXfer(ref cmdBufs[i], ref xferBufs[i], ref lens[i], ref ovLaps[i]);
                     
                     i = (i + 1) % p.Uiblen;                                                                          
                 }

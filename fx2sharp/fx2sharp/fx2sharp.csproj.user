@@ -7,6 +7,6 @@
     <StartArguments>-d=04B4:8613:0 --debug -n=1M d:\temp\temp.bin</StartArguments>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|AnyCPU'">
-    <StartArguments>-d=04B4:8613:0 -n=1M --debug d:\temp\temp.bin</StartArguments>
+    <StartArguments>-n=4M --debug d:\temp\temp.bin</StartArguments>
   </PropertyGroup>
 </Project>
