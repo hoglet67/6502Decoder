@@ -8,7 +8,7 @@
 #define MASK (SIZE-1)
 
 uint8_t buffer[SIZE];
-uint8_t pattern[] = { 0x4c, 0x83, 0x90 };
+uint8_t pattern[] = { 0xEA, 0xEA, 0xEA, 0xEA };
 
 int main(int argc, char *argv[]) {
 
@@ -28,7 +28,7 @@ int main(int argc, char *argv[]) {
          tmp = (tmp - 2) & MASK;
       }
       if (n == sizeof(pattern)) {
-         fprintf(stderr, "Matched pattern at %ld!!\n", i);
+         fprintf(stderr, "Matched pattern at %"PRIu64"!!\n", i);
          break;
       }
    }
