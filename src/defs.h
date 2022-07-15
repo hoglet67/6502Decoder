@@ -37,6 +37,7 @@ typedef enum {     // 6502 Sync    65815 VDA/VPA
 } sample_type_t;
 
 typedef struct {
+   uint32_t      sample_count;
    sample_type_t type;
    uint8_t       data;
    int8_t         rnw; // -1 indicates unknown
@@ -80,6 +81,7 @@ typedef struct {
    int show_state;
    int show_bbcfwa;
    int show_cycles;
+   int show_samplenums;
    int show_something;
    int bbctube;
    int undocumented;

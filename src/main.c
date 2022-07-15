@@ -156,6 +156,7 @@ enum {
    KEY_TRIGGER = 't',
    KEY_UNDOC = 'u',
    KEY_CYCLES = 'y',
+   KEY_SAMPLES = 'Y',
    KEY_VECRST = 1,
    KEY_BBCTUBE,
    KEY_MEM,
@@ -241,6 +242,7 @@ static struct argp_option options[] = {
    { "instruction",  KEY_INSTR,         0,                   0, "Show instruction disassembly",                      GROUP_OUTPUT},
    { "state",        KEY_STATE,         0,                   0, "Show register/flag state",                          GROUP_OUTPUT},
    { "cycles",      KEY_CYCLES,         0,                   0, "Show number of bus cycles",                         GROUP_OUTPUT},
+   { "samplenum",  KEY_SAMPLES,         0,                   0, "Show bus cycle numbers",                            GROUP_OUTPUT},
    { "bbcfwa",      KEY_BBCFWA,         0,                   0, "Show BBC floating-point work areas",                GROUP_OUTPUT},
    { "showromno",   KEY_SHOWROM,        0,                   0, "Show BBC rom no for address 8000..BFFF",            GROUP_OUTPUT},
 
@@ -450,6 +452,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       arguments->show_state = 0;
       arguments->show_bbcfwa = 0;
       arguments->show_cycles = 0;
+      arguments->show_samplenums = 0;
       break;
    case KEY_ADDR:
       arguments->show_address = 1;
@@ -471,6 +474,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       break;
    case KEY_CYCLES:
       arguments->show_cycles = 1;
+      break;
+   case KEY_SAMPLES:
+      arguments->show_samplenums = 1;
       break;
    case KEY_PROFILE:
       arguments->profile = 1;
@@ -518,10 +524,9 @@ static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
 
 
 static void dump_samples(sample_t *sample_q, int n) {
-      static int ctr = 0;
       for (int i = 0; i < n; i++) {
          sample_t *sample = sample_q + i;
-         printf("%8d %8x %d %02x ", ctr, ctr, i, sample->data);
+         printf("%08x %2d %02x ", sample->sample_count, i, sample->data);
          switch(sample->type) {
          case INTERNAL:
             putchar('I');
@@ -547,7 +552,6 @@ static void dump_samples(sample_t *sample_q, int n) {
          putchar(' ');
          putchar(sample->rst >= 0 ? '0' + sample->rst : '?');
          putchar('\n');
-         ctr++;
       }
 
 }
@@ -569,6 +573,17 @@ void write_hex4(char *buffer, int value) {
 }
 
 void write_hex6(char *buffer, int value) {
+   write_hex1(buffer++, (value >> 20) & 15);
+   write_hex1(buffer++, (value >> 16) & 15);
+   write_hex1(buffer++, (value >> 12) & 15);
+   write_hex1(buffer++, (value >> 8) & 15);
+   write_hex1(buffer++, (value >> 4) & 15);
+   write_hex1(buffer++, (value >> 0) & 15);
+}
+
+void write_hex8(char *buffer, int value) {
+   write_hex1(buffer++, (value >> 28) & 15);
+   write_hex1(buffer++, (value >> 24) & 15);
    write_hex1(buffer++, (value >> 20) & 15);
    write_hex1(buffer++, (value >> 16) & 15);
    write_hex1(buffer++, (value >> 12) & 15);
@@ -789,6 +804,14 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
 
    if ((fail | arguments.show_something) && triggered && !skipping_interrupted) {
       int numchars = 0;
+      // Show sample count
+      if (arguments.show_samplenums) {
+         write_hex8(bp, sample_q->sample_count);
+         bp += 8;
+         *bp++ = ' ';
+         *bp++ = ':';
+         *bp++ = ' ';
+      }
       // Show address
       if (fail || arguments.show_address) {
          if (c816) {
@@ -1072,7 +1095,9 @@ void decode(FILE *stream) {
       while ((num = fread(buffer8, sizeof(uint8_t), BUFSIZE, stream)) > 0) {
          uint8_t *sampleptr = &buffer8[0];
          while (num-- > 0) {
+            sample_count++;
             s.data = *sampleptr++;
+            s.sample_count = sample_count;
             queue_sample(&s);
          }
       }
@@ -1208,6 +1233,7 @@ void decode(FILE *stream) {
                continue;
 
             // Build the sample
+            s.sample_count = sample_count;
             if (c816) {
                if (idx_vda < 0 || idx_vpa < 0) {
                   s.type = UNKNOWN;
@@ -1276,6 +1302,7 @@ int main(int argc, char *argv[]) {
    arguments.show_state       = 0;
    arguments.show_bbcfwa      = 0;
    arguments.show_cycles      = 0;
+   arguments.show_samplenums  = 0;
 
    // Signal definition options
    arguments.idx_data         = UNSPECIFIED;
@@ -1305,7 +1332,7 @@ int main(int argc, char *argv[]) {
       triggered = 1;
    }
 
-   arguments.show_something = arguments.show_address | arguments.show_hex | arguments.show_instruction | arguments.show_state | arguments.show_bbcfwa | arguments.show_cycles;
+   arguments.show_something = arguments.show_samplenums | arguments.show_address | arguments.show_hex | arguments.show_instruction | arguments.show_state | arguments.show_bbcfwa | arguments.show_cycles;
 
    // Normally the data file should be 16 bit samples. In byte mode
    // the data file is 8 bit samples, and all the control signals are
