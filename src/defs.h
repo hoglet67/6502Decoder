@@ -95,6 +95,8 @@ typedef struct {
    int byte;
    int debug;
    int skip;
+   int skew_rd;
+   int skew_wr;
    int mem_model;
    int profile;
    int trigger_start;

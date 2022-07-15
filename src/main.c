@@ -11,6 +11,12 @@
 #include "memory.h"
 #include "profiler.h"
 
+// Small skew buffer to allow the data bus samples to be taken early or late
+
+#define SKEW_BUFFER_SIZE  32 // Must be a power of 2
+
+#define MAX_SKEW_VALUE ((SKEW_BUFFER_SIZE / 2) - 1)
+
 // Value use to indicate a pin (or register) has not been assigned by
 // the user, so should take the default value.
 #define UNSPECIFIED -2
@@ -19,8 +25,6 @@
 // this means unconnected. For a register this means it will default
 // to a value of undefined (?).
 #define UNDEFINED -1
-
-int sample_count = 0;
 
 #define BUFSIZE 8192
 
@@ -162,6 +166,9 @@ enum {
    KEY_MEM,
    KEY_SP,
    KEY_SKIP,
+   KEY_SKEW,
+   KEY_SKEW_RD,
+   KEY_SKEW_WR,
    KEY_DATA,
    KEY_RNW,
    KEY_RDY,
@@ -233,6 +240,9 @@ static struct argp_option options[] = {
    { "bbctube",    KEY_BBCTUBE,         0,                   0, "BBC tube protocol decoding",                        GROUP_GENERAL},
    { "mem",            KEY_MEM,     "HEX", OPTION_ARG_OPTIONAL, "Memory modelling (see above)",                      GROUP_GENERAL},
    { "skip",          KEY_SKIP,     "HEX", OPTION_ARG_OPTIONAL, "Skip the first n samples",                          GROUP_GENERAL},
+   { "skew",          KEY_SKEW,    "SKEW", OPTION_ARG_OPTIONAL, "Skew the data bus by +/- n samples",                GROUP_GENERAL},
+   { "skew_rd",    KEY_SKEW_RD,    "SKEW", OPTION_ARG_OPTIONAL, "Skew the data bus by +/- n samples for read data",  GROUP_GENERAL},
+   { "skew_wr",    KEY_SKEW_WR,    "SKEW", OPTION_ARG_OPTIONAL, "Skew the data bus by +/- n samples for write data", GROUP_GENERAL},
 
    { 0, 0, 0, 0, "Output options:", GROUP_OUTPUT},
 
@@ -274,6 +284,17 @@ static struct argp_option options[] = {
    { "sp",              KEY_SP,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register",       GROUP_65816},
    { 0 }
 };
+
+static int parse_skew(char *arg, struct argp_state *state) {
+   int skew = 0;
+   if (arg && strlen(arg) > 0) {
+      skew = strtol(arg, (char **)NULL, 10);
+      if (skew < -MAX_SKEW_VALUE || skew > MAX_SKEW_VALUE) {
+         argp_error(state, "specified skew exceeds skew buffer size");
+      }
+   }
+   return skew;
+}
 
 static error_t parse_opt(int key, char *arg, struct argp_state *state) {
    int i;
@@ -407,6 +428,16 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       } else {
          arguments->skip = 0;
       }
+      break;
+   case KEY_SKEW:
+      arguments->skew_rd = parse_skew(arg, state);
+      arguments->skew_wr = arguments->skew_rd;
+      break;
+   case KEY_SKEW_RD:
+      arguments->skew_rd = parse_skew(arg, state);
+      break;
+   case KEY_SKEW_WR:
+      arguments->skew_wr = parse_skew(arg, state);
       break;
    case KEY_MEM:
       if (arg && strlen(arg) > 0) {
@@ -1042,6 +1073,42 @@ void queue_sample(sample_t *sample) {
 // Input file processing and bus cycle extraction
 // ====================================================================
 
+static int min(int a, int b) {
+   return (a < b) ? a : b;
+}
+
+static int max(int a, int b) {
+   return (a > b) ? a : b;
+}
+
+static inline sample_type_t build_sample_type(uint16_t sample, int idx_vpa, int idx_vda, int idx_sync) {
+   if (c816) {
+      if (idx_vpa < 0 || idx_vda < 0) {
+         return UNKNOWN;
+      } if ((sample >> idx_vpa) & 1) {
+         if ((sample >> idx_vda) & 1) {
+            return OPCODE;
+         } else {
+            return PROGRAM;
+         }
+      } else {
+         if ((sample >> idx_vda) & 1) {
+            return DATA;
+         } else {
+            return INTERNAL;
+         }
+      }
+   } else {
+      if (idx_sync < 0) {
+         return UNKNOWN;
+      } else if ((sample >> idx_sync) & 1) {
+         return OPCODE;
+      } else {
+         return DATA;
+      }
+   }
+}
+
 void decode(FILE *stream) {
 
    // Pin mappings into the 16 bit words
@@ -1055,27 +1122,7 @@ void decode(FILE *stream) {
    int idx_vpa   = arguments.idx_vpa;
    int idx_e     = arguments.idx_e;
 
-   // Default Pin values
-   int bus_data  =  0;
-   int pin_rnw   =  1;
-   int pin_sync  =  0;
-   int pin_rdy   =  1;
-   int pin_phi2  =  0;
-   int pin_rst   =  1;
-   int pin_vda   =  0;
-   int pin_vpa   =  0;
-   int pin_e     =  0;
-
-   int num;
-
-   // The previous sample of the 16-bit capture (async sampling only)
-   uint16_t sample       = -1;
-   uint16_t last_sample  = -1;
-   uint16_t last2_sample = -1;
-
-   // The previous sample of phi2 (async sampling only)
-   int last_phi2 = -1;
-
+   // The structured bus sample we will pass on to the next level of processing
    sample_t s;
 
    // Skip the start of the file, if required
@@ -1083,187 +1130,150 @@ void decode(FILE *stream) {
       fseek(stream, arguments.skip * (arguments.byte ? 1 : 2), SEEK_SET);
    }
 
+   // Common to all sampling modes
+   s.type = UNKNOWN;
+   s.sample_count = 1;
+   s.rnw  = -1;
+   s.rst  = -1;
+   s.e    = -1;
+
    if (arguments.byte) {
-      s.rnw = -1;
-      s.rst = -1;
-      s.type = UNKNOWN;
+
+      // ------------------------------------------------------------
+      // Synchronous byte sampling mode
+      // ------------------------------------------------------------
 
       // In byte mode we have only data bus samples, nothing else so we must
-      // use the sync-less decoder. The values of pin_rnw and pin_rst are set
-      // to 1, but the decoder should never actually use them.
+      // use the sync-less decoder. All the control signals should be marked
+      // as disconnected, by being set to -1.
 
+      // Read the capture file, and queue structured sampled for the decoder
+      int num;
       while ((num = fread(buffer8, sizeof(uint8_t), BUFSIZE, stream)) > 0) {
          uint8_t *sampleptr = &buffer8[0];
          while (num-- > 0) {
-            sample_count++;
             s.data = *sampleptr++;
-            s.sample_count = sample_count;
             queue_sample(&s);
+            s.sample_count++;
+         }
+      }
+
+   } else if (idx_phi2 < 0 ) {
+
+      // ------------------------------------------------------------
+      // Synchronous word sampling mode
+      // ------------------------------------------------------------
+
+      // In word sampling mode we have data bus samples, plus
+      // optionally rnw, sync, rdy, phy2 and rst.
+
+      // In synchronous word sampling mode clke is not connected, and
+      // it's assumed that each sample represents a seperate bus
+      // cycle.
+
+      // Read the capture file, and queue structured sampled for the decoder
+      int num;
+      while ((num = fread(buffer, sizeof(uint16_t), BUFSIZE, stream)) > 0) {
+         uint16_t *sampleptr = &buffer[0];
+         while (num-- > 0) {
+            uint16_t sample = *sampleptr++;
+            // Drop samples where RDY=0
+            if (idx_rdy < 0 || ((sample >> idx_rdy) & 1)) {
+               s.type = build_sample_type(sample, idx_vpa, idx_vda, idx_sync);
+               if (idx_rnw >= 0) {
+                  s.rnw = (sample >> idx_rnw ) & 1;
+               }
+               if (idx_rst >= 0) {
+                  s.rst = (sample >> idx_rst) & 1;
+               }
+               if (idx_e >= 0) {
+                  s.e = (sample >> idx_e) & 1;
+               }
+               s.data = (sample >> idx_data) & 255;
+               queue_sample(&s);
+            }
+            s.sample_count++;
          }
       }
 
    } else {
 
-      // In word mode (the default) we have data bus samples, plus optionally
-      // rnw, sync, rdy, phy2 and rst.
+      // ------------------------------------------------------------
+      // Asynchronous word sampling mode
+      // ------------------------------------------------------------
 
+      // In word sampling mode we have data bus samples, plus
+      // optionally rnw, sync, rdy, phy2 and rst.
+
+      // In asynchronous word sampling mode clke is connected, and
+      // the capture file contans multple samples per bus cycle.
+
+      // The previous value of clke, to detect the rising/falling edge
+      int last_phi2 = -1;
+
+      // A small circular buffer for skewing the sampling of the data bus
+      uint16_t skew_buffer  [SKEW_BUFFER_SIZE];
+
+      // Minimize the amount of buffering to avoid unnecessary garbage
+      int min_skew = min(arguments.skew_rd, arguments.skew_wr);
+      int max_skew = max(arguments.skew_rd, arguments.skew_wr);
+
+      int tail        = max(0, max_skew);
+      int head        = 0;
+      int rddata_head = arguments.skew_rd;
+      int wrdata_head = arguments.skew_wr;
+
+      // If any of the skews are negative, then increase all by this amount so they are all positive
+      if (min_skew < 0) {
+         tail        = (       tail - min_skew) & (SKEW_BUFFER_SIZE - 1);
+         head        = (       head - min_skew) & (SKEW_BUFFER_SIZE - 1);
+         rddata_head = (rddata_head - min_skew) & (SKEW_BUFFER_SIZE - 1);
+         wrdata_head = (wrdata_head - min_skew) & (SKEW_BUFFER_SIZE - 1);
+      }
+
+      // Clear the buffer, so the first few samples are ignored
+      for (int i = 0; i < SKEW_BUFFER_SIZE; i++) {
+         skew_buffer[i] = 0;
+      }
+
+      // Read the capture file, and queue structured sampled for the decoder
+      int num;
       while ((num = fread(buffer, sizeof(uint16_t), BUFSIZE, stream)) > 0) {
-
          uint16_t *sampleptr = &buffer[0];
-
          while (num-- > 0) {
-
-            // The current 16-bit capture sample, and the previous two
-            last2_sample = last_sample;
-            last_sample  = sample;
-            sample       = *sampleptr++;
-
-            // TODO: fix the hard coded values!!!
-            //if (arguments.debug & 4) {
-            //   printf("%d %02x %x %x %x %x\n", sample_count, sample&255, (sample >> 8)&1,  (sample >> 9)&1,  (sample >> 10)&1,  (sample >> 11)&1  );
-            //}
-            sample_count++;
-
-            // Phi2 is optional
-            // - if asynchronous capture is used, it must be connected
-            // - if synchronous capture is used, it must not connected
-            if (idx_phi2 < 0) {
-
-               // If Phi2 is not present, use the pins directly
-               bus_data = (sample >> idx_data) & 255;
-               if (idx_rnw >= 0) {
-                  pin_rnw = (sample >> idx_rnw ) & 1;
-               }
-               if (c816) {
-                  if (idx_vda >= 0) {
-                     pin_vda = (sample >> idx_vda) & 1;
-                  }
-                  if (idx_vpa >= 0) {
-                     pin_vpa = (sample >> idx_vpa) & 1;
-                  }
-                  if (idx_e >= 0) {
-                     pin_e = (sample >> idx_e) & 1;
-                  }
-               } else {
-                  if (idx_sync >= 0) {
-                     pin_sync = (sample >> idx_sync) & 1;
-                  }
-               }
-               if (idx_rdy >= 0) {
-                  pin_rdy = (sample >> idx_rdy) & 1;
-               }
-               if (idx_rst >= 0) {
-                  pin_rst = (sample >> idx_rst) & 1;
-               }
-
-            } else {
-
-               // If Phi2 is present, look for an edge
-               pin_phi2 = (sample >> idx_phi2) & 1;
-               if (pin_phi2 == last_phi2) {
-                  // continue for more samples
-                  continue;
-               }
+            skew_buffer[tail] = *sampleptr++;
+            uint16_t sample   = skew_buffer[head];
+            // Only act on edges of phi2
+            int pin_phi2 = (sample >> idx_phi2) & 1;
+            if (pin_phi2 != last_phi2) {
                last_phi2 = pin_phi2;
-
                if (pin_phi2) {
-                  // sample control signals just after rising edge of Phi2
-                  if (!c816) {
-                     if (idx_rnw >= 0) {
-                        pin_rnw = (sample >> idx_rnw ) & 1;
-                     }
-                     if (idx_sync >= 0) {
-                        pin_sync = (sample >> idx_sync) & 1;
-                     }
-                     if (idx_rst >= 0) {
-                        pin_rst = (sample >> idx_rst) & 1;
-                     }
+                  // Sample control signals after rising edge of PHI2
+                  // Note: this is a change for the 65816, but should be fine timing wise
+                  s.type = build_sample_type(sample, idx_vpa, idx_vda, idx_sync);
+                  if (idx_rnw >= 0) {
+                     s.rnw = (sample >> idx_rnw ) & 1;
                   }
-                  // continue for more samples
-                  continue;
+                  if (idx_rst >= 0) {
+                     s.rst = (sample >> idx_rst) & 1;
+                     }
+                  if (idx_e >= 0) {
+                     s.e = (sample >> idx_e) & 1;
+                  }
                } else {
-                  if (idx_rdy >= 0) {
-                     pin_rdy = (last_sample >> idx_rdy) & 1;
-                  }
-                  if (c816) {
-                     if (idx_rnw >= 0) {
-                        pin_rnw = (last_sample >> idx_rnw ) & 1;
-                     }
-                     if (idx_vda >= 0) {
-                        pin_vda = (last_sample >> idx_vda) & 1;
-                     }
-                     if (idx_vpa >= 0) {
-                        pin_vpa = (last_sample >> idx_vpa) & 1;
-                     }
-                     if (idx_e >= 0) {
-                        pin_e = (last_sample >> idx_e) & 1;
-                     }
-                     if (idx_rst >= 0) {
-                        pin_rst = (last_sample >> idx_rst) & 1;
-                     }
-                     // sample data just before falling edge of Phi2
-                     bus_data = last_sample & 255;
-                  } else if (arguments.machine == MACHINE_ELK) {
-                     // sample data just before falling edge of Phi2
-                     bus_data = last_sample & 255;
-                  } else if (arguments.machine == MACHINE_MASTER) {
-                     // Data bus sampling for the Master
-                     if (idx_rnw < 0 || pin_rnw) {
-                        // sample read data just before falling edge of Phi2
-                        bus_data = last_sample & 255;
-                     } else {
-                        // sample write data one cycle earlier
-                        bus_data = last2_sample & 255;
-                     }
-                  } else {
-                     // Data bus sampling for the Beeb, one cycle later
-                     if (idx_rnw < 0 || pin_rnw) {
-                        // sample read data just after falling edge of Phi2
-                        bus_data = sample & 255;
-                     } else {
-                        // sample write data one cycle earlier
-                        bus_data = last_sample & 255;
-                     }
+                  if (idx_rdy < 0 || ((sample >> idx_rdy) & 1)) {
+                     // Sample the data skewed (--skew=) relative to the falling edge of PHI2
+                     s.data = (skew_buffer[s.rnw == 0 ? wrdata_head : rddata_head] >> idx_data) & 255;
+                     queue_sample(&s);
                   }
                }
             }
-
-            // Ignore the cycle if RDY is low
-            if (pin_rdy == 0)
-               continue;
-
-            // Build the sample
-            s.sample_count = sample_count;
-            if (c816) {
-               if (idx_vda < 0 || idx_vpa < 0) {
-                  s.type = UNKNOWN;
-               } else {
-                  s.type = pin_vpa ? (pin_vda ? OPCODE : PROGRAM) : (pin_vda ? DATA : INTERNAL);
-               }
-            } else {
-               if (idx_sync < 0) {
-                  s.type = UNKNOWN;
-               } else {
-                  s.type = pin_sync ? OPCODE : DATA;
-               }
-            }
-            s.data = bus_data;
-            if (idx_rnw < 0) {
-               s.rnw = -1;
-            } else {
-               s.rnw = pin_rnw;
-            }
-            if (idx_rst < 0) {
-               s.rst = -1;
-            } else {
-               s.rst = pin_rst;
-            }
-            if (idx_e < 0) {
-               s.e = -1;
-            } else {
-               s.e = pin_e;
-            }
-            queue_sample(&s);
+            s.sample_count++;
+            // Increment the circular buffer pointers in lock-step to keey the skew constant
+            tail        = (tail        + 1) & (SKEW_BUFFER_SIZE - 1);
+            head        = (head        + 1) & (SKEW_BUFFER_SIZE - 1);
+            rddata_head = (rddata_head + 1) & (SKEW_BUFFER_SIZE - 1);
+            wrdata_head = (wrdata_head + 1) & (SKEW_BUFFER_SIZE - 1);
          }
       }
    }
@@ -1289,6 +1299,8 @@ int main(int argc, char *argv[]) {
    arguments.debug            = 0;
    arguments.mem_model        = 0;
    arguments.skip             = 0;
+   arguments.skew_rd          = UNSPECIFIED;
+   arguments.skew_wr          = UNSPECIFIED;
    arguments.profile          = 0;
    arguments.trigger_start    = UNSPECIFIED;
    arguments.trigger_stop     = UNSPECIFIED;
@@ -1499,6 +1511,33 @@ int main(int argc, char *argv[]) {
       arguments.idx_phi2 = 15;
    }
 
+   if (arguments.skew_rd == UNSPECIFIED) {
+      switch (arguments.machine) {
+      case MACHINE_BEEB:
+         arguments.skew_rd =  0; // sample after Phi2 falls
+         break;
+      case MACHINE_MASTER:
+         arguments.skew_rd = -1; // sample before PHI2 fails
+         break;
+      default:
+         arguments.skew_rd = -1; // sample before PHI2 fails
+         break;
+      }
+   }
+   if (arguments.skew_wr == UNSPECIFIED) {
+      switch (arguments.machine) {
+      case MACHINE_BEEB:
+         arguments.skew_wr = -1; // sample before PHI2 fails
+         break;
+      case MACHINE_MASTER:
+         arguments.skew_wr = -2; // sample well before PHI2 fails
+         break;
+      default:
+         arguments.skew_wr = -1; // sample before PHI2 fails
+         break;
+      }
+   }
+
    if (arguments.cpu_type == CPU_65C816) {
       c816 = 1;
       em = &em_65816;
@@ -1525,8 +1564,6 @@ int main(int argc, char *argv[]) {
          return 2;
       }
    }
-
-
 
    decode(stream);
    fclose(stream);
