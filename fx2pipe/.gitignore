@@ -11,7 +11,7 @@
 /firmware/fx2pipe.rel
 /firmware/fx2pipe.rst
 /firmware/fx2pipe.sym
-/firmware/fx2pipe_static.cc
+#/firmware/fx2pipe_static.cc
 /fx2pipe/.deps/
 /fx2pipe/Makefile
 /fx2pipe/fx2pipe
