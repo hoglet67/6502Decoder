@@ -249,7 +249,7 @@ int main(int argc,char **arg)
 			}
 			else
 			{  fprintf(stderr,"fx2pipe: unknown assignment \"%s\"\n",
-				ass_name[i]);  ++errors;  }
+				arg[i]);  ++errors;  }
 			continue;
 		}
 
