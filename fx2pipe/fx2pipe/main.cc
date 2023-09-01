@@ -1,17 +1,17 @@
 /*
  * usb_io/main.cc
- * 
- * FX2 pipe program main routine. 
- * 
- * Copyright (c) 2006--2009 by Wolfgang Wieser ] wwieser (a) gmx <*> de [ 
- * 
- * This file may be distributed and/or modified under the terms of the 
- * GNU General Public License version 2 as published by the Free Software 
+ *
+ * FX2 pipe program main routine.
+ *
+ * Copyright (c) 2006--2009 by Wolfgang Wieser ] wwieser (a) gmx <*> de [
+ *
+ * This file may be distributed and/or modified under the terms of the
+ * GNU General Public License version 2 as published by the Free Software
  * Foundation. (See COPYING.GPL for details.)
- * 
+ *
  * This file is provided AS IS with NO WARRANTY OF ANY KIND, INCLUDING THE
  * WARRANTY OF DESIGN, MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
- * 
+ *
  */
 
 #include "../oconfig.h"
@@ -84,7 +84,7 @@ static void PrintHelp()
 int main(int argc,char **arg)
 {
 	FX2Pipe p;
-	
+
 	int errors=0;
 	int dir_spec=0;
 	int fifo_width=2;  // 1 or 2 (8 or 16 bits)
@@ -98,7 +98,7 @@ int main(int argc,char **arg)
 	char cko_invert=0;
 	for(int i=1; i<argc; i++)
 	{
-		// First, check for long options. 
+		// First, check for long options.
 		if(*arg[i]=='-' && arg[i][1]=='-')
 		{
 			if(!strcmp(arg[i],"--help"))
@@ -108,11 +108,11 @@ int main(int argc,char **arg)
 			else
 			{  fprintf(stderr,"fx2pipe: unknown long option \"%s\"\n",arg[i]);
 				++errors;  }
-			
+
 			continue;
 		}
-		
-		// Next, check for assignments. One can leave away the leading '-'. 
+
+		// Next, check for assignments. One can leave away the leading '-'.
 		const char *ass_value=NULL;
 		for(const char *c=arg[i]; *c; c++)
 		{
@@ -125,10 +125,10 @@ int main(int argc,char **arg)
 		}
 		if(ass_value)
 		{
-			// This is an assignment. 
+			// This is an assignment.
 			const char *ass_name=arg[i];
 			if(*ass_name=='-')  ++ass_name;
-			
+
 			if(!strncmp(ass_name,"n=",2))
 			{
 				char *endptr;
@@ -182,7 +182,7 @@ int main(int argc,char **arg)
 			else if(!strncmp(ass_name,"ifclk=",6))
 			{
 				const char *s=ass_value;
-				
+
 				// Speed...
 				if(*s=='x')
 				{  ifclk_speed=0;  ++s;  }
@@ -190,15 +190,15 @@ int main(int argc,char **arg)
 				{  ifclk_speed=30;  s+=2;  }
 				else if(*s=='4' && s[1]=='8')
 				{  ifclk_speed=48;  s+=2;  }
-				
-				// Output? Only valid if not external. 
+
+				// Output? Only valid if not external.
 				if(*s=='o' && ifclk_speed!=0)
 				{  ifclk_output=1;  ++s;  }
-				
+
 				// Invert?
 				if(*s=='i')
 				{  ifclk_invert=1;  ++s;  }
-				
+
 				if(*s)
 				{  fprintf(stderr,"fx2pipe: invalid ifclk spec \"%s\".\n",
 					ass_value);  ++errors;  }
@@ -206,7 +206,7 @@ int main(int argc,char **arg)
 			else if(!strncmp(ass_name,"cko=",4))
 			{
 				const char *s=ass_value;
-				
+
 				// Speed...
 				if(*s=='1' && s[1]=='2')
 				{  cko_speed=12;  s+=2;  }
@@ -214,17 +214,17 @@ int main(int argc,char **arg)
 				{  cko_speed=24;  s+=2;  }
 				else if(*s=='4' && s[1]=='8')
 				{  cko_speed=48;  s+=2;  }
-				
+
 				// Output?
 				if(*s=='o')
 				{  cko_output=1;  ++s;  }
 				else if(*s=='z')
 				{  cko_output=0;  ++s;  }
-				
+
 				// Invert?
 				if(*s=='i')
 				{  cko_invert=1;  ++s;  }
-				
+
 				if(*s)
 				{  fprintf(stderr,"fx2pipe: invalid cko spec \"%s\".\n",
 					ass_value);  ++errors;  }
@@ -232,17 +232,17 @@ int main(int argc,char **arg)
 			else if(!strncmp(ass_name,"sched=",6))
 			{
 				const char *s=ass_value;
-				
+
 				// Policy?
 				if(!strncmp(s,"fifo",4))
 				{  p.schedule_policy=SCHED_FIFO;  s+=4;  }
 				else if(!strncmp(s,"rr",2))
 				{  p.schedule_policy=SCHED_RR;  s+=2;  }
-				
+
 				// Priority?
 				if(*s==',')
 				{  p.schedule_priority=strtol(s,(char**)&s,0);  }
-				
+
 				if(*s)
 				{  fprintf(stderr,"fx2pipe: invalid sched spec \"%s\".\n",
 					ass_value);  ++errors;  }
@@ -252,8 +252,8 @@ int main(int argc,char **arg)
 				ass_name[i]);  ++errors;  }
 			continue;
 		}
-		
-		// Assume short option if it has one leading dash. 
+
+		// Assume short option if it has one leading dash.
 		if(arg[i][0]=='-' && (isalpha(arg[i][1]) || isdigit(arg[i][1])) )
 		{
 			for(const char *c=&arg[i][1]; *c; c++)
@@ -278,10 +278,10 @@ int main(int argc,char **arg)
 						break;
 				}
 			}
-			
+
 			continue;
 		}
-		
+
 		// Finally, what's left over...
 		fprintf(stderr,"fx2pipe: unrecognized argument \"%s\"\n",
 			arg[i]);  ++errors;
@@ -292,7 +292,7 @@ int main(int argc,char **arg)
 			"(-iIoO).\n");
 		++errors;
 	}
-	
+
 	// FIXME: If fifo_width is 2, force even sizes!
 	if(p.io_block_size<1 || p.io_block_size>16384)
 	{
@@ -300,14 +300,14 @@ int main(int argc,char **arg)
 			"range 1..16384, bs=%u is invalid\n",p.io_block_size);
 		++errors;
 	}
-	
-	// Set up config for firmware: 
+
+	// Set up config for firmware:
 	p.fc.FC_DIR = p.dir<0 ? 0x12U : 0x21U;
-	p.fc.FC_CPUCS = 
-		((cko_speed==12 ? 0U : cko_speed==24 ? 1U : 2U)<<3) | 
-		(cko_invert ? 0x04U : 0x00U) | 
+	p.fc.FC_CPUCS =
+		((cko_speed==12 ? 0U : cko_speed==24 ? 1U : 2U)<<3) |
+		(cko_invert ? 0x04U : 0x00U) |
 		(cko_output ? 0x02U : 0x00U);
-	p.fc.FC_IFCONFIG = 
+	p.fc.FC_IFCONFIG =
 		(ifclk_speed ? 0x80U : 0x00U) |      // Internal (1) / external?
 		(ifclk_speed==30 ? 0x00U : 0x40U) |  // 30 (0) / 48 (1) MHz?
 		(ifclk_output ? 0x20U : 0x00U) |     // Enable (1) output to IFCLK?
@@ -331,30 +331,30 @@ int main(int argc,char **arg)
 	{
 		case 2:  p.fc.FC_EPCFG|=0x02U;  break;
 		case 3:  p.fc.FC_EPCFG|=0x03U;  break;
-		case 4:  break;  // Do nothing. 
+		case 4:  break;  // Do nothing.
 		default:  assert(0);  break;
 	}
 	if(fifo_width==2)
 	{  p.fc.FC_EPFIFOCFG|=0x01U;  }
-	
-	// Dump firmware config values: 
+
+	// Dump firmware config values:
 	fprintf(stderr,"Firmware config: 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\n",
 		(unsigned int)p.fc.FC_DIR,   (unsigned int)p.fc.FC_IFCONFIG,
 		(unsigned int)p.fc.FC_EPCFG, (unsigned int)p.fc.FC_EPFIFOCFG,
 		(unsigned int)p.fc.FC_CPUCS );
-	
+
 	if(errors)
 	{  return(1);  }
-	
-	// Install signal handler for SIGINT. 
+
+	// Install signal handler for SIGINT.
 	struct sigaction sa;
 	memset(&sa,0,sizeof(sa));
 	sa.sa_handler=&SigIntHandler;
 	sigaction(SIGINT,&sa,NULL);
-	
+
 	int ecode=0;
-	
+
 	ecode=p.run();
-	
+
 	return(ecode);
 }
