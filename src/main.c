@@ -707,6 +707,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
    int intr_seen = em->match_interrupt(sample_q, num_samples);
 
    int num_cycles;
+   int real_cycles;
 
    // This is a rather ugly hack to cope with a decode failure on Arlet's core.
    //
@@ -779,6 +780,8 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
       // Handle a normal instruction
       em->emulate(sample_q, num_cycles, &instruction);
    }
+
+   real_cycles = sample_q[num_cycles].sample_count - sample_q[0].sample_count;
 
    // Sanity check the pc prediction has not gone awry
    // (e.g. in JSR the emulation can use the stacked PC)
@@ -916,7 +919,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
          *bp++ = ':';
          *bp++ = ' ';
          // No instruction is more then 8 cycles
-         write_hex1(bp++, num_cycles);
+         write_hex1(bp++, real_cycles);
       }
       // Show register state
       if (fail || arguments.show_state) {
