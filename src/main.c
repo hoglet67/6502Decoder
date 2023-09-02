@@ -204,12 +204,15 @@ static cpu_name_t cpu_names[] = {
    {"ARLET",      CPU_6502_ARLET},
    // 65C02
    {"65C02",      CPU_65C02},
-   {"W65C02",     CPU_65C02},
    {"CMOS",       CPU_65C02},
    {"C02",        CPU_65C02},
    // 65C02_ROCKWELL
    {"R65C02",     CPU_65C02_ROCKWELL},
    {"ROCKWELL",   CPU_65C02_ROCKWELL},
+   // 65C02_WDC
+   {"WD65C02",    CPU_65C02_WDC},
+   {"W65C02",     CPU_65C02_WDC},
+   {"WDC",        CPU_65C02_WDC},
    // 65C02_ARLET
    {"ARLETC02",   CPU_65C02_ARLET},
    // 65C02_ALAND
@@ -1007,7 +1010,7 @@ int decode_instruction(sample_t *sample_q, int num_samples) {
       }
       if (notype) {
          // Do this by dead reconning
-         rst_seen = (arguments.cpu_type == CPU_65C02 || arguments.cpu_type == CPU_65C02_ROCKWELL) ? 8 : 9;
+         rst_seen = (arguments.cpu_type == CPU_65C02 || arguments.cpu_type == CPU_65C02_ROCKWELL || arguments.cpu_type == CPU_65C02_WDC) ? 8 : 9;
          // We could also check the vector
       } else {
          if (sample_q[7].type == OPCODE) {

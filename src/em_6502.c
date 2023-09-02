@@ -121,6 +121,8 @@ static int Z = -1;
 static int C = -1;
 
 static char ILLEGAL[] = "???";
+static char STP[]     = "STP";
+static char WAI[]     = "WAI";
 
 // JSR cycle positions
 // <opcode> <op1> <read dummy> <write pch> <write pcl> <op2>
@@ -487,6 +489,7 @@ static void em_6502_init(arguments_t *args) {
       jsr_pcl = 3;
       instr_table = instr_table_6502;
       break;
+   case CPU_65C02_WDC:
    case CPU_65C02_ROCKWELL:
       rockwell = 1;
       c02 = 1;
@@ -575,6 +578,17 @@ static void em_6502_init(arguments_t *args) {
          instr_table[i].len      = 1;
       }
    }
+
+   // Support the WDC C02 extensions
+   // TODO: more work is needed to properly support WAI and STP
+   // See https://github.com/hoglet67/6502Decoder/issues/10
+   if (args->cpu_type == CPU_65C02_WDC) {
+      instr_table[0xcb].mnemonic = WAI;
+      instr_table[0xcb].cycles   = 3;
+      instr_table[0xdb].mnemonic = STP;
+      instr_table[0xdb].cycles   = 3;
+   }
+
    InstrType *instr = instr_table;
    for (int i = 0; i < 256; i++) {
       // Remove the undocumented instructions, if not supported
@@ -2009,7 +2023,7 @@ static InstrType instr_table_65c02[] = {
    /* C8 */   { "INY",  0, IMP   , 2, 0, OTHER,    op_INY},
    /* C9 */   { "CMP",  0, IMM   , 2, 0, OTHER,    op_CMP},
    /* CA */   { "DEX",  0, IMP   , 2, 0, OTHER,    op_DEX},
-   /* CB */   { "WAI",  0, IMP   , 1, 0, OTHER,    0},        // WD65C02=3
+   /* CB */   { "NOP",  0, IMP   , 1, 0, OTHER,    0},
    /* CC */   { "CPY",  0, ABS   , 4, 0, READOP,   op_CPY},
    /* CD */   { "CMP",  0, ABS   , 4, 0, READOP,   op_CMP},
    /* CE */   { "DEC",  0, ABS   , 6, 0, RMWOP,    op_DEC},
@@ -2025,7 +2039,7 @@ static InstrType instr_table_65c02[] = {
    /* D8 */   { "CLD",  0, IMP   , 2, 0, OTHER,    op_CLD},
    /* D9 */   { "CMP",  0, ABSY  , 4, 0, READOP,   op_CMP},
    /* DA */   { "PHX",  0, IMP   , 3, 0, OTHER,    op_PHX},
-   /* DB */   { "STP",  0, IMP   , 1, 0, OTHER,    0},        // WD65C02=3
+   /* DB */   { "NOP",  0, IMP   , 1, 0, OTHER,    0},
    /* DC */   { "NOP",  0, ABS   , 4, 0, OTHER,    0},
    /* DD */   { "CMP",  0, ABSX  , 4, 0, READOP,   op_CMP},
    /* DE */   { "DEC",  0, ABSX  , 7, 0, RMWOP,    op_DEC},
