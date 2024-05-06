@@ -1091,7 +1091,7 @@ static inline sample_type_t build_sample_type(uint16_t sample, int idx_vpa, int 
    if (c816) {
       if (idx_vpa < 0 || idx_vda < 0) {
          return UNKNOWN;
-      } if ((sample >> idx_vpa) & 1) {
+      } else if ((sample >> idx_vpa) & 1) {
          if ((sample >> idx_vda) & 1) {
             return OPCODE;
          } else {
