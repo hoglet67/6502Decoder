@@ -1304,9 +1304,9 @@ void decode(FILE *stream) {
                      s.data = (skew_buffer[s.rnw == 0 ? wrdata_head : rddata_head] >> idx_data) & 255;
                      queue_sample(&s);
                   }
+                  s.sample_count++;
                }
             }
-            s.sample_count++;
             // Increment the circular buffer pointers in lock-step to keey the skew constant
             tail        = (tail        + 1) & (SKEW_BUFFER_SIZE - 1);
             head        = (head        + 1) & (SKEW_BUFFER_SIZE - 1);
