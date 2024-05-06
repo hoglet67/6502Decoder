@@ -2858,7 +2858,7 @@ static void transfer_16_88(int src, int *dsthi, int *dstlo) {
          *dstlo = -1;
          set_NZ_unknown();
       }
-   } if (MS == 1) {
+   } else if (MS == 1) {
       // 8-bit
       if (src >= 0) {
          *dstlo = src & 0xff;
