@@ -44,6 +44,7 @@ typedef struct {
    int8_t         rnw; // -1 indicates unknown
    int8_t         rst; // -1 indicates unknown
    int8_t           e; // -1 indicates unknown (65816 e pin)
+   int8_t        user; // -1 indicates unknown (user defined signal)
 } sample_t;
 
 
@@ -71,6 +72,7 @@ typedef struct {
    int idx_sync;
    int idx_rdy;
    int idx_phi2;
+   int idx_user;
    int idx_rst;
    int idx_vda;
    int idx_vpa;

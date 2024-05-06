@@ -173,6 +173,7 @@ enum {
    KEY_RNW,
    KEY_RDY,
    KEY_PHI2,
+   KEY_USER,
    KEY_RST,
    KEY_SYNC,
    KEY_VDA,
@@ -265,6 +266,7 @@ static struct argp_option options[] = {
    { "rnw",            KEY_RNW, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for rnw  (default  8)",                   GROUP_SIGDEFS},
    { "rdy",            KEY_RDY, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for rdy  (default 10)",                   GROUP_SIGDEFS},
    { "phi2",          KEY_PHI2, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for phi2 (default 15)",                   GROUP_SIGDEFS},
+   { "user",          KEY_USER, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for user (default -1)",                   GROUP_SIGDEFS},
    { "rst",            KEY_RST, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for rst  (default 14)",                   GROUP_SIGDEFS},
    { "sync",          KEY_SYNC, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sync (default  9) (6502/65C02)",      GROUP_SIGDEFS},
    { "vpa",            KEY_VPA, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for vpa  (default  9) (65C816)",          GROUP_SIGDEFS},
@@ -336,6 +338,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->idx_phi2 = atoi(arg);
       } else {
          arguments->idx_phi2 = UNDEFINED;
+      }
+      break;
+   case KEY_USER:
+      if (arg && strlen(arg) > 0) {
+         arguments->idx_user = atoi(arg);
+      } else {
+         arguments->idx_user = UNDEFINED;
       }
       break;
    case KEY_RST:
@@ -585,9 +594,12 @@ static void dump_samples(sample_t *sample_q, int n) {
          putchar(sample->rnw >= 0 ? '0' + sample->rnw : '?');
          putchar(' ');
          putchar(sample->rst >= 0 ? '0' + sample->rst : '?');
+         if (sample->user >= 0) {
+            putchar(' ');
+            putchar('0' + sample->user);
+         }
          putchar('\n');
       }
-
 }
 
 void write_hex1(char *buffer, int value) {
@@ -936,6 +948,18 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
          bp += sprintf(bp, " : FWA %s", get_fwa(0x2e, 0x30, 0x31, 0x35, 0x2f));
          bp += sprintf(bp, " : FWB %s", get_fwa(0x3b, 0x3c, 0x3d, 0x41,   -1));
       }
+      // Show the user defined signal value
+      if (arguments.idx_user >= 0) {
+         *bp++ = ' ';
+         *bp++ = ':';
+         *bp++ = ' ';
+         int user = sample_q[num_cycles - 1].user;
+         if (user >= 0) {
+            *bp++ = '0' + user;
+         } else {
+            *bp++ = '?';
+         }
+      }
       // Show any errors
       if (fail) {
          bp += write_s(bp, " prediction failed");
@@ -1123,6 +1147,7 @@ void decode(FILE *stream) {
    int idx_sync  = arguments.idx_sync;
    int idx_rdy   = arguments.idx_rdy ;
    int idx_phi2  = arguments.idx_phi2;
+   int idx_user  = arguments.idx_user;
    int idx_rst   = arguments.idx_rst;
    int idx_vda   = arguments.idx_vda;
    int idx_vpa   = arguments.idx_vpa;
@@ -1142,6 +1167,7 @@ void decode(FILE *stream) {
    s.rnw  = -1;
    s.rst  = -1;
    s.e    = -1;
+   s.user = -1;
 
    if (arguments.byte) {
 
@@ -1194,6 +1220,9 @@ void decode(FILE *stream) {
                }
                if (idx_e >= 0) {
                   s.e = (sample >> idx_e) & 1;
+               }
+               if (idx_user >= 0) {
+                  s.user = (sample >> idx_user) & 1;
                }
                s.data = (sample >> idx_data) & 255;
                queue_sample(&s);
@@ -1266,6 +1295,9 @@ void decode(FILE *stream) {
                   if (idx_e >= 0) {
                      s.e = (sample >> idx_e) & 1;
                   }
+                  if (idx_user >= 0) {
+                     s.user = (sample >> idx_user) & 1;
+                  }
                } else {
                   if (idx_rdy < 0 || ((sample >> idx_rdy) & 1)) {
                      // Sample the data skewed (--skew=) relative to the falling edge of PHI2
@@ -1332,6 +1364,7 @@ int main(int argc, char *argv[]) {
    arguments.idx_e            = UNSPECIFIED;
    arguments.idx_rst          = UNSPECIFIED;
    arguments.idx_phi2         = UNSPECIFIED;
+   arguments.idx_user         = UNSPECIFIED;
 
    // Additional 6502 options
    arguments.undocumented     = 0;
