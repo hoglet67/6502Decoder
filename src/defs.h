@@ -72,6 +72,7 @@ typedef struct {
    int idx_rnw;
    int idx_sync;
    int idx_rdy;
+   int idx_phi1;
    int idx_phi2;
    int idx_user;
    int idx_rst;

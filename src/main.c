@@ -172,6 +172,7 @@ enum {
    KEY_DATA,
    KEY_RNW,
    KEY_RDY,
+   KEY_PHI1,
    KEY_PHI2,
    KEY_USER,
    KEY_RST,
@@ -265,6 +266,7 @@ static struct argp_option options[] = {
    { "data",          KEY_DATA, "BITNUM",                   0, "Bit number for data (default  0)",                   GROUP_SIGDEFS},
    { "rnw",            KEY_RNW, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for rnw  (default  8)",                   GROUP_SIGDEFS},
    { "rdy",            KEY_RDY, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for rdy  (default 10)",                   GROUP_SIGDEFS},
+   { "phi1",          KEY_PHI1, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for phi1 (default -1)",                   GROUP_SIGDEFS},
    { "phi2",          KEY_PHI2, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for phi2 (default 15)",                   GROUP_SIGDEFS},
    { "user",          KEY_USER, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for user (default -1)",                   GROUP_SIGDEFS},
    { "rst",            KEY_RST, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for rst  (default 14)",                   GROUP_SIGDEFS},
@@ -272,7 +274,6 @@ static struct argp_option options[] = {
    { "vpa",            KEY_VPA, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for vpa  (default  9) (65C816)",          GROUP_SIGDEFS},
    { "vda",            KEY_VDA, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for vda  (default 11) (65C816)",          GROUP_SIGDEFS},
    { "e",                KEY_E, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for e    (default 12) (65C816)",          GROUP_SIGDEFS},
-
    { 0, 0, 0, 0, "Additional 6502/65C02 options:", GROUP_6502},
 
    { "undocumented", KEY_UNDOC,        0,                   0, "Enable undocumented opcodes",                        GROUP_6502},
@@ -331,6 +332,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->idx_rdy = atoi(arg);
       } else {
          arguments->idx_rdy = UNDEFINED;
+      }
+      break;
+   case KEY_PHI1:
+      if (arg && strlen(arg) > 0) {
+         arguments->idx_phi1 = atoi(arg);
+      } else {
+         arguments->idx_phi1 = UNDEFINED;
       }
       break;
    case KEY_PHI2:
@@ -1146,12 +1154,21 @@ void decode(FILE *stream) {
    int idx_rnw   = arguments.idx_rnw ;
    int idx_sync  = arguments.idx_sync;
    int idx_rdy   = arguments.idx_rdy ;
-   int idx_phi2  = arguments.idx_phi2;
    int idx_user  = arguments.idx_user;
    int idx_rst   = arguments.idx_rst;
    int idx_vda   = arguments.idx_vda;
    int idx_vpa   = arguments.idx_vpa;
    int idx_e     = arguments.idx_e;
+
+   // Handle clock inversion of phi1 used rather than phi2
+   int idx_phi = -1;
+   int clk_pol = 0;
+   if (arguments.idx_phi1 >= 0) {
+      idx_phi = arguments.idx_phi1;
+      clk_pol = 1;
+   } else if (arguments.idx_phi2 >= 0) {
+      idx_phi = arguments.idx_phi2;
+   }
 
    // The structured bus sample we will pass on to the next level of processing
    sample_t s;
@@ -1192,7 +1209,7 @@ void decode(FILE *stream) {
          }
       }
 
-   } else if (idx_phi2 < 0 ) {
+   } else if (idx_phi < 0 ) {
 
       // ------------------------------------------------------------
       // Synchronous word sampling mode
@@ -1281,8 +1298,8 @@ void decode(FILE *stream) {
          while (num-- > 0) {
             skew_buffer[tail] = *sampleptr++;
             uint16_t sample   = skew_buffer[head];
-            // Only act on edges of phi2
-            int pin_phi2 = (sample >> idx_phi2) & 1;
+            // Only act on edges of phi
+            int pin_phi2 = clk_pol ^ ((sample >> idx_phi) & 1);
             if (pin_phi2 != last_phi2) {
                last_phi2 = pin_phi2;
                if (pin_phi2) {
@@ -1367,6 +1384,7 @@ int main(int argc, char *argv[]) {
    arguments.idx_vda          = UNSPECIFIED;
    arguments.idx_e            = UNSPECIFIED;
    arguments.idx_rst          = UNSPECIFIED;
+   arguments.idx_phi1         = UNSPECIFIED;
    arguments.idx_phi2         = UNSPECIFIED;
    arguments.idx_user         = UNSPECIFIED;
 
@@ -1399,6 +1417,10 @@ int main(int argc, char *argv[]) {
       }
       if (arguments.idx_sync != UNSPECIFIED) {
          fprintf(stderr, "--sync is incompatible with byte mode\n");
+         return 1;
+      }
+      if (arguments.idx_phi1 != UNSPECIFIED) {
+         fprintf(stderr, "--phi1 is incompatible with byte mode\n");
          return 1;
       }
       if (arguments.idx_phi2 != UNSPECIFIED) {
@@ -1550,7 +1572,13 @@ int main(int argc, char *argv[]) {
    if (arguments.idx_rst == UNSPECIFIED) {
       arguments.idx_rst = 14;
    }
-   if (arguments.idx_phi2 == UNSPECIFIED) {
+   // Flag conflicting use of --phi1 and --phi2
+   if (arguments.idx_phi1 >= 0 && arguments.idx_phi2 >= 0) {
+      fprintf(stderr, "--phi1 and --phi2 cannot both be assigned to pins\n");
+      return 1;
+   }
+   // Only default phi2 if phi1 is not assigned to a pin
+   if (arguments.idx_phi2 == UNSPECIFIED && arguments.idx_phi1 < 0) {
       arguments.idx_phi2 = 15;
    }
 
