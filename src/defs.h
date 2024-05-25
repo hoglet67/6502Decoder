@@ -39,6 +39,7 @@ typedef enum {     // 6502 Sync    65815 VDA/VPA
 
 typedef struct {
    uint32_t      sample_count;
+   uint32_t      cycle_count;
    sample_type_t type;
    uint8_t       data;
    int8_t         rnw; // -1 indicates unknown

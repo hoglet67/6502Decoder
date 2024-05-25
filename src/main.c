@@ -796,7 +796,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
       em->emulate(sample_q, num_cycles, &instruction);
    }
 
-   real_cycles = sample_q[num_cycles].sample_count - sample_q[0].sample_count;
+   real_cycles = sample_q[num_cycles].cycle_count - sample_q[0].cycle_count;
 
    // Sanity check the pc prediction has not gone awry
    // (e.g. in JSR the emulation can use the stacked PC)
@@ -1164,6 +1164,7 @@ void decode(FILE *stream) {
    // Common to all sampling modes
    s.type = UNKNOWN;
    s.sample_count = 1;
+   s.cycle_count = 1;
    s.rnw  = -1;
    s.rst  = -1;
    s.e    = -1;
@@ -1187,6 +1188,7 @@ void decode(FILE *stream) {
             s.data = *sampleptr++;
             queue_sample(&s);
             s.sample_count++;
+            s.cycle_count++;
          }
       }
 
@@ -1228,6 +1230,7 @@ void decode(FILE *stream) {
                queue_sample(&s);
             }
             s.sample_count++;
+            s.cycle_count++;
          }
       }
 
@@ -1304,9 +1307,10 @@ void decode(FILE *stream) {
                      s.data = (skew_buffer[s.rnw == 0 ? wrdata_head : rddata_head] >> idx_data) & 255;
                      queue_sample(&s);
                   }
-                  s.sample_count++;
+                  s.cycle_count++;
                }
             }
+            s.sample_count++;
             // Increment the circular buffer pointers in lock-step to keey the skew constant
             tail        = (tail        + 1) & (SKEW_BUFFER_SIZE - 1);
             head        = (head        + 1) & (SKEW_BUFFER_SIZE - 1);
