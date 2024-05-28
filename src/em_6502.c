@@ -338,7 +338,7 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
    }
 
    // Account for extra cycles in a branch
-   if (((opcode & 0x1f) == 0x10) || (opcode == 0x80)) {
+   if (((opcode & 0x1f) == 0x10) || (c02 && opcode == 0x80)) {
       // Default to backards branches taken, forward not taken
       int taken = ((int8_t)op1) < 0;
       switch (opcode) {
