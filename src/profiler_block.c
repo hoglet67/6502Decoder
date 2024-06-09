@@ -11,12 +11,14 @@ typedef struct {
    int profile_max;
    address_t profile_counts[OTHER_CONTEXT + 1];
    int last_opcode;
+   cpu_emulator_t *em;
 } profiler_block_t;
 
-static void p_init(void *ptr) {
+static void p_init(void *ptr, cpu_emulator_t *em) {
    profiler_block_t *instance = (profiler_block_t *)ptr;
    memset((void *)instance->profile_counts, 0, sizeof(instance->profile_counts));
    instance->profile_counts[OTHER_CONTEXT].flags = 1;
+   instance->em = em;
 }
 
 static void p_profile_instruction(void *ptr, int pc, int opcode, int op1, int op2, int num_cycles) {
@@ -68,7 +70,7 @@ static void p_done(void *ptr) {
       block_counts[current_block].cycles += instance->profile_counts[addr].cycles;
       block_counts[current_block].instructions += instance->profile_counts[addr].instructions;
    }
-   profiler_output_helper(block_counts, 0, 1);
+   profiler_output_helper(block_counts, 0, 1, NULL);
 }
 
 void *profiler_block_create(char *arg) {

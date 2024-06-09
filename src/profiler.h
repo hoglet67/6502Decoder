@@ -4,6 +4,7 @@
 #include <argp.h>
 #include <inttypes.h>
 
+#include "defs.h"
 
 // Slot for instructions that fall outside the region of interest
 // (don't change this or lots of things will break!)
@@ -36,7 +37,7 @@ typedef struct {
 typedef struct {
    const char *name;
    const char *arg;
-   void                (*init)(void *ptr);
+   void                (*init)(void *ptr, cpu_emulator_t *em);
    void (*profile_instruction)(void *ptr, int pc, int opcode, int op1, int op2, int num_cycles);
    void                (*done)(void *ptr);
 } profiler_t;
@@ -44,12 +45,12 @@ typedef struct {
 // Public methods, called from main program
 
 void profiler_parse_opt(int key, char *arg, struct argp_state *state);
-void profiler_init();
+void profiler_init(cpu_emulator_t *em);
 void profiler_profile_instruction(int pc, int opcode, int op1, int op2, int num_cycles);
 void profiler_done();
 
 // Helper methods, for use by profiler implementations
 
-void profiler_output_helper(address_t *profile_counts, int show_bars, int show_other);
+void profiler_output_helper(address_t *profile_counts, int show_bars, int show_other, cpu_emulator_t *em);
 
 #endif

@@ -26,6 +26,7 @@ typedef struct {
    void *root;
    call_stack_t *current;
    int profile_enabled;
+   cpu_emulator_t *em;
 } profiler_call_t;
 
 
@@ -56,7 +57,7 @@ static int compare_nodes(const void *av, const void *bv) {
    return ret;
 }
 
-static void p_init(void *ptr) {
+static void p_init(void *ptr, cpu_emulator_t *em) {
    profiler_call_t *instance = (profiler_call_t *)ptr;
    call_stack_t *root_context = (call_stack_t *)malloc(sizeof(call_stack_t));
    root_context->index = 0;
@@ -69,6 +70,7 @@ static void p_init(void *ptr) {
    instance->root = NULL;
    instance->current = *(call_stack_t **)ttsearch(root_context, &instance->root, compare_nodes);
    instance->profile_enabled = 1;
+   instance->em = em;
 }
 
 static void p_profile_instruction(void *ptr, int pc, int opcode, int op1, int op2, int num_cycles) {
@@ -114,7 +116,7 @@ static void p_profile_instruction(void *ptr, int pc, int opcode, int op1, int op
          instance->current = instance->current->parent;
       } else {
          printf("warning: call stack underflowed, re-initialize call graph\n");
-         p_init(ptr);
+         p_init(ptr, instance->em);
       }
    }
 }

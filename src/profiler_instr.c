@@ -11,11 +11,13 @@ typedef struct {
    int profile_max;
    int profile_bucket;
    address_t profile_counts[OTHER_CONTEXT + 1];
+   cpu_emulator_t *em;
 } profiler_instr_t;
 
-static void p_init(void *ptr) {
+static void p_init(void *ptr, cpu_emulator_t *em) {
    profiler_instr_t *instance = (profiler_instr_t *)ptr;
    memset((void *)instance->profile_counts, 0, sizeof(instance->profile_counts));
+   instance->em = em;
 }
 
 static void p_profile_instruction(void *ptr, int pc, int opcode, int op1, int op2, int num_cycles) {
@@ -34,7 +36,7 @@ static void p_profile_instruction(void *ptr, int pc, int opcode, int op1, int op
 
 static void p_done(void *ptr) {
    profiler_instr_t *instance = (profiler_instr_t *)ptr;
-   profiler_output_helper(instance->profile_counts, 1, 0);
+   profiler_output_helper(instance->profile_counts, 1, 0, instance->em);
 }
 
 void *profiler_instr_create(char *arg) {

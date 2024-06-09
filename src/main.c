@@ -1622,7 +1622,7 @@ int main(int argc, char *argv[]) {
    em->init(&arguments);
 
    if (arguments.profile) {
-      profiler_init();
+      profiler_init(em);
    }
 
    FILE *stream;

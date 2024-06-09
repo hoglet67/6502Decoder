@@ -38,10 +38,10 @@ static int active_count = 0;
    }
 }
 
-void profiler_init() {
+void profiler_init(cpu_emulator_t *em) {
    profiler_t **pp = active_list;
    while (*pp) {
-      (*pp)->init(*pp);
+      (*pp)->init(*pp, em);
       pp++;
    }
 }
@@ -65,7 +65,7 @@ void profiler_done() {
    }
 }
 
-void profiler_output_helper(address_t *profile_counts, int show_bars, int show_other) {
+void profiler_output_helper(address_t *profile_counts, int show_bars, int show_other, cpu_emulator_t *em) {
    address_t      *ptr;
 
    uint32_t   max_cycles = 0;
@@ -73,6 +73,8 @@ void profiler_output_helper(address_t *profile_counts, int show_bars, int show_o
    uint64_t  total_instr = 0;
    double  total_percent = 0.0;
    double      bar_scale;
+
+   char buffer[256];
 
    ptr = profile_counts;
 
@@ -96,6 +98,18 @@ void profiler_output_helper(address_t *profile_counts, int show_bars, int show_o
             printf("****");
          } else {
             printf("%04x", addr);
+            if (em) {
+               instruction_t instruction;
+               instruction.pc     = addr;
+               instruction.opcode = em->read_memory(addr);
+               instruction.op1    = em->read_memory(addr + 1);
+               instruction.op2    = em->read_memory(addr + 2);
+               int n = em->disassemble(buffer, &instruction);
+               printf(" %s", buffer);
+               for (int i = n; i < 12; i++) {
+                  putchar(' ');
+               }
+            }
          }
          printf(" : %8d cycles (%10.6f%%) %8d ins (%4.2f cpi)", ptr->cycles, percent, ptr->instructions, (double) ptr->cycles / (double) ptr->instructions);
          if (show_other) {
