@@ -102,6 +102,7 @@ typedef struct {
    int skip;
    int skew_rd;
    int skew_wr;
+   char *labels_file;
    int mem_model;
    int profile;
    int trigger_start;
@@ -124,6 +125,8 @@ typedef struct {
    int (*read_memory)(int address);
    char *(*get_state)();
    int (*get_and_clear_fail)();
+   void (*symbol_add)(char *name, int address);
+   char *(*symbol_lookup)(int address);
 } cpu_emulator_t;
 
 extern int failflag;

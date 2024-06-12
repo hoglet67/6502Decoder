@@ -10,6 +10,7 @@
 #include "em_65816.h"
 #include "memory.h"
 #include "profiler.h"
+#include "symbols.h"
 
 // Small skew buffer to allow the data bus samples to be taken early or late
 
@@ -169,6 +170,7 @@ enum {
    KEY_SKEW,
    KEY_SKEW_RD,
    KEY_SKEW_WR,
+   KEY_LABELS,
    KEY_DATA,
    KEY_RNW,
    KEY_RDY,
@@ -248,6 +250,7 @@ static struct argp_option options[] = {
    { "skew",          KEY_SKEW,    "SKEW", OPTION_ARG_OPTIONAL, "Skew the data bus by +/- n samples",                GROUP_GENERAL},
    { "skew_rd",    KEY_SKEW_RD,    "SKEW", OPTION_ARG_OPTIONAL, "Skew the data bus by +/- n samples for read data",  GROUP_GENERAL},
    { "skew_wr",    KEY_SKEW_WR,    "SKEW", OPTION_ARG_OPTIONAL, "Skew the data bus by +/- n samples for write data", GROUP_GENERAL},
+   { "labels",      KEY_LABELS,   "FILE",                    0, "Swift format label/symbols file e.g. from beebasm", GROUP_GENERAL},
 
    { 0, 0, 0, 0, "Output options:", GROUP_OUTPUT},
 
@@ -458,6 +461,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       break;
    case KEY_SKEW_WR:
       arguments->skew_wr = parse_skew(arg, state);
+      break;
+   case KEY_LABELS:
+      arguments->labels_file = arg;
       break;
    case KEY_MEM:
       if (arg && strlen(arg) > 0) {
@@ -1620,6 +1626,10 @@ int main(int argc, char *argv[]) {
    arlet = (arguments.cpu_type == CPU_6502_ARLET || arguments.cpu_type == CPU_65C02_ARLET);
 
    em->init(&arguments);
+
+   if (arguments.labels_file) {
+      swiftsym(em, arguments.labels_file);
+   }
 
    if (arguments.profile) {
       profiler_init(em);

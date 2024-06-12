@@ -91,6 +91,10 @@ void profiler_output_helper(address_t *profile_counts, int show_bars, int show_o
 
    ptr = profile_counts;
    for (int addr = 0; addr <= OTHER_CONTEXT; addr++) {
+      char *name = em->symbol_lookup(addr);
+      if (name) {
+         printf("\n%s\n", name);
+      }
       if (ptr->cycles) {
          double percent = 100.0 * (ptr->cycles) / (double) total_cycles;
          total_percent += percent;
