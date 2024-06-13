@@ -70,7 +70,7 @@ static void p_done(void *ptr) {
       block_counts[current_block].cycles += instance->profile_counts[addr].cycles;
       block_counts[current_block].instructions += instance->profile_counts[addr].instructions;
    }
-   profiler_output_helper(block_counts, 0, 1, NULL);
+   profiler_output_helper(block_counts, 0, 1, instance->em);
 }
 
 void *profiler_block_create(char *arg) {
