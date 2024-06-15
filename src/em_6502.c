@@ -1043,7 +1043,7 @@ static void em_6502_symbol_add(char *name, int address) {
       fprintf(stderr, "symbol %s:%04x out of range\r\n", name, address);
       exit(1);
    }
-   char *copy = (char *)malloc(strlen(name));
+   char *copy = (char *)malloc(strlen(name)+1);
    strcpy(copy, name);
    symbol_table[address] = copy;
 }
