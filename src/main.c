@@ -8,6 +8,7 @@
 #include "defs.h"
 #include "em_6502.h"
 #include "em_65816.h"
+#include "em_6800.h"
 #include "memory.h"
 #include "profiler.h"
 #include "symbols.h"
@@ -39,6 +40,7 @@ const char *machine_names[] = {
    "master",
    "elk",
    "atom",
+   "mek6800d2",
    0
 };
 
@@ -228,6 +230,13 @@ static cpu_name_t cpu_names[] = {
    {"W65C816",    CPU_65C816},
    {"816",        CPU_65C816},
    {"C816",       CPU_65C816},
+   // 6800
+   {"6800",       CPU_6800},
+   {"M6800",      CPU_6800},
+   {"MC6800",     CPU_6800},
+   {"6802",       CPU_6800},
+   {"M6802",      CPU_6800},
+   {"MC6802",     CPU_6800},
 
    // Terminator
    {NULL, 0}
@@ -1470,6 +1479,9 @@ int main(int argc, char *argv[]) {
       case MACHINE_ATOM:
          arguments.vec_rst = 0xA2FF3F;
          break;
+      case MACHINE_MEK6800D2:
+         arguments.vec_rst = 0x8E8DE0;
+         break;
       default:
          arguments.vec_rst = 0xFFFFFF;
       }
@@ -1478,6 +1490,9 @@ int main(int argc, char *argv[]) {
       switch (arguments.machine) {
       case MACHINE_MASTER:
          arguments.cpu_type = CPU_65C02;
+         break;
+      case MACHINE_MEK6800D2:
+         arguments.cpu_type = CPU_6800;
          break;
       default:
          arguments.cpu_type = CPU_6502;
@@ -1615,11 +1630,13 @@ int main(int argc, char *argv[]) {
       }
    }
 
+   c816 = 0;
    if (arguments.cpu_type == CPU_65C816) {
       c816 = 1;
       em = &em_65816;
+   } else if (arguments.cpu_type == CPU_6800) {
+      em = &em_6800;
    } else {
-      c816 = 0;
       em = &em_6502;
    }
 

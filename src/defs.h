@@ -9,6 +9,7 @@ typedef enum {
    MACHINE_MASTER,
    MACHINE_ELK,
    MACHINE_ATOM,
+   MACHINE_MEK6800D2,
 } machine_t;
 
 typedef enum {
@@ -20,11 +21,12 @@ typedef enum {
    CPU_65C02_WDC,
    CPU_65C02_ARLET,
    CPU_65C02_ALAND,
-   CPU_65C816
+   CPU_65C816,
+   CPU_6800,
 } cpu_t;
 
 // Sample Queue Depth - needs to fit the longest instruction
-#define DEPTH 10
+#define DEPTH 12
 
 // Sample_type_t is an abstraction of both the 6502 SYNC and the 65816 VDA/VPA
 

@@ -1405,8 +1405,6 @@ static int op_INY(operand_t operand, ea_t ea) {
 static int op_JSR(operand_t operand, ea_t ea) {
    // JSR: the operand is the data pushed to the stack (PCH, PCL)
    push16(operand);
-   // The +1 is handled elsewhere
-   PC = operand & 0xffff;
    return -1;
 }
 
