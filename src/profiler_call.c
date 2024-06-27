@@ -12,6 +12,8 @@
 // (6502 stack can only hold 128 addresses)
 #define CALL_STACK_SIZE 128
 
+static cpu_emulator_t *my_em;
+
 typedef struct call_stack {
    int stack[CALL_STACK_SIZE];
    struct call_stack *parent;
@@ -71,6 +73,7 @@ static void p_init(void *ptr, cpu_emulator_t *em) {
    instance->current = *(call_stack_t **)ttsearch(root_context, &instance->root, compare_nodes);
    instance->profile_enabled = 1;
    instance->em = em;
+   my_em = em;
 }
 
 static void p_profile_instruction(void *ptr, int pc, int opcode, int op1, int op2, int num_cycles) {
@@ -131,7 +134,13 @@ static void print_node(const call_stack_t *node) {
          printf("->");
       }
       first = 0;
-      printf("%04X", node->stack[i]);
+      char *name=my_em->symbol_lookup(node->stack[i]);
+      if (name) {
+         if (name[0] == '.') name++;
+         printf("%s", name);
+      } else {
+         printf("%04X", node->stack[i]);
+      }
    }
    printf("\n");
 }

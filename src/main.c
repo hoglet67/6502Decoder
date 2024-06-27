@@ -856,7 +856,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
 
    if (arguments.profile && triggered && !skipping_interrupted && !intr_seen) {
       // TODO: refactor profiler to take instruction_t *
-      profiler_profile_instruction(instruction.pc, instruction.opcode, instruction.op1, instruction.op2, num_cycles);
+      profiler_profile_instruction(instruction.pc, instruction.opcode, instruction.op1, instruction.op2, real_cycles);
    }
 
    int fail = em->get_and_clear_fail();
@@ -984,7 +984,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
 
    }
 
-   total_cycles += num_cycles;
+   total_cycles += real_cycles;
    return num_cycles;
 }
 
