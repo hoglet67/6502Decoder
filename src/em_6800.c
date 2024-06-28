@@ -243,8 +243,8 @@ static void push16(int value) {
 static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruction, int pc_offset) {
    // Parse the bus cycles
    // <opcode> <op1> <write pch> <write pcl> <write p> <read rst> <read rsth>
-   int pc     = (sample_q[2].data << 8) + sample_q[3].data;
-   int x      = (sample_q[4].data << 8) + sample_q[5].data;
+   int pc     = sample_q[2].data + (sample_q[3].data << 8);
+   int x      = sample_q[4].data + (sample_q[5].data << 8);
    int a      = sample_q[6].data;
    int b      = sample_q[7].data;
    int flags  = sample_q[8].data;
@@ -325,8 +325,8 @@ static int em_6800_match_interrupt(sample_t *sample_q, int num_samples) {
    // An interupt will write PCH, PCL, PSW in bus cycles 2,3,4
    if (sample_q[0].rnw >= 0) {
       // If we have the RNW pin connected, then just look for these three writes in succession
-      // Currently can't detect a SWI being interrupted
-      if (sample_q[0].data == 0x3F) {
+      // Currently can't detect a WAI or SWI being interrupted
+      if (sample_q[0].data == 0x3E || sample_q[0].data == 0x3F) {
          return 0;
       }
       if (sample_q[2].rnw == 0 && sample_q[3].rnw == 0 &&
@@ -740,7 +740,7 @@ static int op_ADD(operand_t operand, int *acc, sample_t *sample_q) {
 }
 
 static int op_AND(operand_t operand, int *acc, sample_t *sample_q) {
-   if (*acc) {
+   if (*acc >= 0) {
       *acc = *acc & operand;
       set_NZ(*acc);
    } else {
@@ -1112,14 +1112,14 @@ static int op_DEC(operand_t operand, int *acc, sample_t *sample_q) {
 }
 
 static int op_DES(operand_t operand, int *acc, sample_t *sample_q) {
-   if (S) {
+   if (S >= 0) {
       S = (S - 1) & 0xFFFF;
    }
    return -1;
 }
 
 static int op_DEX(operand_t operand, int *acc, sample_t *sample_q) {
-   if (X) {
+   if (X >= 0) {
       X = (X - 1) & 0xFFFF;
       Z = (X == 0);
    }
@@ -1127,7 +1127,7 @@ static int op_DEX(operand_t operand, int *acc, sample_t *sample_q) {
 }
 
 static int op_EOR(operand_t operand, int *acc, sample_t *sample_q) {
-   if (*acc) {
+   if (*acc >= 0) {
       *acc = *acc ^ operand;
       set_NZ(*acc);
    } else {
@@ -1155,14 +1155,14 @@ static int op_INC(operand_t operand, int *acc, sample_t *sample_q) {
 }
 
 static int op_INS(operand_t operand, int *acc, sample_t *sample_q) {
-   if (S) {
+   if (S >= 0) {
       S = (S + 1) & 0xFFFF;
    }
    return -1;
 }
 
 static int op_INX(operand_t operand, int *acc, sample_t *sample_q) {
-   if (X) {
+   if (X >= 0) {
       X = (X + 1) & 0xFFFF;
       Z = (X == 0);
    }
@@ -1241,7 +1241,7 @@ static int op_NEG(operand_t operand, int *acc, sample_t *sample_q) {
 
 
 static int op_ORA(operand_t operand, int *acc, sample_t *sample_q) {
-   if (*acc) {
+   if (*acc >= 0) {
       *acc = *acc | operand;
       set_NZ(*acc);
    } else {
@@ -1454,7 +1454,7 @@ static int op_TST(operand_t operand, int *acc, sample_t *sample_q) {
 }
 
 static int op_TSX(operand_t operand, int *acc, sample_t *sample_q) {
-   if (S) {
+   if (S >= 0) {
       X = (S + 1) & 0xffff;
    } else {
       X = -1;
@@ -1463,7 +1463,7 @@ static int op_TSX(operand_t operand, int *acc, sample_t *sample_q) {
 }
 
 static int op_TXS(operand_t operand, int *acc, sample_t *sample_q) {
-   if (X) {
+   if (X >= 0) {
       S = (X - 1) & 0xffff;
    } else {
       S = -1;
@@ -1502,7 +1502,7 @@ static InstrType instr_table_6800[] = {
    /* 11 */   { "CBA  ", 0,   INH,  2, -1,     OTHER, op_CBA},
    /* 12 */   { "???  ", 1,   INH,  2, -1,     OTHER,      0},
    /* 13 */   { "???  ", 1,   INH,  2, -1,     OTHER,      0},
-   /* 14 */   { "???  ", 1,   INH,  2, -1,     OTHER,      0},
+   /* 14 */   { "NBA  ", 1,   INH,  2, -1,     OTHER,      0},
    /* 15 */   { "???  ", 1,   INH,  2, -1,     OTHER,      0},
    /* 16 */   { "TAB  ", 0,   INH,  2, -1,     OTHER, op_TAB},
    /* 17 */   { "TBA  ", 0,   INH,  2, -1,     OTHER, op_TBA},
@@ -1516,7 +1516,7 @@ static InstrType instr_table_6800[] = {
    /* 1F */   { "???  ", 1,   INH,  2, -1,     OTHER,      0},
 
    /* 20 */   { "BRA  ", 0,   REL,  4, -1,  BRANCHOP, op_BRA},
-   /* 21 */   { "???  ", 1,   INH,  2, -1,     OTHER,      0},
+   /* 21 */   { "???  ", 1,   REL,  4, -1,  BRANCHOP,      0},
    /* 22 */   { "BHI  ", 0,   REL,  4, -1,  BRANCHOP, op_BHI},
    /* 23 */   { "BLS  ", 0,   REL,  4, -1,  BRANCHOP, op_BLS},
    /* 24 */   { "BCC  ", 0,   REL,  4, -1,  BRANCHOP, op_BCC},
@@ -1550,68 +1550,68 @@ static InstrType instr_table_6800[] = {
    /* 3F */   { "SWI  ", 0,   INH, 12, -1,     OTHER,      0},
 
    /* 40 */   { "NEG A", 0,   ACC,  2,  0,     OTHER, op_NEG},
-   /* 41 */   { "???  ", 1,   INH,  2,  0,     OTHER,      0},
-   /* 42 */   { "???  ", 1,   INH,  2,  0,     OTHER,      0},
+   /* 41 */   { "???  ", 1,   ACC,  2,  0,     OTHER,      0},
+   /* 42 */   { "???  ", 1,   ACC,  2,  0,     OTHER,      0},
    /* 43 */   { "COM A", 0,   ACC,  2,  0,     OTHER, op_COM},
    /* 44 */   { "LSR A", 0,   ACC,  2,  0,     OTHER, op_LSR},
-   /* 45 */   { "???  ", 1,   INH,  2,  0,     OTHER,      0},
+   /* 45 */   { "???  ", 1,   ACC,  2,  0,     OTHER,      0},
    /* 46 */   { "ROR A", 0,   ACC,  2,  0,     OTHER, op_ROR},
    /* 47 */   { "ASR A", 0,   ACC,  2,  0,     OTHER, op_ASR},
    /* 48 */   { "ASL A", 0,   ACC,  2,  0,     OTHER, op_ASL},
    /* 49 */   { "ROL A", 0,   ACC,  2,  0,     OTHER, op_ROL},
    /* 4A */   { "DEC A", 0,   ACC,  2,  0,     OTHER, op_DEC},
-   /* 4B */   { "???  ", 1,   INH,  2,  0,     OTHER,      0},
+   /* 4B */   { "???  ", 1,   ACC,  2,  0,     OTHER,      0},
    /* 4C */   { "INC A", 0,   ACC,  2,  0,     OTHER, op_INC},
    /* 4D */   { "TST A", 0,   ACC,  2,  0,     OTHER, op_TST},
-   /* 4E */   { "???  ", 1,   INH,  2,  0,     OTHER,      0},
+   /* 4E */   { "???  ", 1,   ACC,  2,  0,     OTHER,      0},
    /* 4F */   { "CLR A", 0,   ACC,  2,  0,     OTHER, op_CLR},
 
    /* 50 */   { "NEG B", 0,   ACC,  2,  1,     OTHER, op_NEG},
-   /* 51 */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
-   /* 52 */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
+   /* 51 */   { "???  ", 1,   ACC,  2,  1,     OTHER,      0},
+   /* 52 */   { "???  ", 1,   ACC,  2,  1,     OTHER,      0},
    /* 53 */   { "COM B", 0,   ACC,  2,  1,     OTHER, op_COM},
    /* 54 */   { "LSR B", 0,   ACC,  2,  1,     OTHER, op_LSR},
-   /* 55 */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
+   /* 55 */   { "???  ", 1,   ACC,  2,  1,     OTHER,      0},
    /* 56 */   { "ROR B", 0,   ACC,  2,  1,     OTHER, op_ROR},
    /* 57 */   { "ASR B", 0,   ACC,  2,  1,     OTHER, op_ASR},
    /* 58 */   { "ASL B", 0,   ACC,  2,  1,     OTHER, op_ASL},
    /* 59 */   { "ROL B", 0,   ACC,  2,  1,     OTHER, op_ROL},
    /* 5A */   { "DEC B", 0,   ACC,  2,  1,     OTHER, op_DEC},
-   /* 5B */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
+   /* 5B */   { "???  ", 1,   ACC,  2,  1,     OTHER,      0},
    /* 5C */   { "INC B", 0,   ACC,  2,  1,     OTHER, op_INC},
    /* 5D */   { "TST B", 0,   ACC,  2,  1,     OTHER, op_TST},
-   /* 5E */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
+   /* 5E */   { "???  ", 1,   ACC,  2,  1,     OTHER,      0},
    /* 5F */   { "CLR B", 0,   ACC,  2,  1,     OTHER, op_CLR},
 
    /* 60 */   { "NEG  ", 0,  IDX8,  7, -1,     RMWOP, op_NEG},
-   /* 61 */   { "???  ", 1,   INH,  2, -1,     OTHER,      0},
-   /* 62 */   { "???  ", 1,   INH,  2, -1,     OTHER,      0},
+   /* 61 */   { "???  ", 1,  IDX8,  7, -1,     OTHER,      0},
+   /* 62 */   { "???  ", 1,  IDX8,  7, -1,     OTHER,      0},
    /* 63 */   { "COM  ", 0,  IDX8,  7, -1,     RMWOP, op_COM},
    /* 64 */   { "LSR  ", 0,  IDX8,  7, -1,     RMWOP, op_LSR},
-   /* 65 */   { "???  ", 1,   INH,  2, -1,     OTHER,      0},
+   /* 65 */   { "???  ", 1,  IDX8,  7, -1,     OTHER,      0},
    /* 66 */   { "ROR  ", 0,  IDX8,  7, -1,     RMWOP, op_ROR},
    /* 67 */   { "ASR  ", 0,  IDX8,  7, -1,     RMWOP, op_ASR},
    /* 68 */   { "ASL  ", 0,  IDX8,  7, -1,     RMWOP, op_ASL},
    /* 69 */   { "ROL  ", 0,  IDX8,  7, -1,     RMWOP, op_ROL},
    /* 6A */   { "DEC  ", 0,  IDX8,  7, -1,     RMWOP, op_DEC},
-   /* 6B */   { "???  ", 1,   INH,  2, -1,     OTHER,      0},
+   /* 6B */   { "???  ", 1,  IDX8,  7, -1,     OTHER,      0},
    /* 6C */   { "INC  ", 0,  IDX8,  7, -1,     RMWOP, op_INC},
    /* 6D */   { "TST  ", 0,  IDX8,  7, -1,    READOP, op_TST},
    /* 6E */   { "JMP  ", 0,  IDX8,  4, -1,  JSRJMPOP, op_JMP},
    /* 6F */   { "CLR  ", 0,  IDX8,  7, -1,   WRITEOP, op_CLR},
 
    /* 70 */   { "NEG  ", 0,  EXT8,  6, -1,     RMWOP, op_NEG},
-   /* 71 */   { "???  ", 1,   INH,  2, -1,     OTHER,      0},
-   /* 72 */   { "???  ", 1,   INH,  2, -1,     OTHER,      0},
+   /* 71 */   { "???  ", 1,  EXT8,  6, -1,     OTHER,      0},
+   /* 72 */   { "???  ", 1,  EXT8,  6, -1,     OTHER,      0},
    /* 73 */   { "COM  ", 0,  EXT8,  6, -1,     RMWOP, op_COM},
    /* 74 */   { "LSR  ", 0,  EXT8,  6, -1,     RMWOP, op_LSR},
-   /* 75 */   { "???  ", 1,   INH,  2, -1,     OTHER,      0},
+   /* 75 */   { "???  ", 1,  EXT8,  6, -1,     OTHER,      0},
    /* 76 */   { "ROR  ", 0,  EXT8,  6, -1,     RMWOP, op_ROR},
    /* 77 */   { "ASR  ", 0,  EXT8,  6, -1,     RMWOP, op_ASR},
    /* 78 */   { "ASL  ", 0,  EXT8,  6, -1,     RMWOP, op_ASL},
    /* 79 */   { "ROL  ", 0,  EXT8,  6, -1,     RMWOP, op_ROL},
    /* 7A */   { "DEC  ", 0,  EXT8,  6, -1,     RMWOP, op_DEC},
-   /* 7B */   { "???  ", 1,   INH,  2, -1,     OTHER,      0},
+   /* 7B */   { "???  ", 1,  EXT8,  6, -1,     OTHER,      0},
    /* 7C */   { "INC  ", 0,  EXT8,  6, -1,     RMWOP, op_INC},
    /* 7D */   { "TST  ", 0,  EXT8,  6, -1,    READOP, op_TST},
    /* 7E */   { "JMP  ", 0,  EXT8,  3, -1,  JSRJMPOP, op_JMP},
@@ -1620,11 +1620,11 @@ static InstrType instr_table_6800[] = {
    /* 80 */   { "SUB A", 0,  IMM8,  2,  0,     OTHER, op_SUB},
    /* 81 */   { "CMP A", 0,  IMM8,  2,  0,     OTHER, op_CMP},
    /* 82 */   { "SBC A", 0,  IMM8,  2,  0,     OTHER, op_SBC},
-   /* 83 */   { "???  ", 1,   INH,  2,  0,     OTHER,      0},
+   /* 83 */   { "???  ", 1,  IMM8,  2,  0,     OTHER,      0},
    /* 84 */   { "AND A", 0,  IMM8,  2,  0,     OTHER, op_AND},
    /* 85 */   { "BIT A", 0,  IMM8,  2,  0,     OTHER, op_BIT},
    /* 86 */   { "LDA A", 0,  IMM8,  2,  0,     OTHER, op_LDA},
-   /* 87 */   { "???  ", 1,   INH,  2,  0,     OTHER,      0},
+   /* 87 */   { "STA A", 1,  IMM8,  2,  0,     OTHER,      0},
    /* 88 */   { "EOR A", 0,  IMM8,  2,  0,     OTHER, op_EOR},
    /* 89 */   { "ADC A", 0,  IMM8,  2,  0,     OTHER, op_ADC},
    /* 8A */   { "ORA A", 0,  IMM8,  2,  0,     OTHER, op_ORA},
@@ -1632,12 +1632,12 @@ static InstrType instr_table_6800[] = {
    /* 8C */   { "CPX  ", 0, IMM16,  3,  0,     OTHER, op_CPX},
    /* 8D */   { "BSR  ", 0,   REL,  8,  0,  BRANCHOP, op_BSR},
    /* 8E */   { "LDS  ", 0, IMM16,  3,  0,     OTHER, op_LDS},
-   /* 8F */   { "???  ", 1,   INH,  2,  0,     OTHER,      0},
+   /* 8F */   { "STS  ", 1, IMM16,  4,  0,     OTHER,      0},
 
    /* 90 */   { "SUB A", 0,  DIR8,  3,  0,    READOP, op_SUB},
    /* 91 */   { "CMP A", 0,  DIR8,  3,  0,    READOP, op_CMP},
    /* 92 */   { "SBC A", 0,  DIR8,  3,  0,    READOP, op_SBC},
-   /* 93 */   { "???  ", 1,   INH,  2,  0,     OTHER,      0},
+   /* 93 */   { "???  ", 1,  DIR8,  3,  0,     OTHER,      0},
    /* 94 */   { "AND A", 0,  DIR8,  3,  0,    READOP, op_AND},
    /* 95 */   { "BIT A", 0,  DIR8,  3,  0,    READOP, op_BIT},
    /* 96 */   { "LDA A", 0,  DIR8,  3,  0,    READOP, op_LDA},
@@ -1647,14 +1647,14 @@ static InstrType instr_table_6800[] = {
    /* 9A */   { "ORA A", 0,  DIR8,  3,  0,    READOP, op_ORA},
    /* 9B */   { "ADD A", 0,  DIR8,  3,  0,    READOP, op_ADD},
    /* 9C */   { "CPX  ", 0, DIR16,  4,  0,    READOP, op_CPX},
-   /* 9D */   { "???  ", 1,   INH,  2,  0,     OTHER,      0},
+   /* 9D */   { "HCF  ", 1,   INH,  3,  0,     OTHER,      0},
    /* 9E */   { "LDS  ", 0, DIR16,  4,  0,    READOP, op_LDS},
    /* 9F */   { "STS  ", 0, DIR16,  5,  0,   WRITEOP, op_STS},
 
    /* A0 */   { "SUB A", 0,  IDX8,  5,  0,    READOP, op_SUB},
    /* A1 */   { "CMP A", 0,  IDX8,  5,  0,    READOP, op_CMP},
    /* A2 */   { "SBC A", 0,  IDX8,  5,  0,    READOP, op_SBC},
-   /* A3 */   { "???  ", 1,   INH,  2,  0,     OTHER,      0},
+   /* A3 */   { "???  ", 1,  IDX8,  5,  0,     OTHER,      0},
    /* A4 */   { "AND A", 0,  IDX8,  5,  0,    READOP, op_AND},
    /* A5 */   { "BIT A", 0,  IDX8,  5,  0,    READOP, op_BIT},
    /* A6 */   { "LDA A", 0,  IDX8,  5,  0,    READOP, op_LDA},
@@ -1671,7 +1671,7 @@ static InstrType instr_table_6800[] = {
    /* B0 */   { "SUB A", 0,  EXT8,  4,  0,    READOP, op_SUB},
    /* B1 */   { "CMP A", 0,  EXT8,  4,  0,    READOP, op_CMP},
    /* B2 */   { "SBC A", 0,  EXT8,  4,  0,    READOP, op_SBC},
-   /* B3 */   { "???  ", 1,   INH,  2,  0,     OTHER,      0},
+   /* B3 */   { "???  ", 1,  EXT8,  4,  0,     OTHER,      0},
    /* B4 */   { "AND A", 0,  EXT8,  4,  0,    READOP, op_AND},
    /* B5 */   { "BIT A", 0,  EXT8,  4,  0,    READOP, op_BIT},
    /* B6 */   { "LDA A", 0,  EXT8,  4,  0,    READOP, op_LDA},
@@ -1688,24 +1688,24 @@ static InstrType instr_table_6800[] = {
    /* C0 */   { "SUB B", 0,  IMM8,  2,  1,     OTHER, op_SUB},
    /* C1 */   { "CMP B", 0,  IMM8,  2,  1,     OTHER, op_CMP},
    /* C2 */   { "SBC B", 0,  IMM8,  2,  1,     OTHER, op_SBC},
-   /* C3 */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
+   /* C3 */   { "???  ", 1,  IMM8,  2,  1,     OTHER,      0},
    /* C4 */   { "AND B", 0,  IMM8,  2,  1,     OTHER, op_AND},
    /* C5 */   { "BIT B", 0,  IMM8,  2,  1,     OTHER, op_BIT},
    /* C6 */   { "LDA B", 0,  IMM8,  2,  1,     OTHER, op_LDA},
-   /* C7 */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
+   /* C7 */   { "STA B", 1,  IMM8,  2,  1,     OTHER,      0},
    /* C8 */   { "EOR B", 0,  IMM8,  2,  1,     OTHER, op_EOR},
    /* C9 */   { "ADC B", 0,  IMM8,  2,  1,     OTHER, op_ADC},
    /* CA */   { "ORA B", 0,  IMM8,  2,  1,     OTHER, op_ORA},
    /* CB */   { "ADD B", 0,  IMM8,  2,  1,     OTHER, op_ADD},
-   /* CC */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
-   /* CD */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
+   /* CC */   { "???  ", 1, IMM16,  3,  1,     OTHER,      0},
+   /* CD */   { "HCF  ", 1,   INH,  3,  1,     OTHER,      0},
    /* CE */   { "LDX  ", 0, IMM16,  3,  1,     OTHER, op_LDX},
-   /* CF */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
+   /* CF */   { "STX  ", 1, IMM16,  4,  1,     OTHER,      0},
 
    /* D0 */   { "SUB B", 0,  DIR8,  3,  1,    READOP, op_SUB},
    /* D1 */   { "CMP B", 0,  DIR8,  3,  1,    READOP, op_CMP},
    /* D2 */   { "SBC B", 0,  DIR8,  3,  1,    READOP, op_SBC},
-   /* D3 */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
+   /* D3 */   { "???  ", 1,  DIR8,  3,  1,     OTHER,      0},
    /* D4 */   { "AND B", 0,  DIR8,  3,  1,    READOP, op_AND},
    /* D5 */   { "BIT B", 0,  DIR8,  3,  1,    READOP, op_BIT},
    /* D6 */   { "LDA B", 0,  DIR8,  3,  1,    READOP, op_LDA},
@@ -1714,15 +1714,15 @@ static InstrType instr_table_6800[] = {
    /* D9 */   { "ADC B", 0,  DIR8,  3,  1,    READOP, op_ADC},
    /* DA */   { "ORA B", 0,  DIR8,  3,  1,    READOP, op_ORA},
    /* DB */   { "ADD B", 0,  DIR8,  3,  1,    READOP, op_ADD},
-   /* DC */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
-   /* DD */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
+   /* DC */   { "???  ", 1, DIR16,  4,  1,     OTHER,      0},
+   /* DD */   { "HCF  ", 1,   INH,  4,  1,     OTHER,      0},
    /* DE */   { "LDX  ", 0, DIR16,  4,  1,    READOP, op_LDX},
    /* DF */   { "STX  ", 0, DIR16,  5,  1,   WRITEOP, op_STX},
 
    /* E0 */   { "SUB B", 0,  IDX8,  5,  1,    READOP, op_SUB},
    /* E1 */   { "CMP B", 0,  IDX8,  5,  1,    READOP, op_CMP},
    /* E2 */   { "SBC B", 0,  IDX8,  5,  1,    READOP, op_SBC},
-   /* E3 */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
+   /* E3 */   { "???  ", 1,  IDX8,  5,  1,     OTHER,      0},
    /* E4 */   { "AND B", 0,  IDX8,  5,  1,    READOP, op_AND},
    /* E5 */   { "BIT B", 0,  IDX8,  5,  1,    READOP, op_BIT},
    /* E6 */   { "LDA B", 0,  IDX8,  5,  1,    READOP, op_LDA},
@@ -1731,15 +1731,15 @@ static InstrType instr_table_6800[] = {
    /* E9 */   { "ADC B", 0,  IDX8,  5,  1,    READOP, op_ADC},
    /* EA */   { "ORA B", 0,  IDX8,  5,  1,    READOP, op_ORA},
    /* EB */   { "ADD B", 0,  IDX8,  5,  1,    READOP, op_ADD},
-   /* EC */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
-   /* ED */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
+   /* EC */   { "???  ", 1, IDX16,  6,  1,     OTHER,      0},
+   /* ED */   { "HCF  ", 1,   INH,  6,  1,     OTHER,      0},
    /* EE */   { "LDX  ", 0, IDX16,  6,  1,    READOP, op_LDX},
    /* EF */   { "STX  ", 0, IDX16,  7,  1,   WRITEOP, op_STX},
 
    /* F0 */   { "SUB B", 0,  EXT8,  4,  1,    READOP, op_SUB},
    /* F1 */   { "CMP B", 0,  EXT8,  4,  1,    READOP, op_CMP},
    /* F2 */   { "SBC B", 0,  EXT8,  4,  1,    READOP, op_SBC},
-   /* F3 */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
+   /* F3 */   { "???  ", 1,  EXT8,  4,  1,     OTHER,      0},
    /* F4 */   { "AND B", 0,  EXT8,  4,  1,    READOP, op_AND},
    /* F5 */   { "BIT B", 0,  EXT8,  4,  1,    READOP, op_BIT},
    /* F6 */   { "LDA B", 0,  EXT8,  4,  1,    READOP, op_LDA},
@@ -1748,8 +1748,8 @@ static InstrType instr_table_6800[] = {
    /* F9 */   { "ADC B", 0,  EXT8,  4,  1,    READOP, op_ADC},
    /* FA */   { "ORA B", 0,  EXT8,  4,  1,    READOP, op_ORA},
    /* FB */   { "ADD B", 0,  EXT8,  4,  1,    READOP, op_ADD},
-   /* FC */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
-   /* DD */   { "???  ", 1,   INH,  2,  1,     OTHER,      0},
+   /* FC */   { "???  ", 1, EXT16,  5,  1,     OTHER,      0},
+   /* FD */   { "HCF  ", 1,   INH,  5,  1,     OTHER,      0},
    /* FE */   { "LDX  ", 0, EXT16,  5,  1,    READOP, op_LDX},
    /* FF */   { "STX  ", 0, EXT16,  6,  1,   WRITEOP, op_STX}
 };

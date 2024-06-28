@@ -310,6 +310,37 @@ static void init_elk(int logtube) {
 }
 
 // ==================================================
+// MEK6800D2 Memory Handlers
+// ==================================================
+
+// RAM from 0000->01FF aliased 8 times from 0000->1FFF
+//     (i.e. A10,11,12 are don't care)
+// RAM from A000->A080 aliases 8 times from A000->AFFF
+//     (i.e. A9,10,11 are don't care)
+//
+// TODO: correctly handle aliasing
+
+static void memory_read_mek6800d2(int data, int ea) {
+   if (ea < 0x2000 || (ea >= 0xA000 && ea <= 0xAFFF)) {
+      if (memory[ea] >= 0 && memory[ea] != data) {
+         log_memory_fail(ea,memory[ea], data);
+         failflag |= 1;
+      }
+   }
+   memory[ea] = data;
+}
+
+static int memory_write_mek6800d2(int data, int ea) {
+   memory[ea] = data;
+   return 0;
+}
+
+static void init_mek6800d2(int logtube) {
+   memory_read_fn  = memory_read_mek6800d2;
+   memory_write_fn = memory_write_mek6800d2;
+}
+
+// ==================================================
 // Atom Memory Handlers
 // ==================================================
 
@@ -374,6 +405,9 @@ void memory_init(int size, machine_t machine, int logtube) {
       break;
    case MACHINE_ATOM:
       init_atom(logtube);
+      break;
+   case MACHINE_MEK6800D2:
+      init_mek6800d2(logtube);
       break;
    default:
       init_default(logtube);

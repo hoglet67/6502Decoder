@@ -1520,8 +1520,8 @@ int main(int argc, char *argv[]) {
    memory_set_wr_logging((arguments.mem_model >> 8) & 0x0f);
 
    // Validate options compatibility with CPU
-   if (arguments.cpu_type != CPU_6502 && arguments.undocumented) {
-      fprintf(stderr, "--undocumented is only applicable to the 6502\n");
+   if (arguments.cpu_type != CPU_6502 && arguments.cpu_type != CPU_6800 && arguments.undocumented) {
+      fprintf(stderr, "--undocumented is only applicable to the 6502/6800\n");
       return 1;
    }
    if (arguments.cpu_type == CPU_65C816) {
