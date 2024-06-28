@@ -687,6 +687,8 @@ static void do_add(int *acc, int operand, int carry) {
       int tmp = *acc + operand + carry;
       C = (tmp >> 8) & 1;
       V = (((*acc ^ operand) & 0x80) == 0) && (((*acc ^ tmp) & 0x80) != 0);
+      // Taken from the 6809 decoder
+      H =  ((*acc ^ operand ^ tmp) >> 4) & 1;
       *acc = tmp & 0xff;
       set_NZ(*acc);
    } else {
@@ -1089,8 +1091,28 @@ static int op_CPX(operand_t operand, int *acc, sample_t *sample_q) {
    return -1;
 }
 
+// Taken from the 6809 decoder
 static int op_DAA(operand_t operand, int *acc, sample_t *sample_q) {
-   // TODO
+   if (A >= 0 && H >= 0 && C >= 0) {
+      int correction = 0x00;
+      if (H == 1 || (A & 0x0f) > 0x09) {
+         correction |= 0x06;
+      }
+      if (C == 1 || (A & 0xf0) > 0x90 || ((A & 0xf0) > 0x80 && (A & 0x0f) > 0x09)) {
+         correction |= 0x60;
+      }
+      int tmp = A + correction;
+      // TODO: On the 6809 C is apparently only ever set by DAA, never cleared
+      C = (tmp >> 8) & 1;
+      // V is is calculated as follows on both the 6809 and the 6309
+      V = ((tmp >> 7) & 1) ^ C;
+      tmp &= 0xff;
+      set_NZ(tmp);
+      A = tmp;
+   } else {
+      A = -1;
+      set_NZC_unknown();
+   }
    return -1;
 }
 
