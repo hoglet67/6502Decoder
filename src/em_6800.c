@@ -708,8 +708,8 @@ static void do_add(int *acc, int operand, int carry) {
 
 static void do_sub(int *acc, int operand, int carry) {
    if (*acc >= 0 && operand >= 0 && carry >= 0) {
-      int tmp = *acc - operand - (1 - carry);
-      C = 1 - ((tmp >> 8) & 1);
+      int tmp = *acc - operand - carry;
+      C = (tmp >> 8) & 1;
       V = (((*acc ^ operand) & 0x80) != 0) && (((*acc ^ tmp) & 0x80) != 0);
       *acc = tmp & 0xff;
       set_NZ(*acc);
@@ -722,7 +722,7 @@ static void do_sub(int *acc, int operand, int carry) {
 static void do_cmp(int *acc, int operand) {
    if (*acc >= 0 && operand >= 0) {
       int tmp = *acc - operand;
-      C = 1 - ((tmp >> 8) & 1);
+      C = (tmp >> 8) & 1;
       V = (((*acc ^ operand) & 0x80) != 0) && (((*acc ^ tmp) & 0x80) != 0);
       set_NZ(tmp & 0xff);
    } else {
