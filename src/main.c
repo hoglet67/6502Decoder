@@ -242,6 +242,19 @@ static cpu_name_t cpu_names[] = {
    {NULL, 0}
 };
 
+static int cpu_rst_delay[] = {
+   9, // CPU_UNKNOWN
+   9, // CPU_6502
+   9, // CPU_6502_ARLET
+   8, // CPU_65C02
+   8, // CPU_65C02_ROCKWELL
+   8, // CPU_65C02_WDC
+   9, // CPU_65C02_ARLET
+   9, // CPU_65C02_ALAND
+   9, // CPU_65C816
+   3, // CPU_6800
+};
+
 static struct argp_option options[] = {
    { 0, 0, 0, 0, "General options:", GROUP_GENERAL},
 
@@ -1057,7 +1070,7 @@ int decode_instruction(sample_t *sample_q, int num_samples) {
       }
       if (notype) {
          // Do this by dead reconning
-         rst_seen = (arguments.cpu_type == CPU_65C02 || arguments.cpu_type == CPU_65C02_ROCKWELL || arguments.cpu_type == CPU_65C02_WDC) ? 8 : 9;
+         rst_seen = cpu_rst_delay[arguments.cpu_type];
          // We could also check the vector
       } else {
          if (sample_q[7].type == OPCODE) {
@@ -1175,6 +1188,9 @@ void decode(FILE *stream) {
    int idx_vpa   = arguments.idx_vpa;
    int idx_e     = arguments.idx_e;
 
+   // Invert RDY polarity on the 6800 to allow it to be driven from BA
+   int rdy_pol = (arguments.cpu_type == CPU_6800) ? 0 : 1;
+
    // Handle clock inversion of phi1 used rather than phi2
    int idx_phi = -1;
    int clk_pol = 0;
@@ -1243,8 +1259,8 @@ void decode(FILE *stream) {
          uint16_t *sampleptr = &buffer[0];
          while (num-- > 0) {
             uint16_t sample = *sampleptr++;
-            // Drop samples where RDY=0
-            if (idx_rdy < 0 || ((sample >> idx_rdy) & 1)) {
+            // Drop samples where RDY=0 (or BA=1 for 6800)
+            if (idx_rdy < 0 || (((sample >> idx_rdy) & 1) == rdy_pol)) {
                s.type = build_sample_type(sample, idx_vpa, idx_vda, idx_sync);
                if (idx_rnw >= 0) {
                   s.rnw = (sample >> idx_rnw ) & 1;
