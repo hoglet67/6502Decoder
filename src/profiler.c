@@ -70,6 +70,7 @@ void profiler_output_helper(address_t *profile_counts, int show_bars, int show_o
 
    uint32_t   max_cycles = 0;
    uint64_t total_cycles = 0;
+   uint64_t page_crossing_cycles = 0;
    uint64_t  total_instr = 0;
    double  total_percent = 0.0;
    double      bar_scale;
@@ -84,6 +85,18 @@ void profiler_output_helper(address_t *profile_counts, int show_bars, int show_o
       }
       total_cycles += ptr->cycles;
       total_instr += ptr->instructions;
+      if (em && ptr->cycles) {
+         int opcode = em->read_memory(addr);
+         // TODO: BRA (0x80) should only be counted on the C02/C816
+         if (((opcode & 0x1f) == 0x10) || (opcode == 0x80)) {
+            int offset = em->read_memory(addr + 1);
+            // Is the target in a different page?
+            if (((addr + 2) & 0xff00) != ((addr + 2 + (int8_t)offset) & 0xff00)) {
+               // A small amount of maths gives us the cycles that could be saved if the branch were in the same page
+               page_crossing_cycles += (ptr->cycles - 2 * ptr->instructions) / 2;
+            }
+         }
+      }
       ptr++;
    }
 
@@ -140,4 +153,5 @@ void profiler_output_helper(address_t *profile_counts, int show_bars, int show_o
       ptr++;
    }
    printf("     : %8" PRIu64 " cycles (%10.6f%%) %8" PRIu64 " ins (%4.2f cpi)\n", total_cycles, total_percent, total_instr, (double) total_cycles / (double) total_instr);
+   printf("     : %8" PRIu64 " branch page crossing cycles (%10.6f%%)\n",page_crossing_cycles, (double) page_crossing_cycles * 100.0 / (double) total_cycles);
 }
