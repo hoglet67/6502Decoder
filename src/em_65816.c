@@ -1262,7 +1262,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
    // See RMW comment above for bus cycles
    operand_t operand2 = operand;
    if (instr->optype == RMWOP) {
-      if (E == 0 && MS == 0) {
+      if (E == 0 && ((instr->m_extra && (MS == 0)) || (instr->x_extra && (XS == 0)))) {
          // 16-bit - byte ordering is high then low
          operand2 = (sample_q[num_cycles - 2].data << 8) + sample_q[num_cycles - 1].data;
       } else {
@@ -1270,7 +1270,7 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
          operand2 = sample_q[num_cycles - 1].data;
       }
    } else if (instr->optype == WRITEOP) {
-      if (E == 0 && MS == 0) {
+      if (E == 0 && ((instr->m_extra && (MS == 0)) || (instr->x_extra && (XS == 0)))) {
          // 16-bit - byte ordering is low then high
          operand2 = (sample_q[num_cycles - 1].data << 8) + sample_q[num_cycles - 2].data;
       } else {
