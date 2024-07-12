@@ -1110,8 +1110,8 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
             memory_read(sample_q[2 + dpextra].data, (DP & 0xFF00) +                op1, MEM_POINTER);
             memory_read(sample_q[3 + dpextra].data, (DP & 0xFF00) + ((op1 + 1) & 0xff), MEM_POINTER);
          } else {
-            memory_read(sample_q[2 + dpextra].data, DP + op1    , MEM_POINTER);
-            memory_read(sample_q[3 + dpextra].data, DP + op1 + 1, MEM_POINTER);
+            memory_read(sample_q[2 + dpextra].data, (DP + op1    ) & 0xffff, MEM_POINTER);
+            memory_read(sample_q[3 + dpextra].data, (DP + op1 + 1) & 0xffff, MEM_POINTER);
          }
       }
       break;
@@ -1122,8 +1122,8 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
             memory_read(sample_q[3 + dpextra].data, (DP & 0xFF00) + ((op1 + X    ) & 0xff), MEM_POINTER);
             memory_read(sample_q[4 + dpextra].data, (DP & 0xFF00) + ((op1 + X + 1) & 0xff), MEM_POINTER);
          } else {
-            memory_read(sample_q[3 + dpextra].data, DP + op1 + X    , MEM_POINTER);
-            memory_read(sample_q[4 + dpextra].data, DP + op1 + X + 1, MEM_POINTER);
+            memory_read(sample_q[3 + dpextra].data, (DP + op1 + X    ) & 0xffff, MEM_POINTER);
+            memory_read(sample_q[4 + dpextra].data, (DP + op1 + X + 1) & 0xffff, MEM_POINTER);
          }
       }
       break;
@@ -1134,8 +1134,8 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
             memory_read(sample_q[2 + dpextra].data, (DP & 0xFF00) + op1               , MEM_POINTER);
             memory_read(sample_q[3 + dpextra].data, (DP & 0xFF00) + ((op1 + 1) & 0xff), MEM_POINTER);
          } else {
-            memory_read(sample_q[2 + dpextra].data, DP + op1    , MEM_POINTER);
-            memory_read(sample_q[3 + dpextra].data, DP + op1 + 1, MEM_POINTER);
+            memory_read(sample_q[2 + dpextra].data, (DP + op1    ) & 0xffff, MEM_POINTER);
+            memory_read(sample_q[3 + dpextra].data, (DP + op1 + 1) & 0xffff, MEM_POINTER);
          }
       }
       break;
@@ -1151,18 +1151,18 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       // e.g. LDA [80]
       // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> <bank> <operand>
       if (DP >= 0) {
-         memory_read(sample_q[2 + dpextra].data, DP + op1    , MEM_POINTER);
-         memory_read(sample_q[3 + dpextra].data, DP + op1 + 1, MEM_POINTER);
-         memory_read(sample_q[4 + dpextra].data, DP + op1 + 2, MEM_POINTER);
+         memory_read(sample_q[2 + dpextra].data, (DP + op1    ) & 0xffff, MEM_POINTER);
+         memory_read(sample_q[3 + dpextra].data, (DP + op1 + 1) & 0xffff, MEM_POINTER);
+         memory_read(sample_q[4 + dpextra].data, (DP + op1 + 2) & 0xffff, MEM_POINTER);
       }
       break;
    case IDLY:
       // e.g. LDA [80],Y
       // <opcode> <op1> [ <dpextra> ] <addrlo> <addrhi> <bank> <operand>
       if (DP >= 0) {
-         memory_read(sample_q[2 + dpextra].data, DP + op1    , MEM_POINTER);
-         memory_read(sample_q[3 + dpextra].data, DP + op1 + 1, MEM_POINTER);
-         memory_read(sample_q[4 + dpextra].data, DP + op1 + 2, MEM_POINTER);
+         memory_read(sample_q[2 + dpextra].data, (DP + op1    ) & 0xffff, MEM_POINTER);
+         memory_read(sample_q[3 + dpextra].data, (DP + op1 + 1) & 0xffff, MEM_POINTER);
+         memory_read(sample_q[4 + dpextra].data, (DP + op1 + 2) & 0xffff, MEM_POINTER);
       }
       break;
    case IAL:
