@@ -638,7 +638,7 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
       }
    }
 
-   // Account for extra cycle in a page crossing in absolute indexed (not stores or rmw) in emulated mode
+   // Account for extra cycle in a page crossing in absolute indexed (not stores or rmw)
    if (((instr->mode == ABSX) || (instr->mode == ABSY)) && (instr->optype == READOP)) {
       int correction = -1;
       int index = (instr->mode == ABSX) ? X : Y;
@@ -650,19 +650,19 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
             correction = 0;
          }
       }
-      // E  C
-      // 1  1    1
-      // ?  ?    ?
-      // ?  1    ?
-      // 1  ?    ?
-      // ?  0    0
-      // 0  ?    0
-      // 0  0    0
-      // 0  1    0
-      // 1  0    0
-      if (E > 0 && correction > 0) {
+      // XS  C
+      //  ?  ?    ?
+      //  ?  0    ?
+      //  ?  1    1
+      //  0  ?    1
+      //  0  0    1
+      //  0  1    1
+      //  1  ?    ?
+      //  1  0    0
+      //  1  1    1
+      if (XS == 0 || correction == 1) {
          cycle_count++;
-      } else if (!(E == 0 || correction == 0)) {
+      } else if (XS < 0 || correction < 0) {
          return -1;
       }
    }
@@ -886,10 +886,6 @@ static void em_65816_init(arguments_t *args) {
          for (int j = 0; m1_ops[j]; j++) {
             if (!strcmp(instr->mnemonic, m1_ops[j])) {
                instr->m_extra++;
-               if (instr->optype == READOP && (instr->mode == ABSX || instr->mode == ABSY)) {
-                  // add 1 further cycle if x=0: ABS,X or ABS,Y
-                  instr->x_extra++;
-               }
                break;
             }
          }
@@ -904,10 +900,6 @@ static void em_65816_init(arguments_t *args) {
          for (int j = 0; x1_ops[j]; j++) {
             if (!strcmp(instr->mnemonic, x1_ops[j])) {
                instr->x_extra++;
-               if (instr->mode == ABSX || instr->mode == ABSY) {
-                  // add 1 further cycle if x=0: LDX ABS,Y or LDY ABS,X
-                  instr->x_extra++;
-               }
                break;
             }
          }
