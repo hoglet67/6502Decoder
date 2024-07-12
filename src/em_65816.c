@@ -262,6 +262,17 @@ static void check_FLAGS(int operand) {
    failflag |= compare_FLAGS(operand);
 }
 
+static void x_flag_updated() {
+   if (XS) {
+      if (X >= 0) {
+         X &= 0x00ff;
+      }
+      if (Y >= 0) {
+         Y &= 0x00ff;
+      }
+   }
+}
+
 static void set_FLAGS(int operand) {
    N = (operand >> 7) & 1;
    V = (operand >> 6) & 1;
@@ -272,6 +283,7 @@ static void set_FLAGS(int operand) {
       MS = 1;
       XS = 1;
    }
+   x_flag_updated();
    D = (operand >> 3) & 1;
    I = (operand >> 2) & 1;
    Z = (operand >> 1) & 1;
@@ -774,12 +786,7 @@ static void emulation_mode_on() {
    }
    MS = 1;
    XS = 1;
-   if (X >= 0) {
-      X &= 0x00ff;
-   }
-   if (Y >= 0) {
-      Y &= 0x00ff;
-   }
+   x_flag_updated();
    SH = 0x01;
    E = 1;
 }
@@ -808,6 +815,7 @@ static void check_and_set_xs(int val) {
       failflag = 1;
    }
    XS = val;
+   x_flag_updated();
    // Evidence of XS = 0 implies E = 0
    if (XS == 0) {
       emulation_mode_off();
@@ -1900,6 +1908,7 @@ static void repsep(int operand, int val) {
       }
       if (operand & 0x10) {
          XS = val;
+         x_flag_updated();
       }
    }
    if (operand & 0x08) {
