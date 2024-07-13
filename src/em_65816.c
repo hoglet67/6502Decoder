@@ -1774,11 +1774,28 @@ static int op_MV(int data, int sba, int dba, int dir) {
       int C = (((B << 8) | A) - 1) & 0xffff;
       A = C & 0xff;
       B = (C >> 8) & 0xff;
-      if (X >= 0) {
-         X = (X + dir) & 0xffff;
-      }
-      if (Y >= 0) {
-         Y = (Y + dir) & 0xffff;
+      if (XS > 0) {
+         // 8-bit mode
+         if (X >= 0) {
+            X = (X + dir) & 0xff;
+         }
+         if (Y >= 0) {
+            Y = (Y + dir) & 0xff;
+         }
+      } else if (XS == 0) {
+         // 16-bit mode
+         if (X >= 0) {
+            X = (X + dir) & 0xffff;
+         }
+         if (Y >= 0) {
+            Y = (Y + dir) & 0xffff;
+         }
+      } else {
+         // mode undefined
+         // TODO: we could be less pessimistic and only go to undefined
+         // when a page boundary is crossed
+         X = -1;
+         Y = -1;
       }
       if (PC >= 0 && C != 0xffff) {
          PC -= 3;
