@@ -1165,14 +1165,35 @@ static void em_65816_emulate(sample_t *sample_q, int num_cycles, instruction_t *
       }
       break;
    case INDX:
+
+      // In emulation mode when the low byte of D is nonzero, the
+      // (direct,X) addressing mode behaves strangely:
+      //
+      // The low byte of the indirect address is read from
+      // `direct_addr+X+D` without page wrapping (as expected).
+      //
+      // The high byte is read from `direct_addr+X+D+1`, but the +1 is
+      // done *with* wrapping within the page.
+      //
+      // For example: Emulation=1, D=$11A, X=$EE, and the instruction
+      // is `lda ($F7,X)`. Here $F7 + $11A + $EE = $2FF. The low byte
+      // of the address is read from $2FF and the high byte from
+      // $200. This behavior only applies to this addressing mode, and
+      // not to other indirect modes.
+
       // <opcode> <op1> [ <dpextra> ] <dummy> <addrlo> <addrhi> <operand>
       if (DP >= 0 && X >= 0) {
          if (wrap) {
             memory_read(sample_q[3 + dpextra].data, (DP & 0xFF00) + ((op1 + X    ) & 0xff), MEM_POINTER);
             memory_read(sample_q[4 + dpextra].data, (DP & 0xFF00) + ((op1 + X + 1) & 0xff), MEM_POINTER);
          } else {
-            memory_read(sample_q[3 + dpextra].data, (DP + op1 + X    ) & 0xffff, MEM_POINTER);
-            memory_read(sample_q[4 + dpextra].data, (DP + op1 + X + 1) & 0xffff, MEM_POINTER);
+            memory_read(sample_q[3 + dpextra].data, (DP + op1 + X) & 0xffff, MEM_POINTER);
+            if (E) {
+               // This one is very strange, see above cooment
+               memory_read(sample_q[4 + dpextra].data, ((DP + op1 + X) & 0xff00) + ((DP + op1 + X + 1) & 0xff), MEM_POINTER);
+            } else {
+               memory_read(sample_q[4 + dpextra].data, (DP + op1 + X + 1) & 0xffff, MEM_POINTER);
+            }
          }
       }
       break;
