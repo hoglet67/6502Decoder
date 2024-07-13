@@ -1897,6 +1897,12 @@ static int op_TCD(operand_t operand, ea_t ea) {
 static int op_TCS(operand_t operand, ea_t ea) {
    SH = B;
    SL = A;
+   // Force SH to be 1 in emulation mode
+   if (E == 1) {
+      SH = 1;
+   } else if (E < 0 && SH != 1) {
+      SH = -1;
+   }
    return -1;
 }
 
@@ -3008,9 +3014,11 @@ static int op_TXS(operand_t operand, ea_t ea) {
       SH = -1;
       SL = -1;
    }
-   // Force SH to be 01 in emulation mode
+   // Force SH to be 1 in emulation mode
    if (E == 1) {
-      SH = 0x01;
+      SH = 1;
+   } else if (E < 0 && SH != 1) {
+      SH = -1;
    }
    return -1;
 }
