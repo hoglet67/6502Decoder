@@ -365,6 +365,61 @@ static void init_atom(int logtube) {
 }
 
 // ==================================================
+// Blitter (65816) Memory Handlers
+// ==================================================
+
+static int boot_mode = 0x20;
+
+static inline int remap_address_blitter(int ea) {
+   if (boot_mode && ((ea & 0xff0000) == 0)) {
+      ea |= 0xff0000;
+   }
+   return ea;
+}
+
+static inline int *get_memptr_blitter(int ea) {
+   if (ea >= 0xff8000 && ea < 0xffC000) {
+      return swrom + (rom_latch << 14) + (ea & 0x3FFF);
+   } else {
+      return memory + ea;
+   }
+}
+
+static void memory_read_blitter(int data, int ea) {
+   ea = remap_address_blitter(ea);
+   if (ea < 0xfffc00 || ea >= 0xffff00) {
+      int *memptr = get_memptr_blitter(ea);
+      if (*memptr >=0 && *memptr != data) {
+         log_memory_fail(ea, *memptr, data);
+         failflag |= 1;
+      }
+      *memptr = data;
+   }
+}
+
+static int memory_write_blitter(int data, int ea) {
+   ea = remap_address_blitter(ea);
+   if (ea == 0xfffe30) {
+      set_rom_latch(data & 0xf);
+   }
+   if (ea == 0xfffe31) {
+      boot_mode = data & 0x20;
+   }
+   int *memptr = get_memptr_blitter(ea);
+   *memptr = data;
+   return 0;
+}
+
+static void init_blitter(int logtube) {
+   swrom = init_ram(SWROM_NUM_BANKS * SWROM_SIZE);
+   memory_read_fn  = memory_read_blitter;
+   memory_write_fn = memory_write_blitter;
+   if (logtube) {
+      set_tube_window(0xfee0, 0xfee8);
+   }
+}
+
+// ==================================================
 // Default Memory Handlers
 // ==================================================
 
@@ -408,6 +463,9 @@ void memory_init(int size, machine_t machine, int logtube) {
       break;
    case MACHINE_MEK6800D2:
       init_mek6800d2(logtube);
+      break;
+   case MACHINE_BLITTER:
+      init_blitter(logtube);
       break;
    default:
       init_default(logtube);
