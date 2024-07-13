@@ -10,6 +10,7 @@ typedef enum {
    MACHINE_ELK,
    MACHINE_ATOM,
    MACHINE_MEK6800D2,
+   MACHINE_BLITTER,
 } machine_t;
 
 typedef enum {

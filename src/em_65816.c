@@ -385,11 +385,7 @@ static void set_NZ_AB(int A, int B) {
    }
 }
 
-// TODO: Stack wrapping im emulation mode should only happen with "old" instructions
-// e.g. PLB should not wrap
-// See appendix of 65C816 Opcodes by Bruce Clark
-
-static void pop8(int value) {
+static void incSP() {
    // Increment the low byte of SP
    if (SL >= 0) {
       SL = (SL + 1) & 0xff;
@@ -410,21 +406,9 @@ static void pop8(int value) {
    } else {
       SH = -1;
    }
-   // Handle the memory access
-   if (SL >= 0 && SH >= 0) {
-      memory_read(value & 0xff, (SH << 8) + SL, MEM_STACK);
-   }
 }
 
-// TODO: Stack wrapping im emulation mode should only happen with "old" instructions
-// e.g. PLB should not wrap
-// See appendix of 65C816 Opcodes by Bruce Clark
-
-static void push8(int value) {
-   // Handle the memory access
-   if (SL >= 0 && SH >= 0) {
-      memory_write(value & 0xff, (SH << 8) + SL, MEM_STACK);
-   }
+static void decSP() {
    // Decrement the low byte of SP
    if (SL >= 0) {
       SL = (SL - 1) & 0xff;
@@ -447,6 +431,32 @@ static void push8(int value) {
    }
 }
 
+// TODO: Stack wrapping im emulation mode should only happen with "old" instructions
+// e.g. PLB should not wrap
+// See appendix of 65C816 Opcodes by Bruce Clark
+
+static void pop8(int value) {
+   // Update the stack pointer
+   incSP();
+   // Handle the memory access
+   if (SL >= 0 && SH >= 0) {
+      memory_read(value & 0xff, (SH << 8) + SL, MEM_STACK);
+   }
+}
+
+// TODO: Stack wrapping im emulation mode should only happen with "old" instructions
+// e.g. PLB should not wrap
+// See appendix of 65C816 Opcodes by Bruce Clark
+
+static void push8(int value) {
+   // Handle the memory access
+   if (SL >= 0 && SH >= 0) {
+      memory_write(value & 0xff, (SH << 8) + SL, MEM_STACK);
+   }
+   // Decrement/wrap the stack pointer
+   decSP();
+}
+
 static void pop16(int value) {
    pop8(value);
    pop8(value >> 8);
@@ -455,6 +465,16 @@ static void pop16(int value) {
 static void push16(int value) {
    push8(value >> 8);
    push8(value);
+}
+
+static void push16new(int value) {
+   // Handle the memory access
+   if (SL >= 0 && SH >= 0) {
+      memory_write((value >> 8) & 0xff, (SH << 8) + SL, MEM_STACK);
+      memory_write(value & 0xff, ((SH << 8) + SL - 1) & 0xffff, MEM_STACK);
+   }
+   decSP();
+   decSP();
 }
 
 static void popXS(int value) {
@@ -2424,6 +2444,12 @@ static int op_JSR(operand_t operand, ea_t ea) {
    return -1;
 }
 
+static int op_JSR_new(operand_t operand, ea_t ea) {
+   // JSR: the operand is the data pushed to the stack (PCH, PCL)
+   push16new(operand);  // PC
+   return -1;
+}
+
 static int op_LDA(operand_t operand, ea_t ea) {
    A = operand & 0xff;
    if (MS == 0) {
@@ -3178,7 +3204,7 @@ static InstrType instr_table_65c816[] = {
    /* F9 */   { "SBC",  0, ABSY  , 4, 0, READOP,   op_SBC},
    /* FA */   { "PLX",  0, IMP   , 4, 0, OTHER,    op_PLX},
    /* FB */   { "XCE",  0, IMP   , 2, 1, OTHER,    op_XCE},
-   /* FC */   { "JSR",  0, IND1X , 8, 1, OTHER,    op_JSR},
+   /* FC */   { "JSR",  0, IND1X , 8, 1, OTHER,    op_JSR_new},
    /* FD */   { "SBC",  0, ABSX  , 4, 0, READOP,   op_SBC},
    /* FE */   { "INC",  0, ABSX  , 7, 0, RMWOP,    op_INC},
    /* FF */   { "SBC",  0, ALX   , 5, 1, READOP,   op_SBC}
