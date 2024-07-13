@@ -52,6 +52,7 @@ test_options[romcopy_hipoke_17]="--emul=1 --pb=00 --db=00 --dp=0000"
 # Tests to run in native mode
  test_options[hog816_interrupt]="--emul=0 --pb=01 --db=01 --dp=1900 --sp=01FD"
     test_options[hog816_native]="--emul=0 --pb=01 --db=01 --dp=1900"
+       test_options[snes_tests]="--machine=blitter --emul=0 --pb=00 --db=00 --dp=0000"
 
 for data in `find 816* -name '*.data' | sort`
 do
