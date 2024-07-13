@@ -1691,21 +1691,21 @@ cpu_emulator_t em_65816 = {
 // Push Effective Absolute Address
 static int op_PEA(operand_t operand, ea_t ea) {
    // always pushes a 16-bit value
-   push16(ea);
+   push16new(ea);
    return -1;
 }
 
 // Push Effective Relative Address
 static int op_PER(operand_t operand, ea_t ea) {
    // always pushes a 16-bit value
-   push16(ea);
+   push16new(ea);
    return -1;
 }
 
 // Push Effective Indirect Address
 static int op_PEI(operand_t operand, ea_t ea) {
    // always pushes a 16-bit value
-   push16(operand);
+   push16new(operand);
    return -1;
 }
 
