@@ -385,6 +385,7 @@ static void set_NZ_AB(int A, int B) {
    }
 }
 
+// Helper routine to handle incrementing the stack pointer
 static void incSP() {
    // Increment the low byte of SP
    if (SL >= 0) {
@@ -408,6 +409,7 @@ static void incSP() {
    }
 }
 
+// Helper routine to handle decrementing the stack pointer
 static void decSP() {
    // Decrement the low byte of SP
    if (SL >= 0) {
@@ -431,12 +433,9 @@ static void decSP() {
    }
 }
 
-// TODO: Stack wrapping im emulation mode should only happen with "old" instructions
-// e.g. PLB should not wrap
-// See appendix of 65C816 Opcodes by Bruce Clark
-
+// pop one byte off the stack - used by "old" instructions
 static void pop8(int value) {
-   // Update the stack pointer
+   // Increment/wrap the stack pointer
    incSP();
    // Handle the memory access
    if (SL >= 0 && SH >= 0) {
@@ -444,10 +443,50 @@ static void pop8(int value) {
    }
 }
 
-// TODO: Stack wrapping im emulation mode should only happen with "old" instructions
-// e.g. PLB should not wrap
-// See appendix of 65C816 Opcodes by Bruce Clark
+// pop one byte off the stack - used by "new" instructions
+static void pop8new(int value) {
+   // Handle the memory access
+   if (SL >= 0 && SH >= 0) {
+      memory_read(value & 0xff, ((SH << 8) + SL + 1) & 0xffff, MEM_STACK);
+   }
+   // Increment/wrap the stack pointer
+   incSP();
+}
 
+// pop two bytes off the stack - used by "old" instructions
+static void pop16(int value) {
+   pop8(value);
+   pop8(value >> 8);
+}
+
+
+// pop two bytes off the stack - used by "new" instructions (e.g. PLD)
+static void pop16new(int value) {
+   // Handle the memory access
+   if (SL >= 0 && SH >= 0) {
+      memory_read( value       & 0xff, ((SH << 8) + SL + 1) & 0xffff, MEM_STACK);
+      memory_read((value >> 8) & 0xff, ((SH << 8) + SL + 2) & 0xffff, MEM_STACK);
+   }
+   // Increment/wrap the stack pointer
+   incSP();
+   incSP();
+}
+
+// pop three bytes off the stack - used by "new" instructions (e.g.RTL)
+static void pop24new(int value) {
+   // Handle the memory access
+   if (SL >= 0 && SH >= 0) {
+      memory_read( value        & 0xff, ((SH << 8) + SL + 1) & 0xffff, MEM_STACK); // PCL
+      memory_read((value >>  8) & 0xff, ((SH << 8) + SL + 2) & 0xffff, MEM_STACK); // PCH
+      memory_read((value >> 16) & 0xff, ((SH << 8) + SL + 3) & 0xffff, MEM_STACK); // PBR
+   }
+   // Increment/wrap the stack pointer
+   incSP();
+   incSP();
+   incSP();
+}
+
+// push one byte onto the stack - used by "old" instructions and "new" instructions
 static void push8(int value) {
    // Handle the memory access
    if (SL >= 0 && SH >= 0) {
@@ -457,22 +496,20 @@ static void push8(int value) {
    decSP();
 }
 
-static void pop16(int value) {
-   pop8(value);
-   pop8(value >> 8);
-}
-
+// push two byte onto the stack - used by "old" instructions
 static void push16(int value) {
    push8(value >> 8);
    push8(value);
 }
 
+// push two byte onto the stack - used by "new" instructions
 static void push16new(int value) {
    // Handle the memory access
    if (SL >= 0 && SH >= 0) {
       memory_write((value >> 8) & 0xff, (SH << 8) + SL, MEM_STACK);
       memory_write(value & 0xff, ((SH << 8) + SL - 1) & 0xffff, MEM_STACK);
    }
+   // Decrement/wrap the stack pointer
    decSP();
    decSP();
 }
@@ -482,7 +519,7 @@ static void popXS(int value) {
       SL = -1;
       SH = -1;
    } else if (XS == 0) {
-      pop16(value);
+      pop16(value); // TODO: should be new?
    } else {
       pop8(value);
    }
@@ -493,7 +530,7 @@ static void popMS(int value) {
       SL = -1;
       SH = -1;
    } else if (MS == 0) {
-      pop16(value);
+      pop16(value); // TODO: should be new?
    } else {
       pop8(value);
    }
@@ -1711,7 +1748,7 @@ static int op_PEI(operand_t operand, ea_t ea) {
 
 // Push Data Bank Register
 static int op_PHB(operand_t operand, ea_t ea) {
-   push8(operand);
+   push8(operand); // stack wrapping on push8 is same for old and new instructions
    if (DB >= 0) {
       if (operand != DB) {
          failflag = 1;
@@ -1723,7 +1760,7 @@ static int op_PHB(operand_t operand, ea_t ea) {
 
 // Push Program Bank Register
 static int op_PHK(operand_t operand, ea_t ea) {
-   push8(operand);
+   push8(operand); // stack wrapping on push8 is same for old and new instructions
    if (PB >= 0) {
       if (operand != PB) {
          failflag = 1;
@@ -1735,7 +1772,7 @@ static int op_PHK(operand_t operand, ea_t ea) {
 
 // Push Direct Page Register
 static int op_PHD(operand_t operand, ea_t ea) {
-   push16(operand);
+   push16new(operand);
    if (DP >= 0) {
       if (operand != DP) {
          failflag = 1;
@@ -1749,7 +1786,7 @@ static int op_PHD(operand_t operand, ea_t ea) {
 static int op_PLB(operand_t operand, ea_t ea) {
    DB = operand;
    set_NZ8(DB);
-   pop8(operand);
+   pop8new(operand);
    return -1;
 }
 
@@ -1757,7 +1794,7 @@ static int op_PLB(operand_t operand, ea_t ea) {
 static int op_PLD(operand_t operand, ea_t ea) {
    DP = operand;
    set_NZ16(DP);
-   pop16(operand);
+   pop16new(operand);
    return -1;
 }
 
@@ -1976,8 +2013,7 @@ static int op_JSL(operand_t operand, ea_t ea) {
 // Return from Subroutine Long
 static int op_RTL(operand_t operand, ea_t ea) {
    // RTL: the operand is the data pulled from the stack (PCL, PCH, PB)
-   pop16(operand);      // PC
-   pop8(operand >> 16); // PB
+   pop24new(operand);
    // The +1 is handled elsewhere
    PC = operand & 0xffff;
    PB = (operand >> 16) & 0xff;
