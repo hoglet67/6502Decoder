@@ -285,7 +285,7 @@ static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruc
 // TODO: this should be somewhere common!
 
 // Being very lazy here using an array!
-char *symbol_table[0x10000];
+static char *symbol_table[0x10000];
 
 static void init_symbols() {
    for (int i = 0; i < 0x10000;i++) {

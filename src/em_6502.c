@@ -474,7 +474,7 @@ static int count_cycles_with_sync(sample_t *sample_q, int intr_seen) {
 }
 
 // Being very lazy here using an array!
-char *symbol_table[0x10000];
+static char *symbol_table[0x10000];
 
 static void init_symbols() {
    for (int i = 0; i < 0x10000;i++) {
