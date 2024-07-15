@@ -17,13 +17,42 @@ typedef enum {
    SWS_AWAIT_COMMA
 } swstate;
 
-void swiftsym(cpu_emulator_t *cpu, char *iptr)
-{
-   if (!cpu->symbol_add) {
-      fprintf(stderr, "emulator does not support symbol files\r\n");
+// Being very lazy here using an array!
+static char **symbol_table = NULL;
+
+static int max_address = -1;
+
+void symbol_init(int size) {
+   symbol_table = (char **)malloc(size * sizeof(char *));
+   for (int i = 0; i < size;i++) {
+      symbol_table[i] = NULL;
+   }
+   max_address = size - 1;
+}
+
+void symbol_add(char *name, int address) {
+   if (address >= 0 && address <= max_address) {
+      char *copy = (char *)malloc(strlen(name)+1);
+      strcpy(copy, name);
+      symbol_table[address] = copy;
+   } else {
+      // This case should never happen
+      fprintf(stderr, "symbol %s:%04x out of range\r\n", name, address);
       exit(1);
    }
-   FILE *fp = fopen(iptr, "r");
+}
+
+char *symbol_lookup(int address) {
+   if (address >= 0 && address <= max_address) {
+      return symbol_table[address];
+   } else {
+      return NULL;
+   }
+}
+
+void symbol_import_swift(char *filename)
+{
+   FILE *fp = fopen(filename, "r");
    if (fp) {
       swstate state = SWS_GROUND;
       char name[80], *name_ptr, *name_end = name+sizeof(name);
@@ -79,12 +108,12 @@ void swiftsym(cpu_emulator_t *cpu, char *iptr)
             if (ch >= '0' && ch <= '9')
                addr = addr * 10 + ch - '0';
             else if (ch == 'L') {
-               cpu->symbol_add(name, addr);
+               symbol_add(name, addr);
                state = SWS_AWAIT_COMMA;
                syms++;
             }
             else if (ch == ',') {
-               cpu->symbol_add(name, addr);
+               symbol_add(name, addr);
                state = SWS_GOT_CURLY;
                syms++;
             }
@@ -101,5 +130,5 @@ void swiftsym(cpu_emulator_t *cpu, char *iptr)
       fclose(fp);
    }
    else
-      fprintf(stderr, "unable to open '%s': %s\n", iptr, strerror(errno));
+      fprintf(stderr, "unable to open '%s': %s\n", filename, strerror(errno));
 }

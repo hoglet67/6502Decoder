@@ -1517,15 +1517,18 @@ int main(int argc, char *argv[]) {
       }
    }
 
+   int memory_size;
    // Initialize memory modelling
    // (em->init actually mallocs the memory)
    if (arguments.cpu_type == CPU_65C816) {
       // 16MB
-      memory_init(0x1000000, arguments.machine, arguments.bbctube);
+      memory_size = 0x1000000;
    } else {
       // 64KB
-      memory_init(0x10000, arguments.machine, arguments.bbctube);
+      memory_size = 0x10000;
    }
+
+   memory_init(memory_size, arguments.machine, arguments.bbctube);
 
    // Turn on memory write logging if show rom bank option (-r) is selected
    if (arguments.show_romno) {
@@ -1535,6 +1538,12 @@ int main(int argc, char *argv[]) {
    memory_set_modelling(  arguments.mem_model       & 0x0f);
    memory_set_rd_logging((arguments.mem_model >> 4) & 0x0f);
    memory_set_wr_logging((arguments.mem_model >> 8) & 0x0f);
+
+   // Load the swift format symbol file
+   if (arguments.labels_file) {
+      symbol_init(memory_size);
+      symbol_import_swift(arguments.labels_file);
+   }
 
    // Validate options compatibility with CPU
    if (arguments.cpu_type != CPU_6502 && arguments.cpu_type != CPU_6800 && arguments.undocumented) {
@@ -1660,10 +1669,6 @@ int main(int argc, char *argv[]) {
    arlet = (arguments.cpu_type == CPU_6502_ARLET || arguments.cpu_type == CPU_65C02_ARLET);
 
    em->init(&arguments);
-
-   if (arguments.labels_file) {
-      swiftsym(em, arguments.labels_file);
-   }
 
    if (arguments.profile) {
       profiler_init(em);

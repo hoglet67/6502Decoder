@@ -5,6 +5,7 @@
 
 #include "musl_tsearch.h"
 #include "profiler.h"
+#include "symbols.h"
 
 #define DEBUG           0
 
@@ -134,7 +135,7 @@ static void print_node(const call_stack_t *node) {
          printf("->");
       }
       first = 0;
-      char *name=my_em->symbol_lookup(node->stack[i]);
+      char *name=symbol_lookup(node->stack[i]);
       if (name) {
          if (name[0] == '.') name++;
          printf("%s", name);

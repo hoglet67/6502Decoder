@@ -2,6 +2,7 @@
 #include <inttypes.h>
 
 #include "profiler.h"
+#include "symbols.h"
 
 extern profiler_t *profiler_instr_create(char *arg);
 extern profiler_t *profiler_block_create(char *arg);
@@ -104,7 +105,7 @@ void profiler_output_helper(address_t *profile_counts, int show_bars, int show_o
 
    ptr = profile_counts;
    for (int addr = 0; addr <= OTHER_CONTEXT; addr++) {
-      char *name = em->symbol_lookup(addr);
+      char *name = symbol_lookup(addr);
       if (name) {
          printf("\n%s\n", name);
       }

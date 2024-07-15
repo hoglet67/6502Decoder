@@ -282,24 +282,12 @@ static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruc
    PC = vector;
 }
 
-// TODO: this should be somewhere common!
-
-// Being very lazy here using an array!
-static char *symbol_table[0x10000];
-
-static void init_symbols() {
-   for (int i = 0; i < 0x10000;i++) {
-      symbol_table[i] = NULL;
-   }
-}
 
 // ====================================================================
 // Public Methods
 // ====================================================================
 
 static void em_6800_init(arguments_t *args) {
-
-   init_symbols();
 
    instr_table = instr_table_6800;
 
@@ -648,24 +636,6 @@ static int em_6800_get_and_clear_fail() {
    return ret;
 }
 
-static void em_6800_symbol_add(char *name, int address) {
-   if (address < 0 || address > 0xFFFF) {
-      fprintf(stderr, "symbol %s:%04x out of range\r\n", name, address);
-      exit(1);
-   }
-   char *copy = (char *)malloc(strlen(name)+1);
-   strcpy(copy, name);
-   symbol_table[address] = copy;
-}
-
-static char *em_6800_symbol_lookup(int address) {
-   if (address >= 0 || address <= 0xFFFF) {
-      return symbol_table[address];
-   } else {
-      return NULL;
-   }
-}
-
 cpu_emulator_t em_6800 = {
    .init = em_6800_init,
    .match_interrupt = em_6800_match_interrupt,
@@ -678,9 +648,7 @@ cpu_emulator_t em_6800 = {
    .get_PB = em_6800_get_PB,
    .read_memory = em_6800_read_memory,
    .get_state = em_6800_get_state,
-   .get_and_clear_fail = em_6800_get_and_clear_fail,
-   .symbol_add = em_6800_symbol_add,
-   .symbol_lookup = em_6800_symbol_lookup
+   .get_and_clear_fail = em_6800_get_and_clear_fail
 };
 
 // ====================================================================
