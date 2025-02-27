@@ -22,7 +22,8 @@
 
 #include <string.h>
 #include <usb.h>
-#include <linux/usbdevice_fs.h>  /* usbdevfs_urb */
+
+#include "usbdevice_fs.h"  /* usbdevfs_urb */
 
 
 typedef unsigned char uchar;
