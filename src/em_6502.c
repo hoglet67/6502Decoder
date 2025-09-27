@@ -886,7 +886,7 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
    } else if (PC < 0) {
       // PC value is not known yet, everything below this point is relative
       PC = -1;
-   } else if (opcode == 0x80) {
+   } else if (c02 && opcode == 0x80) {
       // BRA
       PC = (PC + ((int8_t)(op1)) + 2) & 0xffff;
    } else if (rockwell && ((opcode & 0x0f) == 0x0f) && (num_cycles != 5)) {
