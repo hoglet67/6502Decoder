@@ -877,7 +877,7 @@ static void em_6502_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
    }
 
    // Look for control flow changes and update the PC
-   if (opcode == 0x40 || opcode == 0x6c || opcode == 0x7c) {
+   if (opcode == 0x40 || opcode == 0x6c || (c02 && opcode == 0x7c)) {
       // RTI, JMP (ind), JMP (ind, X)
       PC = (sample_q[num_cycles - 1].data << 8) | sample_q[num_cycles - 2].data;
    } else if (opcode == 0x20 || opcode == 0x4c) {
