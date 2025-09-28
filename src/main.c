@@ -207,8 +207,6 @@ static cpu_name_t cpu_names[] = {
    {"SY6502",     CPU_6502},
    {"NMOS",       CPU_6502},
    {"02",         CPU_6502},
-   // 6502_ARLET
-   {"ARLET",      CPU_6502_ARLET},
    // 65C02
    {"65C02",      CPU_65C02},
    {"CMOS",       CPU_65C02},
@@ -220,6 +218,8 @@ static cpu_name_t cpu_names[] = {
    {"WD65C02",    CPU_65C02_WDC},
    {"W65C02",     CPU_65C02_WDC},
    {"WDC",        CPU_65C02_WDC},
+   // 6502_ARLET
+   {"ARLET",      CPU_6502_ARLET},
    // 65C02_ARLET
    {"ARLETC02",   CPU_65C02_ARLET},
    // 65C02_ALAND
@@ -261,8 +261,8 @@ static struct argp_option options[] = {
 
    { "vecrst",      KEY_VECRST,    "HEX",  OPTION_ARG_OPTIONAL, "Reset vector, optionally preceeded by the first opcode (e.g. A9D9CD)",
                                                                                                                      GROUP_GENERAL},
-   { "cpu",            KEY_CPU,     "CPU",                   0, "Sets CPU type (6502, 65c02, r65c02, 65c816)",       GROUP_GENERAL},
-   { "machine",    KEY_MACHINE, "MACHINE",                   0, "Enable machine (beeb,elk,master) defaults",         GROUP_GENERAL},
+   { "cpu",            KEY_CPU,     "CPU",                   0, "Sets CPU type (see above)",                         GROUP_GENERAL},
+   { "machine",    KEY_MACHINE, "MACHINE",                   0, "Sets machine specific defaults and memory model (see above)", GROUP_GENERAL},
    { "byte",          KEY_BYTE,         0,                   0, "Enable byte-wide sample mode",                      GROUP_GENERAL},
    { "debug",        KEY_DEBUG,   "LEVEL",                   0, "Sets the debug level (0 or 1)",                     GROUP_GENERAL},
    { "profile",    KEY_PROFILE,  "PARAMS", OPTION_ARG_OPTIONAL, "Profile code execution",                            GROUP_GENERAL},
@@ -593,9 +593,6 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
    }
    return 0;
 }
-
-static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
-
 
 
 // ====================================================================
@@ -1380,6 +1377,12 @@ void decode(FILE *stream) {
 // ====================================================================
 
 int main(int argc, char *argv[]) {
+
+   int i;
+   char name[100];
+   int type;
+   struct argp *argp;
+
    // General options
    arguments.cpu_type         = CPU_UNKNOWN;
    arguments.machine          = MACHINE_DEFAULT;
@@ -1431,7 +1434,51 @@ int main(int argc, char *argv[]) {
    arguments.ms_flag          = UNSPECIFIED;
    arguments.xs_flag          = UNSPECIFIED;
 
-   argp_parse(&argp, argc, argv, 0, 0, &arguments);
+   // Build documentation for supported machine types
+   char *machines_doc = malloc(10000);
+   strcat(machines_doc, "Supported machine types:\n");
+   i = 0;
+   while (machine_names[i]) {
+      strcat(machines_doc,  "    ");
+      strcat(machines_doc,  machine_names[i]);
+      strcat(machines_doc,  "\n");
+      i++;
+   }
+   strcat(machines_doc,  "\n");
+
+   // Build documentation for supported CPU types
+   char *cpus_doc = malloc(10000);
+   strcat(cpus_doc, "Supported CPU types:");
+   i = 0;
+   type = -1;
+   while (cpu_names[i].cpu_name) {
+      sprintf(name, "%-10s", cpu_names[i].cpu_name);
+      if (((int)cpu_names[i].cpu_type) != type) {
+         // Start a new type line
+         type = cpu_names[i].cpu_type;
+         strcat(cpus_doc,  "\n    ");
+         strcat(cpus_doc,  name);
+         strcat(cpus_doc,  "aliases:");
+      } else {
+         strcat(cpus_doc,  " ");
+         strcat(cpus_doc,  cpu_names[i].cpu_name);
+      }
+      i++;
+   }
+   strcat(cpus_doc,  "\n");
+
+   // Merge all documentation into a single string
+   char *extended_doc = (char *)malloc(strlen(doc) + strlen(cpus_doc) + strlen(cpus_doc) + 1);
+   strcpy(extended_doc, doc);
+   strcat(extended_doc, machines_doc);
+   strcat(extended_doc, cpus_doc);
+
+   argp = (struct argp *) malloc(sizeof(struct argp));
+   argp->options = options;
+   argp->parser = parse_opt;
+   argp->args_doc = args_doc;
+   argp->doc = extended_doc;
+   argp_parse(argp, argc, argv, 0, 0, &arguments);
 
    if (arguments.trigger_start < 0) {
       triggered = 1;
