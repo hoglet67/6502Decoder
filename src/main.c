@@ -34,6 +34,12 @@ uint8_t buffer8[BUFSIZE];
 
 uint16_t buffer[BUFSIZE];
 
+#define DOCSIZE 10000
+
+char machines_doc[DOCSIZE];
+
+char cpus_doc[DOCSIZE];
+
 const char *machine_names[] = {
    "default",
    "beeb",
@@ -506,7 +512,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
             i++;
          }
       }
-      argp_error(state, "unsupported cpu type: %s", arg);
+      argp_error(state, "unsupported cpu type: %s\n\n%s", arg, cpus_doc);
       break;
    case KEY_MACHINE:
       i = 0;
@@ -517,7 +523,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          }
          i++;
       }
-      argp_error(state, "unsupported machine type");
+      argp_error(state, "unsupported machine type: %s\n\n%s", arg, machines_doc);
       break;
    case KEY_DEBUG:
       arguments->debug = atoi(arg);
@@ -1435,7 +1441,6 @@ int main(int argc, char *argv[]) {
    arguments.xs_flag          = UNSPECIFIED;
 
    // Build documentation for supported machine types
-   char *machines_doc = malloc(10000);
    strcat(machines_doc, "Supported machine types:\n");
    i = 0;
    while (machine_names[i]) {
@@ -1444,10 +1449,8 @@ int main(int argc, char *argv[]) {
       strcat(machines_doc,  "\n");
       i++;
    }
-   strcat(machines_doc,  "\n");
 
    // Build documentation for supported CPU types
-   char *cpus_doc = malloc(10000);
    strcat(cpus_doc, "Supported CPU types:");
    i = 0;
    type = -1;
@@ -1468,9 +1471,10 @@ int main(int argc, char *argv[]) {
    strcat(cpus_doc,  "\n");
 
    // Merge all documentation into a single string
-   char *extended_doc = (char *)malloc(strlen(doc) + strlen(cpus_doc) + strlen(cpus_doc) + 1);
+   char *extended_doc = (char *)malloc(strlen(doc) + strlen(cpus_doc) + strlen(cpus_doc) + 100);
    strcpy(extended_doc, doc);
    strcat(extended_doc, machines_doc);
+   strcat(extended_doc,  "\n");
    strcat(extended_doc, cpus_doc);
 
    argp = (struct argp *) malloc(sizeof(struct argp));
