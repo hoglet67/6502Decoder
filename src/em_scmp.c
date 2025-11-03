@@ -192,7 +192,7 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
       // DLY, increase by A*2 + D*514
       if (A >= 0) {
          int op1 = sample_q[4].data; // TODO: scale by CPU freq
-         cycle_count += 2 * A + 514 * op1;
+         cycle_count += 2 * A + 514 * op1 + 1; // TODO: the +1 is a bug in the scmp verilog
       } else {
          cycle_count = -1;
       }
@@ -303,14 +303,12 @@ static void em_scmp_reset(sample_t *sample_q, int num_cycles, instruction_t *ins
    }
    CY = 0;
    OV = 0;
-   SB = 0;
-   SA = 0;
+   SB = 1;
+   SA = 1;
    IE = 0;
    F2 = 0;
    F1 = 0;
    F0 = 0;
-   // Pre-increment PC to first instruction is at 0001
-   PL[0]++;
 }
 
 static void em_scmp_interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
@@ -328,6 +326,11 @@ static void em_scmp_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
    int op1 = (opcount < 1) ? 0 : sample_q[4].data; // TODO: scale by CPU freq
    int pc = get_pc();
 
+   if (pc >= 0) {
+      pc = (pc & 0xf000) | ((pc + 1) & 0xfff);
+      memory_read(opcode, pc, MEM_FETCH);
+   }
+
    // Save the instruction state
    instruction->pc = pc;
    instruction->opcode  = opcode;
@@ -336,14 +339,14 @@ static void em_scmp_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
 
    // Memory Modelling: Instruction fetches
    if (pc >= 0) {
-      memory_read(opcode, pc, MEM_FETCH);
-      pc = (pc & 0xf000) | ((pc + 1) & 0xfff);
       if (opcount >= 1) {
-         memory_read(op1, pc, MEM_INSTR);
          pc = (pc & 0xf000) | ((pc + 1) & 0xfff);
+         memory_read(op1, pc, MEM_INSTR);
       }
-      set_pc(pc);
    }
+
+   // Update pc
+   set_pc(pc);
 
    if (instr->emulate) {
 
@@ -483,8 +486,10 @@ static int em_scmp_disassemble(char *buffer, instruction_t *instruction) {
 }
 
 static int em_scmp_get_PC() {
-   return get_pc();
+   int pc = get_pc();
+   return (pc & 0xf000) | ((pc + 1) & 0xfff);
 }
+
 
 static int em_scmp_get_PB() {
    return 0;
@@ -812,7 +817,7 @@ static int op_XPPC(operand_t operand, ea_t ea, sample_t *sample_q) {
 // ====================================================================
 
 static InstrType instr_table_scmp[] = {
-   /* 00 */   { "HALT ", 0,   INH,  0,     OTHER, op_HALT}, // TODO
+   /* 00 */   { "HALT ", 0,   INH,  1,     OTHER, op_HALT}, // TODO
    /* 01 */   { "XAE  ", 0,   INH,  7,     OTHER, op_XAE },
    /* 02 */   { "CCL  ", 0,   INH,  5,     OTHER, op_CCL },
    /* 03 */   { "SCL  ", 0,   INH,  5,     OTHER, op_SCL },
@@ -963,7 +968,7 @@ static InstrType instr_table_scmp[] = {
    /* 8C */   { "???  ", 1,   INH,  5,     OTHER,      0 },
    /* 8D */   { "???  ", 1,   INH,  5,     OTHER,      0 },
    /* 8E */   { "???  ", 1,   INH,  5,     OTHER,      0 },
-   /* 8F */   { "DLY  ", 0,   INH, 13,     OTHER, op_DLY },
+   /* 8F */   { "DLY  ", 0,   IMM, 13,     OTHER, op_DLY },
 
    /* 90 */   { "JMP  ", 0, PCREL, 11,     JMPOP, op_JMP },
    /* 91 */   { "JMP  ", 0, INDEX, 11,     JMPOP, op_JMP },
