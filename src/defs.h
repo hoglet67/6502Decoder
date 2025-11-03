@@ -104,6 +104,7 @@ typedef struct {
    int byte;
    int debug;
    int skip;
+   int block;
    int skew_rd;
    int skew_wr;
    char *labels_file;

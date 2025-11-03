@@ -14,6 +14,24 @@
 #include "profiler.h"
 #include "symbols.h"
 
+typedef void (*queue_sample_t)(sample_t *sample);
+
+// BLOCK controls the amount of look-ahead that is allow
+//
+// It's made very large (8M samples), so that long running instructions
+// like SYNC, CWAI and even RESET will fit entirely within one block.
+//
+// This makes the decoder much simpler
+//
+// There is no reason BLOCK couldn't be increased further, if needed
+
+#define DEFAULT_BLOCK (8*1024*1024)
+
+// Sample buffer base and rd/wr pointers
+static sample_t *sample_q;
+static sample_t *sample_wr;
+static sample_t *sample_rd;
+
 // Small skew buffer to allow the data bus samples to be taken early or late
 
 #define SKEW_BUFFER_SIZE  32 // Must be a power of 2
@@ -177,6 +195,7 @@ enum {
    KEY_MEM,
    KEY_SP,
    KEY_SKIP,
+   KEY_BLOCK,
    KEY_SKEW,
    KEY_SKEW_RD,
    KEY_SKEW_WR,
@@ -264,7 +283,7 @@ static int cpu_rst_delay[] = {
    9, // CPU_65C02_ALAND
    9, // CPU_65C816
    3, // CPU_6800
-   1, // CPU_SCMP
+   1  // CPU_SCMP
 };
 
 static struct argp_option options[] = {
@@ -281,6 +300,7 @@ static struct argp_option options[] = {
    { "bbctube",    KEY_BBCTUBE,         0,                   0, "BBC tube protocol decoding",                        GROUP_GENERAL},
    { "mem",            KEY_MEM,     "HEX", OPTION_ARG_OPTIONAL, "Memory modelling (see above)",                      GROUP_GENERAL},
    { "skip",          KEY_SKIP,     "HEX", OPTION_ARG_OPTIONAL, "Skip the first n samples",                          GROUP_GENERAL},
+   { "block",        KEY_BLOCK,     "HEX", OPTION_ARG_OPTIONAL, "Set the buffer block size (default=800000)",        GROUP_GENERAL},
    { "skew",          KEY_SKEW,    "SKEW", OPTION_ARG_OPTIONAL, "Skew the data bus by +/- n samples",                GROUP_GENERAL},
    { "skew_rd",    KEY_SKEW_RD,    "SKEW", OPTION_ARG_OPTIONAL, "Skew the data bus by +/- n samples for read data",  GROUP_GENERAL},
    { "skew_wr",    KEY_SKEW_WR,    "SKEW", OPTION_ARG_OPTIONAL, "Skew the data bus by +/- n samples for write data", GROUP_GENERAL},
@@ -486,6 +506,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->skip = 0;
       }
       break;
+   case KEY_BLOCK:
+      if (arg && strlen(arg) > 0) {
+         arguments->block = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->block = DEFAULT_BLOCK;
+      }
+      break;
    case KEY_SKEW:
       arguments->skew_rd = parse_skew(arg, state);
       arguments->skew_wr = arguments->skew_rd;
@@ -645,11 +672,6 @@ static void dump_samples(sample_t *sample_q, int n) {
          }
          putchar('\n');
       }
-}
-
-void write_dec2(char *buffer, int value) {
-   *buffer++ = (value < 10) ? ' ' : ('0' + (value / 10));
-   *buffer++ = '0' + (value % 10);
 }
 
 void write_hex1(char *buffer, int value) {
@@ -983,9 +1005,8 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
          *bp++ = ' ';
          *bp++ = ':';
          *bp++ = ' ';
-         // No instruction is more then 8 cycles
-         write_dec2(bp, real_cycles);
-         bp += 2;
+         // No 6502 instruction is more then 8 cycles, but scmp delay is
+         bp += sprintf(bp, "%3d", real_cycles);
       }
       // Show register state
       if (fail || arguments.show_state) {
@@ -1112,7 +1133,53 @@ int decode_instruction(sample_t *sample_q, int num_samples) {
 // Queue a small number of samples so the decoders can lookahead
 // ====================================================================
 
-void queue_sample(sample_t *sample) {
+void queue_sample_blocked(sample_t *sample) {
+   static int synced = 0;
+   int block = arguments.block;
+
+   // At the end of the stream, allow the buffered samples to drain
+   if (sample->type == LAST) {
+      // Try to synchronize to the instruction stream
+      //if (!synced) {
+      //   sample_rd = synchronize_to_stream(sample_rd, sample_wr - sample_rd);
+      //}
+      // Drain the queue when the LAST marker is seen
+      while (sample_rd < sample_wr) {
+         sample_rd += decode_instruction(sample_rd, sample_wr - sample_rd);
+      }
+      return;
+   }
+
+   // Make a copy of the sample structure
+   *sample_wr++ = *sample;
+
+   // Sample_q is NOT a circular buffer!
+   //
+   // When we have two full blocks, we can start to consume the first. Once the first is
+   // consumed, we can move everything back in the block.
+   if (sample_wr > sample_q + 2 * block) {
+      // Try to synchronize to the instruction stream
+      //if (!synced) {
+      //   sample_rd = synchronize_to_stream(sample_rd, sample_wr - sample_rd);
+      //   synced = 1;
+      //}
+      while (sample_rd < sample_q + block) {
+         sample_rd += decode_instruction(sample_rd, sample_wr - sample_rd);
+      }
+      // The first block has been processed, so move everything down a block
+      //printf("Block processed\n");
+      //printf("  sample_wr = %ld\n", sample_wr - sample_q);
+      //printf("  sample_rd = %ld\n", sample_rd - sample_q);
+      memmove(sample_q, sample_q + block, sizeof(sample_t) * (sample_wr - sample_q - block));
+      sample_rd -= block;
+      sample_wr -= block;
+      //printf("Block consumed\n");
+      //printf("  sample_wr = %ld\n", sample_wr - sample_q);
+      //printf("  sample_rd = %ld\n", sample_rd - sample_q);
+   }
+}
+
+void queue_sample_orig(sample_t *sample) {
    static sample_t sample_q[DEPTH];
    static int index = 0;
 
@@ -1191,6 +1258,15 @@ static inline sample_type_t build_sample_type(uint16_t sample, int idx_vpa, int 
 }
 
 void decode(FILE *stream) {
+
+   // Function pointer to the queue_sample method
+   queue_sample_t queue_sample;
+
+   if (arguments.cpu_type == CPU_SCMP) {
+      queue_sample = queue_sample_blocked;
+   } else {
+      queue_sample = queue_sample_orig;
+   }
 
    // Pin mappings into the 16 bit words
    int idx_data  = arguments.idx_data;
@@ -1410,6 +1486,7 @@ int main(int argc, char *argv[]) {
    arguments.debug            = 0;
    arguments.mem_model        = 0;
    arguments.skip             = 0;
+   arguments.block            = DEFAULT_BLOCK;
    arguments.skew_rd          = UNSPECIFIED;
    arguments.skew_wr          = UNSPECIFIED;
    arguments.profile          = 0;
@@ -1500,6 +1577,11 @@ int main(int argc, char *argv[]) {
    }
 
    arguments.show_something = arguments.show_samplenums | arguments.show_address | arguments.show_hex | arguments.show_instruction | arguments.show_state | arguments.show_bbcfwa | arguments.show_cycles;
+
+   // Allocate sample buffer (3 blocks)
+   sample_q = malloc(arguments.block * sizeof(sample_t) * 3);
+   sample_rd = sample_q;
+   sample_wr = sample_q;
 
    // Normally the data file should be 16 bit samples. In byte mode
    // the data file is 8 bit samples, and all the control signals are
