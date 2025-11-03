@@ -9,6 +9,7 @@
 #include "em_6502.h"
 #include "em_65816.h"
 #include "em_6800.h"
+#include "em_scmp.h"
 #include "memory.h"
 #include "profiler.h"
 #include "symbols.h"
@@ -244,7 +245,10 @@ static cpu_name_t cpu_names[] = {
    {"6802",       CPU_6800},
    {"M6802",      CPU_6800},
    {"MC6802",     CPU_6800},
-
+   // SC/MO
+   {"SC/MP",      CPU_SCMP},
+   {"SCMP",       CPU_SCMP},
+   {"INS8060",    CPU_SCMP},
    // Terminator
    {NULL, 0}
 };
@@ -260,6 +264,7 @@ static int cpu_rst_delay[] = {
    9, // CPU_65C02_ALAND
    9, // CPU_65C816
    3, // CPU_6800
+   1, // CPU_SCMP
 };
 
 static struct argp_option options[] = {
@@ -642,6 +647,11 @@ static void dump_samples(sample_t *sample_q, int n) {
       }
 }
 
+void write_dec2(char *buffer, int value) {
+   *buffer++ = (value < 10) ? ' ' : ('0' + (value / 10));
+   *buffer++ = '0' + (value % 10);
+}
+
 void write_hex1(char *buffer, int value) {
    *buffer = value + (value < 10 ? '0' : 'A' - 10);
 }
@@ -974,7 +984,8 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
          *bp++ = ':';
          *bp++ = ' ';
          // No instruction is more then 8 cycles
-         write_hex1(bp++, real_cycles);
+         write_dec2(bp, real_cycles);
+         bp += 2;
       }
       // Show register state
       if (fail || arguments.show_state) {
@@ -1713,6 +1724,8 @@ int main(int argc, char *argv[]) {
       em = &em_65816;
    } else if (arguments.cpu_type == CPU_6800) {
       em = &em_6800;
+   } else if (arguments.cpu_type == CPU_SCMP) {
+      em = &em_scmp;
    } else {
       em = &em_6502;
    }

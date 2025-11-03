@@ -24,10 +24,11 @@ typedef enum {
    CPU_65C02_ALAND,
    CPU_65C816,
    CPU_6800,
+   CPU_SCMP,
 } cpu_t;
 
 // Sample Queue Depth - needs to fit the longest instruction
-#define DEPTH 13
+#define DEPTH 30
 
 // Sample_type_t is an abstraction of both the 6502 SYNC and the 65816 VDA/VPA
 
