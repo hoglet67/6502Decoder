@@ -5,6 +5,9 @@
 #include "memory.h"
 #include "em_scmp.h"
 
+// Define this to base JMP taken/not taken on instruction cycle counts
+#define JMP_BASED_ON_CYCLES
+
 // ====================================================================
 // TODO:
 // ====================================================================
@@ -225,6 +228,24 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
          }
       }
    }
+   // TODO: This is a bit of a hack...  The final byte of each
+   // instruction should be the ADS cycle the preceeds the next opcode
+   // fetch. The upper nibble should be 3 and the lower nibble A[15:12]
+   int mask  = 0xf0;
+   int value = 0x30;
+   if (PH[0] >= 0) {
+      //mask  |= 0x0F;
+      //value |= PH[0] >> 4;
+   }
+   if ((sample_q[cycle_count - 1].data & mask) != value) {
+      int i = 1;
+      printf("*** resyncing\n");
+      while ((sample_q[i].data & mask) != value) {
+         i++;
+      }
+      cycle_count = i + 1;
+   }
+
    return cycle_count;
 }
 
@@ -410,6 +431,9 @@ static void em_scmp_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
          // ILD/DLD
          operand = sample_q[num_cycles - 9].data;
          operand2 = sample_q[num_cycles - 6].data;
+      } else if (instr->optype == JMPOP) {
+         // JMP operand is whether JMP was taken or not
+         operand = (num_cycles == 11);
       }
 
       // Model memory reads
@@ -671,31 +695,74 @@ static int op_JMP(operand_t operand, ea_t ea, sample_t *sample_q) {
 
 static int op_JNZ(operand_t operand, ea_t ea, sample_t *sample_q) {
    // Branch if A non zero
+#ifdef JMP_BASED_ON_CYCLES
+   if (operand) {
+      set_pc(ea);
+      if (A == 0) {
+         failflag = 1;
+      }
+   } else {
+      if (A > 0) {
+         failflag = 1;
+      }
+      // Infer A=0
+      A = 0;
+   }
+#else
    if (A < 0) {
       set_pc(-1);
    } else if (A > 0) {
       set_pc(ea);
    }
+#endif
    return -1;
 }
 
 static int op_JP(operand_t operand, ea_t ea, sample_t *sample_q) {
    // Branch if positive
+#ifdef JMP_BASED_ON_CYCLES
+   if (operand) {
+      set_pc(ea);
+      if (A >= 128) {
+         failflag = 1;
+      }
+   } else {
+      if (A >= 0 && A < 128) {
+         failflag = 1;
+      }
+   }
+#else
    if (A < 0) {
       set_pc(-1);
    } else if ((A & 0x80) == 0) {
       set_pc(ea);
    }
+#endif
    return -1;
 }
 
 static int op_JZ(operand_t operand, ea_t ea, sample_t *sample_q) {
    // Branch if A zero
+#ifdef JMP_BASED_ON_CYCLES
+   if (operand) {
+      set_pc(ea);
+      if (A > 0) {
+         failflag = 1;
+      }
+      // Infer A=0
+      A = 0;
+   } else {
+      if (A == 0) {
+         failflag = 1;
+      }
+   }
+#else
    if (A < 0) {
       set_pc(-1);
    } else if (A == 0) {
       set_pc(ea);
    }
+#endif
    return -1;
 }
 
