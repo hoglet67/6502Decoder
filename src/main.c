@@ -224,7 +224,8 @@ enum {
    KEY_ADS,
    KEY_HOLD,
    KEY_SA,
-   KEY_SB
+   KEY_SB,
+   KEY_SIN
 };
 
 
@@ -362,6 +363,7 @@ static struct argp_option options[] = {
    { "hold",          KEY_HOLD, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sa (default 10)",                     GROUP_SCMP},
    { "sa",              KEY_SA, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sa (default 11)",                     GROUP_SCMP},
    { "sb",              KEY_SB, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sa (default 12)",                     GROUP_SCMP},
+   { "sin",            KEY_SIN, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sin (default 13)",                    GROUP_SCMP},
 
    { 0 }
 };
@@ -676,6 +678,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->idx_sb = atoi(arg);
       } else {
          arguments->idx_sb = UNDEFINED;
+      }
+      break;
+   case KEY_SIN: // SC/MP only
+      if (arg && strlen(arg) > 0) {
+         arguments->idx_sin = atoi(arg);
+      } else {
+         arguments->idx_sin = UNDEFINED;
       }
       break;
    case ARGP_KEY_ARG:
@@ -1360,6 +1369,7 @@ void decode(FILE *stream) {
    int idx_ads   = arguments.idx_ads;
    int idx_sa    = arguments.idx_sa;
    int idx_sb    = arguments.idx_sb;
+   int idx_sin   = arguments.idx_sin;
 
    // Invert RDY polarity on the 6800 to allow it to be driven from BA
    int rdy_pol = (arguments.cpu_type == CPU_6800 || arguments.cpu_type == CPU_SCMP) ? 0 : 1;
@@ -1392,6 +1402,7 @@ void decode(FILE *stream) {
    s.user = -1;
    s.sa   = -1;
    s.sb   = -1;
+   s.sin  = -1;
 
    if (arguments.byte) {
 
@@ -1443,6 +1454,9 @@ void decode(FILE *stream) {
                   }
                   if (idx_sb >= 0) {
                      s.sb = (sample >> idx_sb) & 1;
+                  }
+                  if (idx_sin >= 0) {
+                     s.sin = (sample >> idx_sin) & 1;
                   }
                } else {
                   s.type = build_sample_type_default(sample, idx_vpa, idx_vda, idx_sync);
@@ -1528,6 +1542,9 @@ void decode(FILE *stream) {
                      }
                      if (idx_sb >= 0) {
                         s.sb = (sample >> idx_sb) & 1;
+                     }
+                     if (idx_sin >= 0) {
+                        s.sin = (sample >> idx_sin) & 1;
                      }
                   } else {
                      s.type = build_sample_type_default(sample, idx_vpa, idx_vda, idx_sync);
@@ -1639,6 +1656,7 @@ int main(int argc, char *argv[]) {
    arguments.idx_hold         = UNSPECIFIED;
    arguments.idx_sa           = UNSPECIFIED;
    arguments.idx_sb           = UNSPECIFIED;
+   arguments.idx_sin          = UNSPECIFIED;
 
    // Build documentation for supported machine types
    strcat(machines_doc, "Supported machine types:\n");
@@ -1883,6 +1901,9 @@ int main(int argc, char *argv[]) {
    }
    if (arguments.idx_sb == UNSPECIFIED) {
       arguments.idx_sb = 12; // SC/MP only
+   }
+   if (arguments.idx_sin == UNSPECIFIED) {
+      arguments.idx_sin = 13; // SC/MP only
    }
    if (arguments.idx_rst == UNSPECIFIED) {
       arguments.idx_rst = 14;

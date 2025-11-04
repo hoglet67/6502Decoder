@@ -12,7 +12,6 @@
 // TODO:
 // ====================================================================
 //
-// SIO (and SIN/SOUT)
 // DLY cycle count out by one
 
 // ====================================================================
@@ -855,7 +854,9 @@ static int op_SCL(operand_t operand, ea_t ea, sample_t *sample_q) {
 }
 
 static int op_SIO(operand_t operand, ea_t ea, sample_t *sample_q) {
-   // TODO
+   if (E >= 0 && sample_q[CYCLE_SX].sin >= 0) {
+      E = (sample_q[CYCLE_SX].sin << 7) | (E >> 1);
+   }
    return -1;
 }
 

@@ -52,6 +52,7 @@ typedef struct {
    int8_t        user; // -1 indicates unknown (user defined signal)
    int8_t          sa; // -1 indicates unknown (sc/mp SA input)
    int8_t          sb; // -1 indicates unknown (sc/mp SB input)
+   int8_t         sin; // -1 indicates unknown (sc/mp SIN input)
 } sample_t;
 
 
@@ -89,6 +90,7 @@ typedef struct {
    int idx_hold; // SC/MP only
    int idx_sa;   // SC/MP only
    int idx_sb;   // SC/MP only
+   int idx_sin;  // SC/MP only
    int vec_rst;
    int show_address;
    int show_hex;
