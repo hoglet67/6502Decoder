@@ -349,7 +349,7 @@ static int em_6800_match_interrupt(sample_t *sample_q, int num_samples) {
    return 0;
 }
 
-static int em_6800_count_cycles(sample_t *sample_q, int intr_seen) {
+static int em_6800_count_cycles(sample_t *sample_q, int num_samples, int intr_seen) {
    if (intr_seen) {
       return 12;
    }

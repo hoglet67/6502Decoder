@@ -12,11 +12,10 @@
 // TODO:
 // ====================================================================
 //
-// SA and SB flags
+// Interrupt dispatch based on SA
 // DAD/DAI/DAE (and dec_add_helper)
 // SIO (and SIN/SOUT)
 // HALT
-// Make better use of ADS_n
 //
 // ====================================================================
 // Type Defs
@@ -153,8 +152,8 @@ static void set_flags(int operand) {
    if (operand >= 0) {
       CY = (operand >> 7) & 1;
       OV = (operand >> 6) & 1;
-      SB = (operand >> 5) & 1;
-      SA = (operand >> 4) & 1;
+      //      SB = (operand >> 5) & 1;
+      //      SA = (operand >> 4) & 1;
       IE = (operand >> 3) & 1;
       F2 = (operand >> 2) & 1;
       F1 = (operand >> 1) & 1;
@@ -162,8 +161,8 @@ static void set_flags(int operand) {
    } else {
       CY = -1;
       OV = -1;
-      SB = -1;
-      SA = -1;
+      //      SB = -1;
+      //      SA = -1;
       IE = -1;
       F2 = -1;
       F1 = -1;
@@ -188,13 +187,13 @@ static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruc
 
 
 static int get_num_cycles(sample_t *sample_q, int intr_seen) {
-   int opcode = sample_q[0].data;
+   int opcode = sample_q[1].data; // TODO: scale by CPU freq
    InstrType *instr = &instr_table[opcode];
    int cycle_count = instr->cycles;
    if (opcode == 0x8F) {
       // DLY, increase by A*2 + D*514
       if (A >= 0) {
-         int op1 = sample_q[4].data; // TODO: scale by CPU freq
+         int op1 = sample_q[5].data; // TODO: scale by CPU freq
          cycle_count += 2 * A + 514 * op1 + 1; // TODO: the +1 is a bug in the scmp verilog
       } else {
          cycle_count = -1;
@@ -228,6 +227,7 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
          }
       }
    }
+#if 0
    // TODO: This is a bit of a hack...  The final byte of each
    // instruction should be the ADS cycle the preceeds the next opcode
    // fetch. The upper nibble should be 3 and the lower nibble A[15:12]
@@ -245,11 +245,11 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
       }
       cycle_count = i + 1;
    }
-
+#endif
    return cycle_count;
 }
 
-static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
+static int count_cycles_without_ads(sample_t *sample_q, int num_samples, int intr_seen) {
    int num_cycles = get_num_cycles(sample_q, intr_seen);
    if (num_cycles >= 0) {
       return num_cycles;
@@ -258,9 +258,9 @@ static int count_cycles_without_sync(sample_t *sample_q, int intr_seen) {
    return 1;
 }
 
-static int count_cycles_with_sync(sample_t *sample_q, int intr_seen) {
+static int count_cycles_with_ads(sample_t *sample_q, int num_samples, int intr_seen) {
    if (sample_q[0].type == OPCODE) {
-      for (int i = 1; i < DEPTH; i++) {
+      for (int i = 1; i < num_samples; i++) {
          if (sample_q[i].type == LAST) {
             return 0;
          }
@@ -287,6 +287,18 @@ static void em_scmp_init(arguments_t *args) {
 
    instr_table = instr_table_scmp;
 
+   // Optional initialization of status register
+   if (args->psr_reg >= 0) {
+      CY = (args->psr_reg >> 7) & 1;
+      OV = (args->psr_reg >> 6) & 1;
+      SB = (args->psr_reg >> 5) & 1;
+      SA = (args->psr_reg >> 4) & 1;
+      IE = (args->psr_reg >> 3) & 1;
+      F2 = (args->psr_reg >> 2) & 1;
+      F1 = (args->psr_reg >> 1) & 1;
+      F0 = (args->psr_reg >> 0) & 1;
+   }
+
    InstrType *instr = instr_table;
    for (int i = 0; i < 256; i++) {
       // Remove the undocumented instructions, if not supported
@@ -306,11 +318,11 @@ static int em_scmp_match_interrupt(sample_t *sample_q, int num_samples) {
    return 0;
 }
 
-static int em_scmp_count_cycles(sample_t *sample_q, int intr_seen) {
+static int em_scmp_count_cycles(sample_t *sample_q, int num_samples, int intr_seen) {
    if (sample_q[0].type == UNKNOWN) {
-      return count_cycles_without_sync(sample_q, intr_seen);
+      return count_cycles_without_ads(sample_q, num_samples, intr_seen);
    } else {
-      return count_cycles_with_sync(sample_q, intr_seen);
+      return count_cycles_with_ads(sample_q, num_samples, intr_seen);
    }
 }
 
@@ -324,8 +336,8 @@ static void em_scmp_reset(sample_t *sample_q, int num_cycles, instruction_t *ins
    }
    CY = 0;
    OV = 0;
-   SB = 1;
-   SA = 1;
+   //   SB = 1;
+   //   SA = 1;
    IE = 0;
    F2 = 0;
    F1 = 0;
@@ -339,12 +351,20 @@ static void em_scmp_interrupt(sample_t *sample_q, int num_cycles, instruction_t 
 static void em_scmp_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
 
    // Unpack the instruction bytes
-   int opcode = sample_q[0].data;
+   int opcode = sample_q[1].data; // TODO: scale by CPU freq
+
+   // Update SA and SB during fetch (TODO: when is this updated, probably at the end of the 5-cycle CSA)
+   if (sample_q[3].sa >= 0) {
+      SA = sample_q[3].sa;
+   }
+   if (sample_q[3].sb >= 0) {
+      SB = sample_q[3].sb;
+   }
 
    // lookup the entry for the instruction
    InstrType *instr = &instr_table[opcode];
    int opcount = instr->len - 1;
-   int op1 = (opcount < 1) ? 0 : sample_q[4].data; // TODO: scale by CPU freq
+   int op1 = (opcount < 1) ? 0 : sample_q[5].data; // TODO: scale by CPU freq
    int pc = get_pc();
 
    if (pc >= 0) {
@@ -422,15 +442,15 @@ static void em_scmp_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
          operand = opcode & 3;
       } else if (instr->optype == READOP) {
          // LD, AND, OR, XOR, ADD, CAD, DAD
-         operand = sample_q[14].data;
+         operand = sample_q[15].data;
       } else if (instr->optype == WRITEOP) {
          // ST
-         operand = sample_q[14].data;
+         operand = sample_q[15].data;
          operand2 = operand;
       } else if (instr->optype == RMWOP) {
          // ILD/DLD
-         operand = sample_q[num_cycles - 9].data;
-         operand2 = sample_q[num_cycles - 6].data;
+         operand = sample_q[num_cycles - 8].data;
+         operand2 = sample_q[num_cycles - 5].data;
       } else if (instr->optype == JMPOP) {
          // JMP operand is whether JMP was taken or not
          operand = (num_cycles == 11);

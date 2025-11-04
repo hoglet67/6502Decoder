@@ -50,6 +50,8 @@ typedef struct {
    int8_t         rst; // -1 indicates unknown
    int8_t           e; // -1 indicates unknown (65816 e pin)
    int8_t        user; // -1 indicates unknown (user defined signal)
+   int8_t          sa; // -1 indicates unknown (sc/mp SA input)
+   int8_t          sb; // -1 indicates unknown (sc/mp SB input)
 } sample_t;
 
 
@@ -83,6 +85,10 @@ typedef struct {
    int idx_vda;
    int idx_vpa;
    int idx_e;
+   int idx_ads;  // SC/MP only
+   int idx_hold; // SC/MP only
+   int idx_sa;   // SC/MP only
+   int idx_sb;   // SC/MP only
    int vec_rst;
    int show_address;
    int show_hex;
@@ -101,6 +107,7 @@ typedef struct {
    int pb_reg;
    int db_reg;
    int dp_reg;
+   int psr_reg; // SC/MP only
    int byte;
    int debug;
    int skip;
@@ -120,7 +127,7 @@ typedef struct {
 typedef struct {
    void (*init)(arguments_t *args);
    int (*match_interrupt)(sample_t *sample_q, int num_samples);
-   int (*count_cycles)(sample_t *sample_q, int intr_seen);
+   int (*count_cycles)(sample_t *sample_q, int intr_seen, int num_samples);
    void (*reset)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
    void (*interrupt)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
    void (*emulate)(sample_t *sample_q, int num_cycles, instruction_t *instruction);
