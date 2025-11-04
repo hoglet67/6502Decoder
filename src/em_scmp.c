@@ -21,19 +21,19 @@
 
 int clkdiv;
 
-// FPGA:  1; INS8060: ?
+// FPGA:  1; INS8060: 1
 #define CYCLE_OPCODE    ( 1 * clkdiv)
 // FPGA:  3; INS8060: ?
 #define CYCLE_SX        ( 3 * clkdiv)
-// FPGA:  5; INS8060: ?
+// FPGA:  5; INS8060: 5
 #define CYCLE_OP1       ( 5 * clkdiv)
-// FPGA: 15; INS8060: ?
+// FPGA: 15; INS8060: 14
 #define CYCLE_READ      (15 * clkdiv)
-// FPGA: 15; INS8060: ?
+// FPGA: 15; INS8060: 14
 #define CYCLE_WRITE     (15 * clkdiv)
-// FPGA: 14; INS8060: ?
+// FPGA: 14; INS8060: 14
 #define CYCLE_RMW_READ  (14 * clkdiv)
-// FPGA: 17; INS8060: ?
+// FPGA: 17; INS8060: 18
 #define CYCLE_RMW_WRITE (17 * clkdiv)
 
 // ====================================================================
