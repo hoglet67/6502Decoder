@@ -13,10 +13,9 @@
 // ====================================================================
 //
 // Interrupt dispatch based on SA
-// DAD/DAI/DAE (and dec_add_helper)
 // SIO (and SIN/SOUT)
 // HALT
-//
+// DLY cycle count out by one
 
 // ====================================================================
 // Sample point definitions
@@ -648,7 +647,20 @@ static int bin_add_helper(int val, int operand, int carry) {
 }
 
 static int dec_add_helper(int val, int operand, int carry) {
-   // TODO
+   if (val >= 0 && operand >= 0 && carry >= 0) {
+      int tmp = val + operand + carry;
+      if ((tmp & 0x0F) > 0x09) {
+         tmp += 0x16;
+      }
+      if ((tmp & 0xF0) > 0x90) {
+         tmp += 0x60;
+      }
+      CY = (tmp >> 8) & 1;
+      val = tmp & 0xFF;
+   } else {
+      val = -1;
+      CY = -1;
+   }
    return val;
 }
 
