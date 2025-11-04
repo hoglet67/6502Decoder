@@ -1206,6 +1206,9 @@ void queue_sample_blocked(sample_t *sample) {
    //static int synced = 0;
    int block = arguments.block;
 
+   // Make a copy of the sample structure
+   *sample_wr++ = *sample;
+
    // At the end of the stream, allow the buffered samples to drain
    if (sample->type == LAST) {
       // Try to synchronize to the instruction stream
@@ -1218,9 +1221,6 @@ void queue_sample_blocked(sample_t *sample) {
       }
       return;
    }
-
-   // Make a copy of the sample structure
-   *sample_wr++ = *sample;
 
    // Sample_q is NOT a circular buffer!
    //
