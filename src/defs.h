@@ -108,6 +108,7 @@ typedef struct {
    int db_reg;
    int dp_reg;
    int psr_reg; // SC/MP only
+   int clkdiv; // SC/MP only
    int byte;
    int debug;
    int skip;

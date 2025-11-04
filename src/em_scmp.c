@@ -17,6 +17,28 @@
 // SIO (and SIN/SOUT)
 // HALT
 //
+
+// ====================================================================
+// Sample point definitions
+// ====================================================================
+
+int clkdiv;
+
+// FPGA:  1; INS8060: ?
+#define CYCLE_OPCODE    ( 1 * clkdiv)
+// FPGA:  3; INS8060: ?
+#define CYCLE_SX        ( 3 * clkdiv)
+// FPGA:  5; INS8060: ?
+#define CYCLE_OP1       ( 5 * clkdiv)
+// FPGA: 15; INS8060: ?
+#define CYCLE_READ      (15 * clkdiv)
+// FPGA: 15; INS8060: ?
+#define CYCLE_WRITE     (15 * clkdiv)
+// FPGA: 14; INS8060: ?
+#define CYCLE_RMW_READ  (14 * clkdiv)
+// FPGA: 17; INS8060: ?
+#define CYCLE_RMW_WRITE (17 * clkdiv)
+
 // ====================================================================
 // Type Defs
 // ====================================================================
@@ -187,13 +209,13 @@ static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruc
 
 
 static int get_num_cycles(sample_t *sample_q, int intr_seen) {
-   int opcode = sample_q[1].data; // TODO: scale by CPU freq
+   int opcode = sample_q[CYCLE_OPCODE].data;
    InstrType *instr = &instr_table[opcode];
    int cycle_count = instr->cycles;
    if (opcode == 0x8F) {
       // DLY, increase by A*2 + D*514
       if (A >= 0) {
-         int op1 = sample_q[5].data; // TODO: scale by CPU freq
+         int op1 = sample_q[CYCLE_OP1].data;
          cycle_count += 2 * A + 514 * op1 + 1; // TODO: the +1 is a bug in the scmp verilog
       } else {
          cycle_count = -1;
@@ -287,6 +309,8 @@ static void em_scmp_init(arguments_t *args) {
 
    instr_table = instr_table_scmp;
 
+   clkdiv = args->clkdiv;
+
    // Optional initialization of status register
    if (args->psr_reg >= 0) {
       CY = (args->psr_reg >> 7) & 1;
@@ -351,20 +375,20 @@ static void em_scmp_interrupt(sample_t *sample_q, int num_cycles, instruction_t 
 static void em_scmp_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
 
    // Unpack the instruction bytes
-   int opcode = sample_q[1].data; // TODO: scale by CPU freq
+   int opcode = sample_q[CYCLE_OPCODE].data;
 
-   // Update SA and SB during fetch (TODO: when is this updated, probably at the end of the 5-cycle CSA)
-   if (sample_q[3].sa >= 0) {
-      SA = sample_q[3].sa;
+   // Update SA and SB during fetch
+   if (sample_q[CYCLE_SX].sa >= 0) {
+      SA = sample_q[CYCLE_SX].sa;
    }
-   if (sample_q[3].sb >= 0) {
-      SB = sample_q[3].sb;
+   if (sample_q[CYCLE_SX].sb >= 0) {
+      SB = sample_q[CYCLE_SX].sb;
    }
 
    // lookup the entry for the instruction
    InstrType *instr = &instr_table[opcode];
    int opcount = instr->len - 1;
-   int op1 = (opcount < 1) ? 0 : sample_q[5].data; // TODO: scale by CPU freq
+   int op1 = (opcount < 1) ? 0 : sample_q[CYCLE_OP1].data;
    int pc = get_pc();
 
    if (pc >= 0) {
@@ -400,7 +424,6 @@ static void em_scmp_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
       }
 
       // Compute the effective address
-      // TODO: refactor to simplify
       int ea = -1;
       if (op1 >= 0) {
          switch (instr->mode) {
@@ -432,7 +455,6 @@ static void em_scmp_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
 
       operand_t operand = -1;
       operand_t operand2 = -1;
-      // TODO: scale by CPU freq
       if (instr->mode == EXT) {
          operand = E;
       } else if (instr->mode == IMM) {
@@ -442,15 +464,15 @@ static void em_scmp_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
          operand = opcode & 3;
       } else if (instr->optype == READOP) {
          // LD, AND, OR, XOR, ADD, CAD, DAD
-         operand = sample_q[15].data;
+         operand = sample_q[CYCLE_READ].data;
       } else if (instr->optype == WRITEOP) {
          // ST
-         operand = sample_q[15].data;
+         operand = sample_q[CYCLE_WRITE].data;
          operand2 = operand;
       } else if (instr->optype == RMWOP) {
          // ILD/DLD
-         operand = sample_q[num_cycles - 8].data;
-         operand2 = sample_q[num_cycles - 5].data;
+         operand = sample_q[CYCLE_RMW_READ].data;
+         operand2 = sample_q[CYCLE_RMW_WRITE].data;
       } else if (instr->optype == JMPOP) {
          // JMP operand is whether JMP was taken or not
          operand = (num_cycles == 11);

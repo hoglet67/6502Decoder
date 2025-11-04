@@ -218,6 +218,7 @@ enum {
    KEY_EMUL,
    KEY_MS,
    KEY_XS,
+   KEY_CLKDIV,
    KEY_PSR,
    KEY_ADS,
    KEY_HOLD,
@@ -355,6 +356,7 @@ static struct argp_option options[] = {
 
    { 0, 0, 0, 0, "Additional SC/MP options:", GROUP_SCMP},
 
+   { "clkdiv",      KEY_CLKDIV,    "HEX", OPTION_ARG_OPTIONAL, "Ratio of sample clock to microcode clock",           GROUP_SCMP},
    { "sr",             KEY_PSR,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the processor status register",     GROUP_SCMP},
    { "ads",            KEY_ADS, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sa (default 9)",                      GROUP_SCMP},
    { "hold",          KEY_HOLD, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sa (default 10)",                     GROUP_SCMP},
@@ -633,6 +635,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       break;
    case KEY_UNDOC:
       arguments->undocumented = 1;
+      break;
+   case KEY_CLKDIV: // SC/MP only
+      if (arg && strlen(arg) > 0) {
+         arguments->clkdiv = strtol(arg, (char **)NULL, 16);;
+      } else {
+         arguments->clkdiv = UNDEFINED;
+      }
       break;
    case KEY_PSR: // SC/MP only
       if (arg && strlen(arg) > 0) {
@@ -1624,6 +1633,7 @@ int main(int argc, char *argv[]) {
    arguments.idx_e            = UNSPECIFIED;
 
    // Additional SC/MP options
+   arguments.clkdiv           = UNSPECIFIED;
    arguments.psr_reg          = UNSPECIFIED;
    arguments.idx_ads          = UNSPECIFIED;
    arguments.idx_hold         = UNSPECIFIED;
@@ -1912,6 +1922,10 @@ int main(int argc, char *argv[]) {
          arguments.skew_wr = -1; // sample before PHI2 fails
          break;
       }
+   }
+
+   if (arguments.clkdiv == UNSPECIFIED) {
+      arguments.clkdiv = 4;
    }
 
    c816 = 0;
