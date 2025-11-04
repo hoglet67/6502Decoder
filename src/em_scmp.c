@@ -12,7 +12,6 @@
 // TODO:
 // ====================================================================
 //
-// Interrupt dispatch based on SA
 // SIO (and SIN/SOUT)
 // HALT
 // DLY cycle count out by one
@@ -208,7 +207,8 @@ static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruc
 
 
 static int get_num_cycles(sample_t *sample_q, int intr_seen) {
-   int opcode = sample_q[CYCLE_OPCODE].data;
+   // Force opcode to XPPC P3 (3F) if interrupt detected
+   int opcode = intr_seen ? 0x3F : sample_q[CYCLE_OPCODE].data;
    InstrType *instr = &instr_table[opcode];
    int cycle_count = instr->cycles;
    if (opcode == 0x8F) {
@@ -338,7 +338,7 @@ static void em_scmp_init(arguments_t *args) {
 }
 
 static int em_scmp_match_interrupt(sample_t *sample_q, int num_samples) {
-   return 0;
+   return (IE == 1 && SA == 1);
 }
 
 static int em_scmp_count_cycles(sample_t *sample_q, int num_samples, int intr_seen) {
