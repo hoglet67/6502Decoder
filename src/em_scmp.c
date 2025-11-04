@@ -359,8 +359,8 @@ static void em_scmp_reset(sample_t *sample_q, int num_cycles, instruction_t *ins
    }
    CY = 0;
    OV = 0;
-   //   SB = 1;
-   //   SA = 1;
+   SB = 1; // Default to seeimg a floating high value
+   SA = 1; // Default to seeimg a floating high value
    IE = 0;
    F2 = 0;
    F1 = 0;
