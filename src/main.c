@@ -186,12 +186,13 @@ enum {
    KEY_MACHINE = 'm',
    KEY_PROFILE = 'p',
    KEY_QUIET = 'q',
+   KEY_SHOWROM = 'r',
    KEY_STATE = 's',
    KEY_TRIGGER = 't',
    KEY_UNDOC = 'u',
    KEY_CYCLES = 'y',
    KEY_SAMPLES = 'Y',
-   KEY_VECRST = 1,
+   KEY_VECRST = 1000,
    KEY_BBCTUBE,
    KEY_MEM,
    KEY_SP,
@@ -223,8 +224,7 @@ enum {
    KEY_ADS,
    KEY_HOLD,
    KEY_SA,
-   KEY_SB,
-   KEY_SHOWROM = 'r'
+   KEY_SB
 };
 
 
@@ -339,7 +339,7 @@ static struct argp_option options[] = {
 
    { "undocumented", KEY_UNDOC,        0,                   0, "Enable undocumented opcodes",                        GROUP_6502},
    { "sp",              KEY_SP,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register",        GROUP_6502},
-   { "sync",          KEY_SYNC, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sync (default  9)",               GROUP_6502},
+   { "sync",          KEY_SYNC, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sync (default  9)",                   GROUP_6502},
 
    { 0, 0, 0, 0, "Additional 65C816 options:", GROUP_65816},
 
@@ -356,8 +356,8 @@ static struct argp_option options[] = {
 
    { 0, 0, 0, 0, "Additional SC/MP options:", GROUP_SCMP},
 
-   { "clkdiv",      KEY_CLKDIV,    "HEX", OPTION_ARG_OPTIONAL, "Ratio of sample clock to microcode clock",           GROUP_SCMP},
-   { "sr",             KEY_PSR,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the processor status register",     GROUP_SCMP},
+   { "clkdiv",      KEY_CLKDIV,    "HEX", OPTION_ARG_OPTIONAL, "Sample clk to microcycle clk ratio (default 4)",     GROUP_SCMP},
+   { "psr",            KEY_PSR,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the processor status register",     GROUP_SCMP},
    { "ads",            KEY_ADS, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sa (default 9)",                      GROUP_SCMP},
    { "hold",          KEY_HOLD, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sa (default 10)",                     GROUP_SCMP},
    { "sa",              KEY_SA, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sa (default 11)",                     GROUP_SCMP},
