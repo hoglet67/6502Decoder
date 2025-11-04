@@ -13,7 +13,6 @@
 // ====================================================================
 //
 // SIO (and SIN/SOUT)
-// HALT
 // DLY cycle count out by one
 
 // ====================================================================
@@ -721,7 +720,6 @@ static int op_DLY(operand_t operand, ea_t ea, sample_t *sample_q) {
 }
 
 static int op_HALT(operand_t operand, ea_t ea, sample_t *sample_q) {
-   // TODO
    return -1;
 }
 
@@ -932,7 +930,7 @@ static int op_XPPC(operand_t operand, ea_t ea, sample_t *sample_q) {
 // ====================================================================
 
 static InstrType instr_table_scmp[] = {
-   /* 00 */   { "HALT ", 0,   INH,  1,     OTHER, op_HALT}, // TODO
+   /* 00 */   { "HALT ", 0,   INH,  8,     OTHER, op_HALT},
    /* 01 */   { "XAE  ", 0,   INH,  7,     OTHER, op_XAE },
    /* 02 */   { "CCL  ", 0,   INH,  5,     OTHER, op_CCL },
    /* 03 */   { "SCL  ", 0,   INH,  5,     OTHER, op_SCL },
