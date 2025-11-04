@@ -408,7 +408,9 @@ static void em_scmp_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
 
       // For instructions that read or write memory, we need to work out the effective address
       // A displacement of -128 is replaced by the E register
-      if (instr->mode == PCREL || instr->mode == INDEX || instr->mode == AUTO) {
+      // Note: this should exclude JMP, ILD, DLD, see:
+      // https://www.vintage-radio.net/forum/showthread.php?p=1720142#post1720142
+      if ((instr->optype == READOP || instr->optype == WRITEOP) && (instr->mode == PCREL || instr->mode == INDEX || instr->mode == AUTO)) {
          if (((int8_t) op1) == -128) {
             op1 = E;
          }
