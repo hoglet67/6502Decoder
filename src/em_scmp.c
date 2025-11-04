@@ -12,7 +12,7 @@
 // TODO:
 // ====================================================================
 //
-// DLY cycle count out by one
+// Check cycle counts for undefined opcodes
 
 // ====================================================================
 // Sample point definitions
@@ -213,7 +213,7 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
       // DLY, increase by A*2 + D*514
       if (A >= 0) {
          int op1 = sample_q[CYCLE_OP1].data;
-         cycle_count += 2 * A + 514 * op1 + 1; // TODO: the +1 is a bug in the scmp verilog
+         cycle_count += 2 * A + 514 * op1;
       } else {
          cycle_count = -1;
       }
@@ -1147,7 +1147,7 @@ static InstrType instr_table_scmp[] = {
    /* C9 */   { "ST   ", 0, INDEX, 18,   WRITEOP, op_ST  },
    /* CA */   { "ST   ", 0, INDEX, 18,   WRITEOP, op_ST  },
    /* CB */   { "ST   ", 0, INDEX, 18,   WRITEOP, op_ST  },
-   /* CC */   { "???  ", 1,  AUTO,  5,     OTHER,      0 }, // TODO
+   /* CC */   { "???  ", 1,  AUTO,  5,     OTHER,      0 },
    /* CD */   { "ST   ", 0,  AUTO, 18,   WRITEOP, op_ST  },
    /* CE */   { "ST   ", 0,  AUTO, 18,   WRITEOP, op_ST  },
    /* CF */   { "ST   ", 0,  AUTO, 18,   WRITEOP, op_ST  },
