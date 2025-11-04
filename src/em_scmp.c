@@ -248,25 +248,6 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
          }
       }
    }
-#if 0
-   // TODO: This is a bit of a hack...  The final byte of each
-   // instruction should be the ADS cycle the preceeds the next opcode
-   // fetch. The upper nibble should be 3 and the lower nibble A[15:12]
-   int mask  = 0xf0;
-   int value = 0x30;
-   if (PH[0] >= 0) {
-      //mask  |= 0x0F;
-      //value |= PH[0] >> 4;
-   }
-   if ((sample_q[cycle_count - 1].data & mask) != value) {
-      int i = 1;
-      printf("*** resyncing\n");
-      while ((sample_q[i].data & mask) != value) {
-         i++;
-      }
-      cycle_count = i + 1;
-   }
-#endif
    return cycle_count;
 }
 
@@ -372,6 +353,19 @@ static void em_scmp_interrupt(sample_t *sample_q, int num_cycles, instruction_t 
 }
 
 static void em_scmp_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
+
+   // The instruction should start with ADS cycle that precedes the
+   // next opcode fetch. The upper nibble should be 3 and the lower
+   // nibble A[15:12]
+   int mask  = 0xf0;
+   int value = 0x30;
+   if (PH[0] >= 0) {
+      mask  |= 0x0F;
+      value |= PH[0] >> 4;
+   }
+   if ((sample_q[0].data & mask) != value) {
+      printf("Warning: incorrect data in opcode fetch ADS cycle: 0x%02X & 0x%02X != 0x%02X\n", sample_q[0].data, mask, value);
+   }
 
    // Unpack the instruction bytes
    int opcode = sample_q[CYCLE_OPCODE].data;
