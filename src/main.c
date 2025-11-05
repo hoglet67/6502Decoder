@@ -291,7 +291,7 @@ static int cpu_rst_delay[] = {
    9, // CPU_65C02_ALAND
    9, // CPU_65C816
    3, // CPU_6800
-   4  // CPU_SCMP               TODO: update this to correct value
+  29  // CPU_SCMP
 };
 
 static struct argp_option options[] = {
