@@ -1075,7 +1075,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
          *bp++ = ':';
          *bp++ = ' ';
          // No 6502 instruction is more then 8 cycles, but scmp delay is
-         bp += sprintf(bp, "%3d", real_cycles);
+         bp += sprintf(bp, "%3d", real_cycles / arguments.clkdiv);
       }
       // Show register state
       if (fail || arguments.show_state) {
@@ -1946,7 +1946,7 @@ int main(int argc, char *argv[]) {
    }
 
    if (arguments.clkdiv == UNSPECIFIED) {
-      arguments.clkdiv = 4;
+      arguments.clkdiv = (arguments.cpu_type == CPU_SCMP) ? 4 : 1;
    }
 
    c816 = 0;
