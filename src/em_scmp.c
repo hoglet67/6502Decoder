@@ -33,7 +33,7 @@ int clkdiv;
 // FPGA: 14; INS8060: 14
 #define CYCLE_RMW_READ  (14 * clkdiv)
 // FPGA: 17; INS8060: 18
-#define CYCLE_RMW_WRITE (17 * clkdiv)
+#define CYCLE_RMW_WRITE (18 * clkdiv)
 
 // ====================================================================
 // Type Defs
@@ -245,6 +245,9 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
             cycle_count = -1;
          }
       }
+   }
+   if (cycle_count >= 0) {
+      cycle_count *= clkdiv;
    }
    return cycle_count;
 }
@@ -468,7 +471,7 @@ static void em_scmp_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
          operand2 = sample_q[CYCLE_RMW_WRITE].data;
       } else if (instr->optype == JMPOP) {
          // JMP operand is whether JMP was taken or not
-         operand = (num_cycles == 11);
+         operand = (num_cycles == 11 * clkdiv);
       }
 
       // Model memory reads
