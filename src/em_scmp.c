@@ -664,15 +664,21 @@ static int bin_add_helper(int val, int operand, int carry) {
 
 static int dec_add_helper(int val, int operand, int carry) {
    if (val >= 0 && operand >= 0 && carry >= 0) {
-      int tmp = val + operand + carry;
-      if ((tmp & 0x0F) > 0x09) {
-         tmp += 0x16;
+      // This matches how we think the INS8060 is implemented
+      int tmp1 = operand;
+      if (tmp1 <= 0x99) {
+         tmp1 += 0x66;
       }
-      if ((tmp & 0xF0) > 0x90) {
-         tmp += 0x60;
+      int tmp2 = val + tmp1 + carry;
+      int H = ((val & 0x0f) + (tmp1 & 0x0f) + carry) >> 4;
+      CY = tmp2 >> 8;
+      if (!H) {
+         tmp2 += 0xFA;
       }
-      CY = (tmp >> 8) & 1;
-      val = tmp & 0xFF;
+      if (!CY) {
+         tmp2 += 0xA0;
+      }
+      val = tmp2 & 0xff;
    } else {
       val = -1;
       CY = -1;
