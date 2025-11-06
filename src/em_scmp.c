@@ -253,12 +253,33 @@ static int get_num_cycles(sample_t *sample_q, int intr_seen) {
 }
 
 static int count_cycles_without_ads(sample_t *sample_q, int num_samples, int intr_seen) {
-   int num_cycles = get_num_cycles(sample_q, intr_seen);
-   if (num_cycles >= 0) {
-      return num_cycles;
+   int start = 1;
+   // The instruction should start with ADS cycle that precedes the
+   // next opcode fetch. The upper nibble should be 3 and the lower
+   // nibble A[15:12]
+   int mask  = 0xf0;
+   int value = 0x30;
+   if (PH[0] >= 0) {
+      mask  |= 0x0F;
+      value |= PH[0] >> 4;
    }
-   printf ("cycle prediction unknown\n");
-   return 1;
+   if ((sample_q[0].data & mask) == value) {
+      int num_cycles = get_num_cycles(sample_q, intr_seen);
+      if (num_cycles >= 0) {
+         return num_cycles;
+      }
+      printf("cycle prediction unknown\n");
+      start = 4 * clkdiv;
+   } else {
+      printf("Warning: incorrect data in opcode fetch ADS cycle: 0x%02X & 0x%02X != 0x%02X, resyncing using heuristic\n", sample_q[0].data, mask, value);
+   }
+   for (int i = start; i < num_samples; i++) {
+      if ((sample_q[i].data & mask) == value) {
+         return i;
+      }
+   }
+   printf("no opcode fetch signature found\n");
+   return num_samples;
 }
 
 static int count_cycles_with_ads(sample_t *sample_q, int num_samples, int intr_seen) {
@@ -365,19 +386,6 @@ static void em_scmp_interrupt(sample_t *sample_q, int num_cycles, instruction_t 
 }
 
 static void em_scmp_emulate(sample_t *sample_q, int num_cycles, instruction_t *instruction) {
-
-   // The instruction should start with ADS cycle that precedes the
-   // next opcode fetch. The upper nibble should be 3 and the lower
-   // nibble A[15:12]
-   int mask  = 0xf0;
-   int value = 0x30;
-   if (PH[0] >= 0) {
-      mask  |= 0x0F;
-      value |= PH[0] >> 4;
-   }
-   if ((sample_q[0].data & mask) != value) {
-      printf("Warning: incorrect data in opcode fetch ADS cycle: 0x%02X & 0x%02X != 0x%02X\n", sample_q[0].data, mask, value);
-   }
 
    // Unpack the instruction bytes
    int opcode = sample_q[CYCLE_OPCODE].data;
