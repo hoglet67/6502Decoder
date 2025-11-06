@@ -263,6 +263,7 @@ static int count_cycles_without_ads(sample_t *sample_q, int num_samples, int int
 
 static int count_cycles_with_ads(sample_t *sample_q, int num_samples, int intr_seen) {
    if (sample_q[0].type == OPCODE) {
+      // Synced to the instruction stream
       for (int i = 1; i < num_samples; i++) {
          if (sample_q[i].type == LAST) {
             return 0;
@@ -276,6 +277,16 @@ static int count_cycles_with_ads(sample_t *sample_q, int num_samples, int intr_s
                }
             }
             return i;
+         }
+      }
+   } else {
+      // Not synced to the instruction stream
+      for (int i = 1; i < num_samples; i++) {
+         // Search for the start of the next instruction
+         if (sample_q[i].type == OPCODE) {
+            return i;
+         } else if (sample_q[i].type == LAST) {
+            return 0;
          }
       }
    }
