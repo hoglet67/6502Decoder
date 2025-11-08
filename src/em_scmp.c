@@ -666,39 +666,27 @@ static int bin_add_helper(int val, int operand, int carry) {
 static int dec_add_helper(int val, int operand, int carry) {
    if (val >= 0 && operand >= 0 && carry >= 0) {
 
-      // Add 1
-      int lo = (operand & 0x0f) + 0x06;
-      int c2 = lo >> 4;
-      lo &= 0x0f;
+      // Add 1: 8-bit, ignore carry
+      operand += 0x66;
+      operand &= 0xff;
 
-      // Add 2
-      lo = (val & 0x0f) + lo + CY;
-      int co = lo >> 4;
-      lo &= 0x0f;
+      // Add 2: 8-bit, with carry
+      int sum = val + operand + CY;
+      int h = ((val & 0x0f) + (operand & 0x0f) + CY) >> 4;
+      int co = sum >> 8;
 
-      // Add 3
-      if (!co) {
-         lo += 0x0a;
-         lo &= 0x0f;
+      // Add 3: 8-bit, write back only LSB 4 bits
+      if (!h) {
+         sum = (sum & 0xf0) | ((sum + 0x0a) & 0x0f);
       }
 
-      // Add 4
-      int hi = (operand >> 4) + 0x06 + c2;
-      hi &= 0x0f;
-
-      // Add 5
-      hi = (val >> 4) + hi + co;
-      co = hi >> 4;
-      hi &= 0x0f;
-
-      // Add 6
+      // Add 4: 8-bit
       if (!co) {
-         hi += 0x0a;
-         hi &= 0x0f;
+         sum += 0xa0;
       }
 
       CY = co;
-      val = (hi << 4) + lo;
+      val = sum & 0xff;
    } else {
       val = -1;
       CY = -1;
