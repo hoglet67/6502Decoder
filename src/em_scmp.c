@@ -294,7 +294,7 @@ static int count_cycles_with_ads(sample_t *sample_q, int num_samples, int intr_s
             int expected = get_num_cycles(sample_q, intr_seen);
             if (expected >= 0) {
                if (i != expected) {
-                  printf ("opcode %02x: cycle prediction fail: expected %d actual %d\n", sample_q[0].data, expected, i);
+                  printf ("opcode %02x: cycle prediction fail: expected %d actual %d\n", sample_q[CYCLE_OPCODE].data, expected, i);
                }
             }
             return i;
@@ -341,8 +341,6 @@ static void em_scmp_init(arguments_t *args) {
       // Remove the undocumented instructions, if not supported
       if (instr->undocumented && !args->undocumented) {
          instr->mnemonic = ILLEGAL;
-         instr->mode     = INH;
-         instr->cycles   = 1;
       }
       // Copy the length and format from the address mode, for efficiency
       instr->len = addr_mode_table[instr->mode].len;
