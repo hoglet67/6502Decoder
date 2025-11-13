@@ -134,6 +134,7 @@ static char ILLEGAL[] = "???  ";
 // ====================================================================
 
 static InstrType instr_table_scmp[];
+static int op_XPPC(operand_t operand, ea_t ea, sample_t *sample_q);
 
 // ====================================================================
 // Helper Methods
@@ -198,9 +199,10 @@ static int get_flags() {
 
 
 static void interrupt(sample_t *sample_q, int num_cycles, instruction_t *instruction, int pc_offset) {
+   // Clear the IE flag
    IE = 0;
-   PL[0] = PL[3];
-   PH[0] = PH[3];
+   // Execte an XPPC P3
+   op_XPPC(3, -1, sample_q);
 }
 
 
