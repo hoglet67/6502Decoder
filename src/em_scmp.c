@@ -547,6 +547,9 @@ static int em_scmp_disassemble(char *buffer, instruction_t *instruction) {
    case PCREL:
       // Calculate branch target using op1 for normal branches
       offset = (int8_t) op1;
+      if (instr->optype != JMPOP) {
+         offset -= 1;
+      }
       if (pc < 0) {
          if (offset < 0) {
             sprintf(target, "pc-%d", -offset);
@@ -1147,7 +1150,7 @@ static InstrType instr_table_scmp[] = {
    /* A5 */   { "NOP  ", 1,   IMM,  9,     OTHER,      0 },
    /* A6 */   { "NOP  ", 1,   IMM,  9,     OTHER,      0 },
    /* A7 */   { "NOP  ", 1,   IMM,  9,     OTHER,      0 },
-   /* A8 */   { "ILD  ", 0, INDEX, 22,     RMWOP, op_ILD },
+   /* A8 */   { "ILD  ", 0, PCREL, 22,     RMWOP, op_ILD },
    /* A9 */   { "ILD  ", 0, INDEX, 22,     RMWOP, op_ILD },
    /* AA */   { "ILD  ", 0, INDEX, 22,     RMWOP, op_ILD },
    /* AB */   { "ILD  ", 0, INDEX, 22,     RMWOP, op_ILD },
@@ -1164,7 +1167,7 @@ static InstrType instr_table_scmp[] = {
    /* B5 */   { "NOP  ", 1,   IMM,  9,     OTHER,      0 },
    /* B6 */   { "NOP  ", 1,   IMM,  9,     OTHER,      0 },
    /* B7 */   { "NOP  ", 1,   IMM,  9,     OTHER,      0 },
-   /* B8 */   { "DLD  ", 0, INDEX, 22,     RMWOP, op_DLD },
+   /* B8 */   { "DLD  ", 0, PCREL, 22,     RMWOP, op_DLD },
    /* B9 */   { "DLD  ", 0, INDEX, 22,     RMWOP, op_DLD },
    /* BA */   { "DLD  ", 0, INDEX, 22,     RMWOP, op_DLD },
    /* BB */   { "DLD  ", 0, INDEX, 22,     RMWOP, op_DLD },
