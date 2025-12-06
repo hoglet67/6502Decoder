@@ -20,20 +20,37 @@
 
 int clkdiv;
 
-// FPGA:  1; INS8060: 1
+// Numbers represent the sample where the data seems valid
+// The real INS8060 data pesists longer due to the data bus floating
+// The numbers we have picked should work for both
+
+// INS8060: 2-14
+//    FPGA: 2-5
 #define CYCLE_OPCODE    ( 1 * clkdiv)
-// FPGA:  3; INS8060: ?
+
+// INS8060: ?
+//    FPGA: ?
 #define CYCLE_SX        ( 3 * clkdiv)
-// FPGA:  5; INS8060: 5
+
+// INS8060: 18-50
+//    FPGA: 18-21
 #define CYCLE_OP1       ( 5 * clkdiv)
-// FPGA: 15; INS8060: 14
+
+// INS8060: 54-70
+//    FPGA: 58-61
 #define CYCLE_READ      (15 * clkdiv)
-// FPGA: 15; INS8060: 14
+
+// INS8060: 54-70
+//    FPGA: 58-61
 #define CYCLE_WRITE     (15 * clkdiv)
-// FPGA: 14; INS8060: 14
-#define CYCLE_RMW_READ  (14 * clkdiv)
-// FPGA: 17; INS8060: 18
-#define CYCLE_RMW_WRITE (18 * clkdiv)
+
+// INS8060: 54-66
+//    FPGA: 58-61
+#define CYCLE_RMW_READ  (15 * clkdiv)
+
+// INS8060: 70-86
+//    FPGA: 74-77
+#define CYCLE_RMW_WRITE (19 * clkdiv)
 
 // ====================================================================
 // Type Defs
