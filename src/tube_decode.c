@@ -174,7 +174,7 @@ void r2_h2p_state_machine(uint8_t data) {
    static int x = -1;
    static int y = -1;
    static int cy = -1;
-   static int errno = -1;
+   static int err_no = -1;
    static uint8_t buffer[512];
    static unsigned int index = 0;
 #ifdef DEBUG
@@ -302,12 +302,12 @@ void r2_h2p_state_machine(uint8_t data) {
       resp_state = RESP_ERROR_1;
       break;
    case RESP_ERROR_1:
-      errno = data;
+      err_no = data;
       resp_state = RESP_ERROR_1;
       break;
    case RESP_ERROR_2:
       if (data == 0x00) {
-         printf("R2: Error response: errno=%d message=%s\n", errno, buffer + 2);
+         printf("R2: Error response: errno=%d message=%s\n", err_no, buffer + 2);
          resp_state = RESP_IDLE;
       }
       break;

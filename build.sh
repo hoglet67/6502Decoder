@@ -2,6 +2,13 @@
 
 LIBS="-lm"
 INCS=""
+
+if [[ "$MSYSTEM" == "MINGW64" ]]
+then
+LIBS+=" -L/usr/lib"
+INCS+=" -I/usr/include"
+fi
+
 DEFS=""
 
 if [[ $OS = *"Windows"* ]]; then
