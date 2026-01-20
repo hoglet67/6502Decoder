@@ -126,7 +126,7 @@ typedef struct {
    int (*get_PC)();
    int (*get_PB)();
    int (*read_memory)(int address);
-   char *(*get_state)();
+   char *(*get_state)(char*);
    int (*get_and_clear_fail)();
 } cpu_emulator_t;
 
