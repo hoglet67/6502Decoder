@@ -787,9 +787,7 @@ static int neg_helper(int val) {
       val = (0x00 - val) & 0xff;
       set_NZ(val);
       V = (val == 0x80);
-      C = (val == 0x00);
-      val = 0xFF - val;
-      set_NZ(val);
+      C = (val != 0x00);
    } else {
       set_NZCV_unknown();
    }
