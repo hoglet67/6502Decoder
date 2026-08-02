@@ -1634,8 +1634,9 @@ static int op_STA(operand_t operand, ea_t ea) {
       if (operand != A) {
          failflag = 1;
       }
+   } else {
+      A = operand;
    }
-   A = operand;
    return operand;
 }
 
@@ -1644,8 +1645,9 @@ static int op_STX(operand_t operand, ea_t ea) {
       if (operand != X) {
          failflag = 1;
       }
+   } else {
+      X = operand;
    }
-   X = operand;
    return operand;
 }
 
@@ -1654,8 +1656,9 @@ static int op_STY(operand_t operand, ea_t ea) {
       if (operand != Y) {
          failflag = 1;
       }
+   } else {
+      Y = operand;
    }
-   Y = operand;
    return operand;
 }
 
