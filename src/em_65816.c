@@ -1010,7 +1010,7 @@ static int em_65816_match_interrupt(sample_t *sample_q, int num_samples) {
    return 0;
 }
 
-static int em_65816_count_cycles(sample_t *sample_q, int intr_seen) {
+static int em_65816_count_cycles(sample_t *sample_q, int num_samples, int intr_seen) {
    if (sample_q[0].type == UNKNOWN) {
       return count_cycles_without_sync(sample_q, intr_seen);
    } else {

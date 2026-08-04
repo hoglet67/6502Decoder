@@ -9,9 +9,28 @@
 #include "em_6502.h"
 #include "em_65816.h"
 #include "em_6800.h"
+#include "em_scmp.h"
 #include "memory.h"
 #include "profiler.h"
 #include "symbols.h"
+
+typedef void (*queue_sample_t)(sample_t *sample);
+
+// BLOCK controls the amount of look-ahead that is allow
+//
+// It's made very large (8M samples), so that long running instructions
+// like SYNC, CWAI and even RESET will fit entirely within one block.
+//
+// This makes the decoder much simpler
+//
+// There is no reason BLOCK couldn't be increased further, if needed
+
+#define DEFAULT_BLOCK (8*1024*1024)
+
+// Sample buffer base and rd/wr pointers
+static sample_t *sample_q;
+static sample_t *sample_wr;
+static sample_t *sample_rd;
 
 // Small skew buffer to allow the data bus samples to be taken early or late
 
@@ -151,7 +170,8 @@ enum {
    GROUP_OUTPUT  = 2,
    GROUP_SIGDEFS = 3,
    GROUP_6502    = 4,
-   GROUP_65816   = 5
+   GROUP_65816   = 5,
+   GROUP_SCMP    = 6
 };
 
 
@@ -166,16 +186,18 @@ enum {
    KEY_MACHINE = 'm',
    KEY_PROFILE = 'p',
    KEY_QUIET = 'q',
+   KEY_SHOWROM = 'r',
    KEY_STATE = 's',
    KEY_TRIGGER = 't',
    KEY_UNDOC = 'u',
    KEY_CYCLES = 'y',
    KEY_SAMPLES = 'Y',
-   KEY_VECRST = 1,
+   KEY_VECRST = 1000,
    KEY_BBCTUBE,
    KEY_MEM,
    KEY_SP,
    KEY_SKIP,
+   KEY_BLOCK,
    KEY_SKEW,
    KEY_SKEW_RD,
    KEY_SKEW_WR,
@@ -197,7 +219,13 @@ enum {
    KEY_EMUL,
    KEY_MS,
    KEY_XS,
-   KEY_SHOWROM = 'r'
+   KEY_CLKDIV,
+   KEY_PSR,
+   KEY_ADS,
+   KEY_HOLD,
+   KEY_SA,
+   KEY_SB,
+   KEY_SIN
 };
 
 
@@ -244,7 +272,10 @@ static cpu_name_t cpu_names[] = {
    {"6802",       CPU_6800},
    {"M6802",      CPU_6800},
    {"MC6802",     CPU_6800},
-
+   // SC/MO
+   {"SC/MP",      CPU_SCMP},
+   {"SCMP",       CPU_SCMP},
+   {"INS8060",    CPU_SCMP},
    // Terminator
    {NULL, 0}
 };
@@ -260,6 +291,7 @@ static int cpu_rst_delay[] = {
    9, // CPU_65C02_ALAND
    9, // CPU_65C816
    3, // CPU_6800
+  29  // CPU_SCMP
 };
 
 static struct argp_option options[] = {
@@ -276,6 +308,7 @@ static struct argp_option options[] = {
    { "bbctube",    KEY_BBCTUBE,         0,                   0, "BBC tube protocol decoding",                        GROUP_GENERAL},
    { "mem",            KEY_MEM,     "HEX", OPTION_ARG_OPTIONAL, "Memory modelling (see above)",                      GROUP_GENERAL},
    { "skip",          KEY_SKIP,     "HEX", OPTION_ARG_OPTIONAL, "Skip the first n samples",                          GROUP_GENERAL},
+   { "block",        KEY_BLOCK,     "HEX", OPTION_ARG_OPTIONAL, "Set the buffer block size (default=800000)",        GROUP_GENERAL},
    { "skew",          KEY_SKEW,    "SKEW", OPTION_ARG_OPTIONAL, "Skew the data bus by +/- n samples",                GROUP_GENERAL},
    { "skew_rd",    KEY_SKEW_RD,    "SKEW", OPTION_ARG_OPTIONAL, "Skew the data bus by +/- n samples for read data",  GROUP_GENERAL},
    { "skew_wr",    KEY_SKEW_WR,    "SKEW", OPTION_ARG_OPTIONAL, "Skew the data bus by +/- n samples for write data", GROUP_GENERAL},
@@ -302,14 +335,12 @@ static struct argp_option options[] = {
    { "phi2",          KEY_PHI2, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for phi2 (default 15)",                   GROUP_SIGDEFS},
    { "user",          KEY_USER, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for user (default -1)",                   GROUP_SIGDEFS},
    { "rst",            KEY_RST, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for rst  (default 14)",                   GROUP_SIGDEFS},
-   { "sync",          KEY_SYNC, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sync (default  9) (6502/65C02)",      GROUP_SIGDEFS},
-   { "vpa",            KEY_VPA, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for vpa  (default  9) (65C816)",          GROUP_SIGDEFS},
-   { "vda",            KEY_VDA, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for vda  (default 11) (65C816)",          GROUP_SIGDEFS},
-   { "e",                KEY_E, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for e    (default 12) (65C816)",          GROUP_SIGDEFS},
+
    { 0, 0, 0, 0, "Additional 6502/65C02 options:", GROUP_6502},
 
    { "undocumented", KEY_UNDOC,        0,                   0, "Enable undocumented opcodes",                        GROUP_6502},
-   { "sp",              KEY_SP,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register",       GROUP_6502},
+   { "sp",              KEY_SP,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register",        GROUP_6502},
+   { "sync",          KEY_SYNC, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sync (default  9)",                   GROUP_6502},
 
    { 0, 0, 0, 0, "Additional 65C816 options:", GROUP_65816},
 
@@ -319,7 +350,21 @@ static struct argp_option options[] = {
    { "emul",          KEY_EMUL,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the E flag",                        GROUP_65816},
    { "ms",              KEY_MS,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the M flag",                        GROUP_65816},
    { "xs",              KEY_XS,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the X flag",                        GROUP_65816},
-   { "sp",              KEY_SP,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register",       GROUP_65816},
+   { "sp",              KEY_SP,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the Stack Pointer register",        GROUP_65816},
+   { "vpa",            KEY_VPA, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for vpa (default  9)",                    GROUP_65816},
+   { "vda",            KEY_VDA, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for vda (default 11)",                    GROUP_65816},
+   { "e",                KEY_E, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for e (default 12)",                      GROUP_65816},
+
+   { 0, 0, 0, 0, "Additional SC/MP options:", GROUP_SCMP},
+
+   { "clkdiv",      KEY_CLKDIV,    "HEX", OPTION_ARG_OPTIONAL, "Sample clk to microcycle clk ratio (default 4)",     GROUP_SCMP},
+   { "psr",            KEY_PSR,    "HEX", OPTION_ARG_OPTIONAL, "Initial value of the processor status register",     GROUP_SCMP},
+   { "ads",            KEY_ADS, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sa (default 9)",                      GROUP_SCMP},
+   { "hold",          KEY_HOLD, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sa (default 10)",                     GROUP_SCMP},
+   { "sa",              KEY_SA, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sa (default 11)",                     GROUP_SCMP},
+   { "sb",              KEY_SB, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sa (default 12)",                     GROUP_SCMP},
+   { "sin",            KEY_SIN, "BITNUM", OPTION_ARG_OPTIONAL, "Bit number for sin (default 13)",                    GROUP_SCMP},
+
    { 0 }
 };
 
@@ -481,6 +526,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
          arguments->skip = 0;
       }
       break;
+   case KEY_BLOCK:
+      if (arg && strlen(arg) > 0) {
+         arguments->block = strtol(arg, (char **)NULL, 16);
+      } else {
+         arguments->block = DEFAULT_BLOCK;
+      }
+      break;
    case KEY_SKEW:
       arguments->skew_rd = parse_skew(arg, state);
       arguments->skew_wr = arguments->skew_rd;
@@ -585,6 +637,55 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       break;
    case KEY_UNDOC:
       arguments->undocumented = 1;
+      break;
+   case KEY_CLKDIV: // SC/MP only
+      if (arg && strlen(arg) > 0) {
+         arguments->clkdiv = strtol(arg, (char **)NULL, 16);;
+      } else {
+         arguments->clkdiv = UNDEFINED;
+      }
+      break;
+   case KEY_PSR: // SC/MP only
+      if (arg && strlen(arg) > 0) {
+         arguments->psr_reg = strtol(arg, (char **)NULL, 16);;
+      } else {
+         arguments->psr_reg = UNDEFINED;
+      }
+      break;
+   case KEY_ADS: // SC/MP only
+      if (arg && strlen(arg) > 0) {
+         arguments->idx_ads = atoi(arg);
+      } else {
+         arguments->idx_ads = UNDEFINED;
+      }
+      break;
+   case KEY_HOLD: // SC/MP only
+      if (arg && strlen(arg) > 0) {
+         arguments->idx_hold = atoi(arg);
+      } else {
+         arguments->idx_hold = UNDEFINED;
+      }
+      break;
+   case KEY_SA:// SC/MP only
+      if (arg && strlen(arg) > 0) {
+         arguments->idx_sa = atoi(arg);
+      } else {
+         arguments->idx_sa = UNDEFINED;
+      }
+      break;
+   case KEY_SB: // SC/MP only
+      if (arg && strlen(arg) > 0) {
+         arguments->idx_sb = atoi(arg);
+      } else {
+         arguments->idx_sb = UNDEFINED;
+      }
+      break;
+   case KEY_SIN: // SC/MP only
+      if (arg && strlen(arg) > 0) {
+         arguments->idx_sin = atoi(arg);
+      } else {
+         arguments->idx_sin = UNDEFINED;
+      }
       break;
    case ARGP_KEY_ARG:
       arguments->filename = arg;
@@ -808,7 +909,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
    if (rst_seen > 0) {
       num_cycles = rst_seen;
    } else {
-      num_cycles = em->count_cycles(sample_q, intr_seen);
+      num_cycles = em->count_cycles(sample_q, num_samples, intr_seen);
    }
 
    // Deal with partial final instruction
@@ -973,8 +1074,8 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
          *bp++ = ' ';
          *bp++ = ':';
          *bp++ = ' ';
-         // No instruction is more then 8 cycles
-         write_hex1(bp++, real_cycles);
+         // No 6502 instruction is more then 8 cycles, but scmp delay is
+         bp += sprintf(bp, "%3d", real_cycles / arguments.clkdiv);
       }
       // Show register state
       if (fail || arguments.show_state) {
@@ -1038,14 +1139,14 @@ int decode_instruction(sample_t *sample_q, int num_samples) {
    }
 
    // If the first sample is not an SYNC, then drop the sample
-   if (sample_q->type != OPCODE && sample_q->type != UNKNOWN) {
+   if (arguments.cpu_type != CPU_SCMP && sample_q->type != OPCODE && sample_q->type != UNKNOWN) {
       return 1;
    }
 
    // Flag to indicate the sample type is missing (sync/vda/vpa unconnected)
    int notype = sample_q[0].type == UNKNOWN;
 
-   if (sample_q[0].rst < 0) {
+   if (sample_q[0].rst < 0 && arguments.vec_rst != UNDEFINED) {
       // We use a heuristic, based on what we expect to see on the data
       // bus in cycles 5, 6 and 7, i.e. RSTVECL, RSTVECH, RSTOPCODE
       int veclo  = (arguments.vec_rst      ) & 0xff;
@@ -1077,12 +1178,21 @@ int decode_instruction(sample_t *sample_q, int num_samples) {
          rst_seen = cpu_rst_delay[arguments.cpu_type];
          // We could also check the vector
       } else {
-         if (sample_q[7].type == OPCODE) {
-            rst_seen = 7;
-         } else {
-            printf("Instruction after rst /= 7 cycles\n");
-            rst_seen = 0;
-         }
+         // if (sample_q[7].type == OPCODE) {
+         //    rst_seen = 7;
+         // } else {
+         //    printf("Instruction after rst /= 7 cycles\n");
+         //    rst_seen = 0;
+         // }
+         for (int i = 1; i < DEPTH; i++) {
+            if (sample_q[i].type == OPCODE) {
+               rst_seen = i;
+               if (arguments.cpu_type != CPU_SCMP && i != 7) {
+                  printf("Instruction after rst /= 7 cycles\n");
+               }
+               break;
+            }
+          }
       }
    }
 
@@ -1101,7 +1211,53 @@ int decode_instruction(sample_t *sample_q, int num_samples) {
 // Queue a small number of samples so the decoders can lookahead
 // ====================================================================
 
-void queue_sample(sample_t *sample) {
+void queue_sample_blocked(sample_t *sample) {
+   //static int synced = 0;
+   int block = arguments.block;
+
+   // Make a copy of the sample structure
+   *sample_wr++ = *sample;
+
+   // At the end of the stream, allow the buffered samples to drain
+   if (sample->type == LAST) {
+      // Try to synchronize to the instruction stream
+      //if (!synced) {
+      //   sample_rd = synchronize_to_stream(sample_rd, sample_wr - sample_rd);
+      //}
+      // Drain the queue when the LAST marker is seen
+      while (sample_rd < sample_wr) {
+         sample_rd += decode_instruction(sample_rd, sample_wr - sample_rd);
+      }
+      return;
+   }
+
+   // Sample_q is NOT a circular buffer!
+   //
+   // When we have two full blocks, we can start to consume the first. Once the first is
+   // consumed, we can move everything back in the block.
+   if (sample_wr > sample_q + 2 * block) {
+      // Try to synchronize to the instruction stream
+      //if (!synced) {
+      //   sample_rd = synchronize_to_stream(sample_rd, sample_wr - sample_rd);
+      //   synced = 1;
+      //}
+      while (sample_rd < sample_q + block) {
+         sample_rd += decode_instruction(sample_rd, sample_wr - sample_rd);
+      }
+      // The first block has been processed, so move everything down a block
+      //printf("Block processed\n");
+      //printf("  sample_wr = %ld\n", sample_wr - sample_q);
+      //printf("  sample_rd = %ld\n", sample_rd - sample_q);
+      memmove(sample_q, sample_q + block, sizeof(sample_t) * (sample_wr - sample_q - block));
+      sample_rd -= block;
+      sample_wr -= block;
+      //printf("Block consumed\n");
+      //printf("  sample_wr = %ld\n", sample_wr - sample_q);
+      //printf("  sample_rd = %ld\n", sample_rd - sample_q);
+   }
+}
+
+void queue_sample_orig(sample_t *sample) {
    static sample_t sample_q[DEPTH];
    static int index = 0;
 
@@ -1151,7 +1307,7 @@ static int max(int a, int b) {
    return (a > b) ? a : b;
 }
 
-static inline sample_type_t build_sample_type(uint16_t sample, int idx_vpa, int idx_vda, int idx_sync) {
+static sample_type_t build_sample_type_default(uint16_t sample, int idx_vpa, int idx_vda, int idx_sync) {
    if (c816) {
       if (idx_vpa < 0 || idx_vda < 0) {
          return UNKNOWN;
@@ -1179,21 +1335,44 @@ static inline sample_type_t build_sample_type(uint16_t sample, int idx_vpa, int 
    }
 }
 
+static sample_type_t build_sample_type_scmp(uint16_t sample, int idx_ads, int idx_data) {
+   if (idx_ads < 0) {
+      return UNKNOWN;
+   } else if ((((sample >> idx_ads) & 1) == 0) && (((sample >> idx_data) & 0xF0) == 0x30)) {
+      return OPCODE;
+   } else {
+      return DATA;
+   }
+}
+
 void decode(FILE *stream) {
+
+   // Function pointer to the queue_sample method
+   queue_sample_t queue_sample;
+
+   if (arguments.cpu_type == CPU_SCMP) {
+      queue_sample = queue_sample_blocked;
+   } else {
+      queue_sample = queue_sample_orig;
+   }
 
    // Pin mappings into the 16 bit words
    int idx_data  = arguments.idx_data;
    int idx_rnw   = arguments.idx_rnw ;
    int idx_sync  = arguments.idx_sync;
-   int idx_rdy   = arguments.idx_rdy ;
+   int idx_rdy   = (arguments.cpu_type == CPU_SCMP) ? arguments.idx_hold : arguments.idx_rdy;
    int idx_user  = arguments.idx_user;
    int idx_rst   = arguments.idx_rst;
    int idx_vda   = arguments.idx_vda;
    int idx_vpa   = arguments.idx_vpa;
    int idx_e     = arguments.idx_e;
+   int idx_ads   = arguments.idx_ads;
+   int idx_sa    = arguments.idx_sa;
+   int idx_sb    = arguments.idx_sb;
+   int idx_sin   = arguments.idx_sin;
 
    // Invert RDY polarity on the 6800 to allow it to be driven from BA
-   int rdy_pol = (arguments.cpu_type == CPU_6800) ? 0 : 1;
+   int rdy_pol = (arguments.cpu_type == CPU_6800 || arguments.cpu_type == CPU_SCMP) ? 0 : 1;
 
    // Handle clock inversion of phi1 used rather than phi2
    int idx_phi = -1;
@@ -1221,6 +1400,9 @@ void decode(FILE *stream) {
    s.rst  = -1;
    s.e    = -1;
    s.user = -1;
+   s.sa   = -1;
+   s.sb   = -1;
+   s.sin  = -1;
 
    if (arguments.byte) {
 
@@ -1265,7 +1447,20 @@ void decode(FILE *stream) {
             uint16_t sample = *sampleptr++;
             // Drop samples where RDY=0 (or BA=1 for 6800)
             if (idx_rdy < 0 || (((sample >> idx_rdy) & 1) == rdy_pol)) {
-               s.type = build_sample_type(sample, idx_vpa, idx_vda, idx_sync);
+               if (arguments.cpu_type == CPU_SCMP) {
+                  s.type = build_sample_type_scmp(sample, idx_ads, idx_data);
+                  if (idx_sa >= 0) {
+                     s.sa = (sample >> idx_sa) & 1;
+                  }
+                  if (idx_sb >= 0) {
+                     s.sb = (sample >> idx_sb) & 1;
+                  }
+                  if (idx_sin >= 0) {
+                     s.sin = (sample >> idx_sin) & 1;
+                  }
+               } else {
+                  s.type = build_sample_type_default(sample, idx_vpa, idx_vda, idx_sync);
+               }
                if (idx_rnw >= 0) {
                   s.rnw = (sample >> idx_rnw ) & 1;
                }
@@ -1340,7 +1535,20 @@ void decode(FILE *stream) {
                if (pin_phi2) {
                   // Sample control signals after rising edge of PHI2
                   // Note: this is a change for the 65816, but should be fine timing wise
-                  s.type = build_sample_type(sample, idx_vpa, idx_vda, idx_sync);
+                  if (arguments.cpu_type == CPU_SCMP) {
+                     s.type = build_sample_type_scmp(sample, idx_ads, idx_data);
+                     if (idx_sa >= 0) {
+                        s.sa = (sample >> idx_sa) & 1;
+                     }
+                     if (idx_sb >= 0) {
+                        s.sb = (sample >> idx_sb) & 1;
+                     }
+                     if (idx_sin >= 0) {
+                        s.sin = (sample >> idx_sin) & 1;
+                     }
+                  } else {
+                     s.type = build_sample_type_default(sample, idx_vpa, idx_vda, idx_sync);
+                  }
                   if (idx_rnw >= 0) {
                      s.rnw = (sample >> idx_rnw ) & 1;
                   }
@@ -1399,6 +1607,7 @@ int main(int argc, char *argv[]) {
    arguments.debug            = 0;
    arguments.mem_model        = 0;
    arguments.skip             = 0;
+   arguments.block            = DEFAULT_BLOCK;
    arguments.skew_rd          = UNSPECIFIED;
    arguments.skew_wr          = UNSPECIFIED;
    arguments.profile          = 0;
@@ -1419,11 +1628,7 @@ int main(int argc, char *argv[]) {
    // Signal definition options
    arguments.idx_data         = UNSPECIFIED;
    arguments.idx_rnw          = UNSPECIFIED;
-   arguments.idx_sync         = UNSPECIFIED;
-   arguments.idx_vpa          = UNSPECIFIED;
    arguments.idx_rdy          = UNSPECIFIED;
-   arguments.idx_vda          = UNSPECIFIED;
-   arguments.idx_e            = UNSPECIFIED;
    arguments.idx_rst          = UNSPECIFIED;
    arguments.idx_phi1         = UNSPECIFIED;
    arguments.idx_phi2         = UNSPECIFIED;
@@ -1431,6 +1636,7 @@ int main(int argc, char *argv[]) {
 
    // Additional 6502 options
    arguments.undocumented     = 0;
+   arguments.idx_sync         = UNSPECIFIED;
 
    // Additional 65816 options
    arguments.pb_reg           = UNSPECIFIED;
@@ -1439,6 +1645,18 @@ int main(int argc, char *argv[]) {
    arguments.e_flag           = UNSPECIFIED;
    arguments.ms_flag          = UNSPECIFIED;
    arguments.xs_flag          = UNSPECIFIED;
+   arguments.idx_vpa          = UNSPECIFIED;
+   arguments.idx_vda          = UNSPECIFIED;
+   arguments.idx_e            = UNSPECIFIED;
+
+   // Additional SC/MP options
+   arguments.clkdiv           = UNSPECIFIED;
+   arguments.psr_reg          = UNSPECIFIED;
+   arguments.idx_ads          = UNSPECIFIED;
+   arguments.idx_hold         = UNSPECIFIED;
+   arguments.idx_sa           = UNSPECIFIED;
+   arguments.idx_sb           = UNSPECIFIED;
+   arguments.idx_sin          = UNSPECIFIED;
 
    // Build documentation for supported machine types
    strcat(machines_doc, "Supported machine types:\n");
@@ -1489,6 +1707,11 @@ int main(int argc, char *argv[]) {
    }
 
    arguments.show_something = arguments.show_samplenums | arguments.show_address | arguments.show_hex | arguments.show_instruction | arguments.show_state | arguments.show_bbcfwa | arguments.show_cycles;
+
+   // Allocate sample buffer (3 blocks)
+   sample_q = malloc(arguments.block * sizeof(sample_t) * 3);
+   sample_rd = sample_q;
+   sample_wr = sample_q;
 
    // Normally the data file should be 16 bit samples. In byte mode
    // the data file is 8 bit samples, and all the control signals are
@@ -1551,7 +1774,7 @@ int main(int argc, char *argv[]) {
          arguments.vec_rst = 0x8E8DE0;
          break;
       default:
-         arguments.vec_rst = 0xFFFFFF;
+         arguments.vec_rst = UNDEFINED;
       }
    }
    if (arguments.cpu_type == CPU_UNKNOWN) {
@@ -1597,8 +1820,8 @@ int main(int argc, char *argv[]) {
    }
 
    // Validate options compatibility with CPU
-   if (arguments.cpu_type != CPU_6502 && arguments.cpu_type != CPU_6800 && arguments.undocumented) {
-      fprintf(stderr, "--undocumented is only applicable to the 6502/6800\n");
+   if (arguments.cpu_type != CPU_6502 && arguments.cpu_type != CPU_6800 && arguments.cpu_type != CPU_SCMP && arguments.undocumented) {
+      fprintf(stderr, "--undocumented is only applicable to the 6502/6800/SCMP\n");
       return 1;
    }
    if (arguments.cpu_type == CPU_65C816) {
@@ -1655,17 +1878,32 @@ int main(int argc, char *argv[]) {
    if (arguments.idx_sync == UNSPECIFIED) {
       arguments.idx_sync = 9;
    }
+   if (arguments.idx_ads == UNSPECIFIED) {
+      arguments.idx_ads = 9; // SC/MP only
+   }
    if (arguments.idx_vpa == UNSPECIFIED) {
       arguments.idx_vpa = 9;
    }
    if (arguments.idx_rdy == UNSPECIFIED) {
       arguments.idx_rdy = 10;
    }
+   if (arguments.idx_hold == UNSPECIFIED) {
+      arguments.idx_hold = 10; // SC/MP only
+   }
    if (arguments.idx_vda == UNSPECIFIED) {
       arguments.idx_vda = 11;
    }
+   if (arguments.idx_sa == UNSPECIFIED) {
+      arguments.idx_sa = 11; // SC/MP only
+   }
    if (arguments.idx_e == UNSPECIFIED) {
       arguments.idx_e = 12;
+   }
+   if (arguments.idx_sb == UNSPECIFIED) {
+      arguments.idx_sb = 12; // SC/MP only
+   }
+   if (arguments.idx_sin == UNSPECIFIED) {
+      arguments.idx_sin = 13; // SC/MP only
    }
    if (arguments.idx_rst == UNSPECIFIED) {
       arguments.idx_rst = 14;
@@ -1707,12 +1945,18 @@ int main(int argc, char *argv[]) {
       }
    }
 
+   if (arguments.clkdiv == UNSPECIFIED) {
+      arguments.clkdiv = (arguments.cpu_type == CPU_SCMP) ? 4 : 1;
+   }
+
    c816 = 0;
    if (arguments.cpu_type == CPU_65C816) {
       c816 = 1;
       em = &em_65816;
    } else if (arguments.cpu_type == CPU_6800) {
       em = &em_6800;
+   } else if (arguments.cpu_type == CPU_SCMP) {
+      em = &em_scmp;
    } else {
       em = &em_6502;
    }

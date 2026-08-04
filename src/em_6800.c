@@ -38,6 +38,7 @@ typedef enum {
    RMWOP,
    BRANCHOP,
    JSRJMPOP,
+   PUSHOP,
    OTHER
 } OpType;
 
@@ -87,8 +88,8 @@ static AddrModeType addr_mode_table[] = {
    {1,    "%1$s"},                  // ACC
    {2,    "%1$s #%2$02X"},          // IMM8
    {3,    "%1$s #%2$02X%3$02X"},    // IMM16
-   {2,    "%1$s #%2$02X"},          // DIR8
-   {2,    "%1$s #%2$02X"},          // DIR16
+   {2,    "%1$s %2$02X"},           // DIR8
+   {2,    "%1$s %2$02X"},           // DIR16
    {3,    "%1$s %2$02X%3$02X"},     // EXT8
    {3,    "%1$s %2$02X%3$02X"},     // EXT16
    {2,    "%1$s %2$02X,X"},         // IDX8
@@ -349,7 +350,7 @@ static int em_6800_match_interrupt(sample_t *sample_q, int num_samples) {
    return 0;
 }
 
-static int em_6800_count_cycles(sample_t *sample_q, int intr_seen) {
+static int em_6800_count_cycles(sample_t *sample_q, int num_samples, int intr_seen) {
    if (intr_seen) {
       return 12;
    }
@@ -466,6 +467,10 @@ static void em_6800_emulate(sample_t *sample_q, int num_cycles, instruction_t *i
          //      <opcode> <op1>       <read old> <write old> <write new>
          // Want to pick off the read
          operand = sample_q[num_cycles - 3].data;
+      } else if (instr->optype == PUSHOP) {
+         // e.g. <opcode> <op1> <write> <dead>
+         // This needs special handling because of the dead cycle at the end
+         operand = sample_q[num_cycles - 2].data;
       } else if (instr->mode == IMM8) {
          // Immediate addressing mode: the operand is the 2nd byte of the instruction
          operand = op1;
@@ -782,9 +787,7 @@ static int neg_helper(int val) {
       val = (0x00 - val) & 0xff;
       set_NZ(val);
       V = (val == 0x80);
-      C = (val == 0x00);
-      val = 0xFF - val;
-      set_NZ(val);
+      C = (val != 0x00);
    } else {
       set_NZCV_unknown();
    }
@@ -849,9 +852,9 @@ static int sta_helper(int val, operand_t operand) {
          failflag = 1;
       }
    }
-   set_NZ(val);
+   set_NZ(operand);
    V = 0;
-   return val;
+   return operand;
 }
 
 static int sub_helper(int val, int operand, int carry) {
@@ -1221,10 +1224,10 @@ static int op_DAA(operand_t operand, ea_t ea, sample_t *sample_q) {
          correction |= 0x60;
       }
       int tmp = A + correction;
-      // TODO: On the 6809 C is apparently only ever set by DAA, never cleared
-      C = (tmp >> 8) & 1;
-      // V is is calculated as follows on both the 6809 and the 6309
-      V = ((tmp >> 7) & 1) ^ C;
+      // V is undefined, but seems to match this expression
+      V = (C == 0 && A >= 0x7A && A <= 0x7F) || (C == 1 && A >= 0x1A && A <= 0x7F);
+      // C is only ever set by DAA, never cleared
+      C |= (tmp >> 8) & 1;
       tmp &= 0xff;
       set_NZ(tmp);
       A = tmp;
@@ -1669,8 +1672,8 @@ static InstrType instr_table_6800[] = {
    /* 33 */   { "PUL B", 0,   ACC,  4,     OTHER, op_PULB},
    /* 34 */   { "DES  ", 0,   INH,  4,     OTHER,  op_DES},
    /* 35 */   { "TXS  ", 0,   INH,  4,     OTHER,  op_TXS},
-   /* 36 */   { "PSH A", 0,   ACC,  4,     OTHER, op_PSHA},
-   /* 37 */   { "PSH B", 0,   ACC,  4,     OTHER, op_PSHB},
+   /* 36 */   { "PSH A", 0,   ACC,  4,    PUSHOP, op_PSHA},
+   /* 37 */   { "PSH B", 0,   ACC,  4,    PUSHOP, op_PSHB},
    /* 38 */   { "???  ", 1,   INH,  2,     OTHER,       0},
    /* 39 */   { "RTS  ", 0,   INH,  5,     OTHER,  op_RTS},
    /* 3A */   { "???  ", 1,   INH,  2,     OTHER,       0},
@@ -1727,9 +1730,9 @@ static InstrType instr_table_6800[] = {
    /* 6A */   { "DEC  ", 0,  IDX8,  7,     RMWOP,  op_DEC},
    /* 6B */   { "???  ", 1,  IDX8,  7,     OTHER,       0},
    /* 6C */   { "INC  ", 0,  IDX8,  7,     RMWOP,  op_INC},
-   /* 6D */   { "TST  ", 0,  IDX8,  7,    READOP,  op_TST},
+   /* 6D */   { "TST  ", 0,  IDX8,  7,     RMWOP,  op_TST},
    /* 6E */   { "JMP  ", 0,  IDX8,  4,  JSRJMPOP,  op_JMP},
-   /* 6F */   { "CLR  ", 0,  IDX8,  7,   WRITEOP,  op_CLR},
+   /* 6F */   { "CLR  ", 0,  IDX8,  7,     RMWOP,  op_CLR},
 
    /* 70 */   { "NEG  ", 0,  EXT8,  6,     RMWOP,  op_NEG},
    /* 71 */   { "???  ", 1,  EXT8,  6,     OTHER,       0},
@@ -1744,9 +1747,9 @@ static InstrType instr_table_6800[] = {
    /* 7A */   { "DEC  ", 0,  EXT8,  6,     RMWOP,  op_DEC},
    /* 7B */   { "???  ", 1,  EXT8,  6,     OTHER,       0},
    /* 7C */   { "INC  ", 0,  EXT8,  6,     RMWOP,  op_INC},
-   /* 7D */   { "TST  ", 0,  EXT8,  6,    READOP,  op_TST},
+   /* 7D */   { "TST  ", 0,  EXT8,  6,     RMWOP,  op_TST},
    /* 7E */   { "JMP  ", 0,  EXT8,  3,  JSRJMPOP,  op_JMP},
-   /* 7F */   { "CLR  ", 0,  EXT8,  6,   WRITEOP,  op_CLR},
+   /* 7F */   { "CLR  ", 0,  EXT8,  6,     RMWOP,  op_CLR},
 
    /* 80 */   { "SUB A", 0,  IMM8,  2,     OTHER, op_SUBA},
    /* 81 */   { "CMP A", 0,  IMM8,  2,     OTHER, op_CMPA},
