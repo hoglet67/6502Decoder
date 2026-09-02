@@ -784,13 +784,10 @@ static int lsr_helper(int val) {
 
 static int neg_helper(int val) {
    if (val >= 0) {
-      int tmp = 0x00 - val;
-      set_NZ(tmp);
-      
-      C = (tmp >> 8) & 1;
-      V = ((val & 0x80) != 0) && ((tmp & 0x80) != 0);
-      val = tmp & 0xFF;
-
+      val = (0x00 - val) & 0xff;
+      set_NZ(val);
+      V = (val == 0x80);
+      C = (val != 0x00);
    } else {
       set_NZCV_unknown();
    }
