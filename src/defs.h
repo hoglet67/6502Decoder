@@ -46,6 +46,7 @@ typedef struct {
    uint32_t      cycle_count;
    sample_type_t type;
    uint8_t       data;
+   uint8_t       ctld; //undecoded raw data
    int8_t         rnw; // -1 indicates unknown
    int8_t         rst; // -1 indicates unknown
    int8_t           e; // -1 indicates unknown (65816 e pin)
