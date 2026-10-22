@@ -149,7 +149,8 @@ If RST is not connected, an alternative is to specify the reset vector:\n\
  - A9D9CD (optionally, also specify the first opcode, LDA # in this case)\n\
 \n\
 If --debug=1 is specified, each instruction is preceeded by it\'s sample values.\n\
-\n\
+If --debug=3 is specified, each instruction is also preceded by the upper\n\
+byte of 16 bit samples.\n\
 The --mem= option controls the memory access logging and modelling. The value\n\
 is three hex nibbles: WRM, where W controls write logging, R controls read\n\
 logging, and M controls modelling.\n\
@@ -302,7 +303,7 @@ static struct argp_option options[] = {
    { "cpu",            KEY_CPU,     "CPU",                   0, "Sets CPU type (see above)",                         GROUP_GENERAL},
    { "machine",    KEY_MACHINE, "MACHINE",                   0, "Sets machine specific defaults and memory model (see above)", GROUP_GENERAL},
    { "byte",          KEY_BYTE,         0,                   0, "Enable byte-wide sample mode",                      GROUP_GENERAL},
-   { "debug",        KEY_DEBUG,   "LEVEL",                   0, "Sets the debug level (0 or 1)",                     GROUP_GENERAL},
+   { "debug",        KEY_DEBUG,   "LEVEL",                   0, "Sets the debug level (0, 1 or 3)",                  GROUP_GENERAL},
    { "profile",    KEY_PROFILE,  "PARAMS", OPTION_ARG_OPTIONAL, "Profile code execution",                            GROUP_GENERAL},
    { "trigger",    KEY_TRIGGER, "ADDRESS",                   0, "Trigger on address",                                GROUP_GENERAL},
    { "bbctube",    KEY_BBCTUBE,         0,                   0, "BBC tube protocol decoding",                        GROUP_GENERAL},
@@ -710,7 +711,10 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
 static void dump_samples(sample_t *sample_q, int n) {
       for (int i = 0; i < n; i++) {
          sample_t *sample = sample_q + i;
-         printf("%08x %2d %02x ", sample->sample_count, i, sample->data);
+         if (arguments.debug & 2)
+            printf("%08x %2d %02x %02x ", sample->sample_count, i, sample->data, sample->ctld);
+         else
+            printf("%08x %2d %02x ", sample->sample_count, i, sample->data);
          switch(sample->type) {
          case INTERNAL:
             putchar('I');
@@ -917,7 +921,7 @@ static int analyze_instruction(sample_t *sample_q, int num_samples, int rst_seen
       return num_samples;
    }
 
-   if (triggered && arguments.debug & 1) {
+   if (triggered && arguments.debug & 3) {
       dump_samples(sample_q, num_cycles);
    }
 
@@ -1420,6 +1424,7 @@ void decode(FILE *stream) {
          uint8_t *sampleptr = &buffer8[0];
          while (num-- > 0) {
             s.data = *sampleptr++;
+            s.ctld = 0;
             queue_sample(&s);
             s.sample_count++;
             s.cycle_count++;
@@ -1474,6 +1479,7 @@ void decode(FILE *stream) {
                   s.user = (sample >> idx_user) & 1;
                }
                s.data = (sample >> idx_data) & 255;
+               s.ctld = (sample >> 8) & 255;
                queue_sample(&s);
             }
             s.sample_count++;
@@ -1565,6 +1571,7 @@ void decode(FILE *stream) {
                   if (idx_rdy < 0 || ((sample >> idx_rdy) & 1)) {
                      // Sample the data skewed (--skew=) relative to the falling edge of PHI2
                      s.data = (skew_buffer[s.rnw == 0 ? wrdata_head : rddata_head] >> idx_data) & 255;
+                     s.ctld = ((skew_buffer[s.rnw == 0 ? wrdata_head : rddata_head] >> idx_data) >> 8) & 255;
                      queue_sample(&s);
                   }
                   s.cycle_count++;
